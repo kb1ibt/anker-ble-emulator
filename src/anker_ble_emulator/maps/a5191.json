@@ -750,7 +750,8 @@
       "options": [
        1,
        2
-      ]
+      ],
+      "state": "plug_lock_switch"
      }
     }
    },
@@ -770,7 +771,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "auto_start_switch"
      }
     }
    },
@@ -808,7 +810,8 @@
       "type": "01",
       "min": 0,
       "max": 100,
-      "step": 10
+      "step": 10,
+      "state": "light_brightness"
      }
     }
    },
@@ -828,7 +831,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "auto_charge_restart_switch"
      }
     }
    },
@@ -848,7 +852,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "random_delay_switch"
      }
     }
    },
@@ -870,7 +875,8 @@
        1,
        2,
        3
-      ]
+      ],
+      "state": "wipe_up_mode"
      }
     }
    },
@@ -892,7 +898,8 @@
        1,
        2,
        3
-      ]
+      ],
+      "state": "wipe_down_mode"
      }
     }
    },
@@ -912,7 +919,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "smart_touch_mode"
      }
     }
    },
@@ -932,21 +940,24 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "light_off_schedule_switch"
      },
      "b5": {
       "name": "set_light_off_start_time",
       "type": "02",
       "min": 0,
       "max": 5947,
-      "step": 1
+      "step": 1,
+      "state": "light_off_start_time"
      },
      "b6": {
       "name": "set_light_off_end_time",
       "type": "02",
       "min": 0,
       "max": 5947,
-      "step": 1
+      "step": 1,
+      "state": "light_off_end_time"
      }
     }
    },
@@ -966,7 +977,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "modbus_switch"
      }
     }
    }
@@ -990,7 +1002,14 @@
        2,
        3,
        4
-      ]
+      ],
+      "state": "ev_charger_status",
+      "state_values": {
+       "1": 2,
+       "2": 0,
+       "3": 2,
+       "4": 2
+      }
      }
     }
    }
@@ -1012,7 +1031,8 @@
       "options": [
        1,
        2
-      ]
+      ],
+      "state": "schedule_switch"
      },
      "a8": {
       "name": "set_schedule_mode",
@@ -1020,7 +1040,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "schedule_mode"
      }
     }
    },
@@ -1039,28 +1060,32 @@
       "type": "02",
       "min": 0,
       "max": 5947,
-      "step": 1
+      "step": 1,
+      "state": "week_start_time"
      },
      "a4": {
       "name": "set_week_end_time",
       "type": "02",
       "min": 0,
       "max": 5947,
-      "step": 1
+      "step": 1,
+      "state": "week_end_time"
      },
      "a5": {
       "name": "set_weekend_start_time",
       "type": "02",
       "min": 0,
       "max": 5947,
-      "step": 1
+      "step": 1,
+      "state": "weekend_start_time"
      },
      "a6": {
       "name": "set_weekend_end_time",
       "type": "02",
       "min": 0,
       "max": 5947,
-      "step": 1
+      "step": 1,
+      "state": "weekend_end_time"
      },
      "a7": {
       "name": "set_weekend_mode",
@@ -1068,7 +1093,8 @@
       "options": [
        1,
        2
-      ]
+      ],
+      "state": "weekend_mode"
      }
     }
    }
@@ -1111,7 +1137,8 @@
       "type": "02",
       "min": 10,
       "max": 500,
-      "step": 1
+      "step": 1,
+      "state": "main_breaker_limit"
      }
     }
    },
@@ -1131,7 +1158,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "load_balance_switch"
      },
      "a4": {
       "name": "set_load_balance_setting_d5",
@@ -1139,7 +1167,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "load_balance_setting_d5"
      },
      "a5": {
       "name": "set_load_balance_setting_d6",
@@ -1147,12 +1176,14 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "load_balance_setting_d6"
      },
      "a6": {
       "name": "set_load_balance_monitor_device",
       "type": "00",
-      "length": 16
+      "length": 16,
+      "state": "load_balance_monitor_device"
      }
     }
    }
@@ -1174,7 +1205,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "solar_evcharge_switch"
      },
      "a3": {
       "name": "set_solar_evcharge_mode",
@@ -1182,14 +1214,16 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "solar_evcharge_mode"
      },
      "a4": {
       "name": "set_solar_evcharge_min_current",
       "type": "02",
       "min": 6,
       "max": 16,
-      "step": 1
+      "step": 1,
+      "state": "solar_evcharge_min_current"
      },
      "a5": {
       "name": "set_phase_operating_mode?",
@@ -1197,7 +1231,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "phase_operating_mode"
      },
      "a6": {
       "name": "set_solar_evcharge_monitoring_mode",
@@ -1205,7 +1240,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "solar_evcharge_monitoring_mode"
      },
      "a7": {
       "name": "set_auto_phase_switch",
@@ -1213,12 +1249,14 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "auto_phase_switch"
      },
      "a8": {
       "name": "set_solar_evcharge_monitor_device",
       "type": "00",
-      "length": 16
+      "length": 16,
+      "state": "solar_evcharge_monitor_device"
      }
     }
    }

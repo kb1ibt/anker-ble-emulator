@@ -209,27 +209,84 @@ class Layout:
             LayoutError: If the layout has no such command.
 
         """
+        if self._accepted(msgtype, plaintext) is None:
+            return STATUS_REJECTED
+        return STATUS_ACCEPTED
+
+    def state_changes(self, msgtype: int, plaintext: bytes) -> dict[str, Value]:
+        """Return the telemetry values an accepted command sets, by field name.
+
+        A rejected or unmapped command sets none; so does a setting the map
+        links to no typed telemetry field.
+        """
+        if msgtype not in self.commands:
+            return {}
+        accepted = self._accepted(msgtype, plaintext)
+        if accepted is None:
+            return {}
+        command, settings = accepted
+        changes: dict[str, Value] = {}
+        for tag, raw in settings.items():
+            spec = command[tag]
+            state = spec.get("state")
+            if state is None or not self.locate(state):
+                continue
+            value = _value(raw)
+            if (table := spec.get("state_values")) is not None:
+                value = table.get(str(value))
+            if value is not None:
+                changes[state] = value
+        return changes
+
+    def locate(self, name: str) -> tuple[int, ...]:
+        """Return the messages with a typed field or part called ``name``."""
+        return tuple(
+            msgtype
+            for msgtype, fields in self.messages.items()
+            if any(
+                field.name == name or any(part.name == name for part in field.parts)
+                for field in fields
+            )
+        )
+
+    def _accepted(
+        self, msgtype: int, plaintext: bytes
+    ) -> tuple[dict[int, dict[str, Any]], dict[int, bytes]] | None:
+        """Return the command and its settings if every value is accepted."""
+        matched = self._settings(msgtype, plaintext)
+        if matched is None:
+            return None
+        command, settings = matched
+        if all(_accepts(command[tag], value) for tag, value in settings.items()):
+            return matched
+        return None
+
+    def _settings(
+        self, msgtype: int, plaintext: bytes
+    ) -> tuple[dict[int, dict[str, Any]], dict[int, bytes]] | None:
+        """Return the command a request is and its settings; None if it doesn't walk.
+
+        Raises:
+            LayoutError: If the layout has no such command.
+
+        """
         if msgtype not in self.commands:
             msg = f"{self.pn} has no command {msgtype:03x}"
             raise LayoutError(msg)
         try:
             fields = decode_fields(plaintext)
         except FieldError:
-            return STATUS_REJECTED
-        for command in self.commands[msgtype]:
-            settings = {tag: fields[tag] for tag in command if tag in fields}
+            return None
+        commands = self.commands[msgtype]
+        for command in commands:
             settings = {
-                tag: value for tag, value in settings.items() if tag not in FRAME_TAGS
+                tag: fields[tag]
+                for tag in command
+                if tag in fields and tag not in FRAME_TAGS
             }
             if settings:
-                return (
-                    STATUS_ACCEPTED
-                    if all(
-                        _accepts(command[tag], value) for tag, value in settings.items()
-                    )
-                    else STATUS_REJECTED
-                )
-        return STATUS_ACCEPTED
+                return command, settings
+        return commands[0], {}
 
     def _message(self, msgtype: int) -> tuple[Field, ...]:
         if msgtype not in self.messages:
@@ -266,18 +323,27 @@ def _fields(specs: list[dict[str, Any]]) -> tuple[Field, ...]:
     return tuple(fields)
 
 
-def _accepts(spec: Mapping[str, Any], raw: bytes) -> bool:
-    """Whether a command field's typed value is one the map accepts."""
+def _value(raw: bytes) -> Value | None:
+    """Return a typed command value: a number, or the bytes after the type."""
     try:
         typed = TYPED_FIELD.parse(raw)
     except ConstructError:
-        return False
+        return None
     kind = int(typed.type)
     if kind not in NUMERIC_SIZES:
-        return True
+        return bytes(typed.value)
     if not typed.value:
+        return None
+    value: Value = numeric(kind, len(typed.value)).parse(typed.value)
+    return value
+
+
+def _accepts(spec: Mapping[str, Any], raw: bytes) -> bool:
+    """Whether a command field's typed value is one the map accepts."""
+    value = _value(raw)
+    if value is None:
         return False
-    return _in_range(spec, numeric(kind, len(typed.value)).parse(typed.value))
+    return isinstance(value, bytes) or _in_range(spec, value)
 
 
 def _in_range(spec: Mapping[str, Any], value: float) -> bool:

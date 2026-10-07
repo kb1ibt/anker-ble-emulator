@@ -1195,7 +1195,8 @@
        2,
        3,
        4
-      ]
+      ],
+      "state": "display_timeout_mode"
      }
     }
    }
@@ -1216,7 +1217,8 @@
       "type": "01",
       "min": 20,
       "max": 100,
-      "step": 5
+      "step": 5,
+      "state": "display_brightness"
      }
     }
    }
@@ -1240,13 +1242,15 @@
       "name": "set_theme_id",
       "type": "03",
       "min": 0,
-      "max": 4294967295
+      "max": 4294967295,
+      "state": "theme_id"
      },
      "a4": {
       "name": "set_theme_hash",
       "type": "03",
       "min": 0,
-      "max": 4294967295
+      "max": 4294967295,
+      "state": "theme_hash"
      },
      "a5": {
       "name": "set_unknown_a5",
@@ -1275,13 +1279,15 @@
       "name": "set_theme_id",
       "type": "03",
       "min": 0,
-      "max": 4294967295
+      "max": 4294967295,
+      "state": "theme_id"
      },
      "a4": {
       "name": "set_theme_hash",
       "type": "03",
       "min": 0,
-      "max": 4294967295
+      "max": 4294967295,
+      "state": "theme_hash"
      },
      "a5": {
       "name": "set_unknown_a5",
@@ -1320,7 +1326,8 @@
        2,
        3,
        4
-      ]
+      ],
+      "state": "usage_mode"
      }
     }
    },
@@ -1340,7 +1347,8 @@
       "default": 5,
       "options": [
        5
-      ]
+      ],
+      "state": "usage_mode"
      },
      "a3": {
       "name": null,
@@ -1384,7 +1392,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "usbc_1_switch"
      }
     }
    },
@@ -1416,7 +1425,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "usbc_2_switch"
      }
     }
    },
@@ -1448,7 +1458,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "usbc_3_switch"
      }
     }
    },
@@ -1480,7 +1491,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "usbc_4_switch"
      }
     }
    },
@@ -1512,7 +1524,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "usba_switch"
      }
     }
    }
@@ -2076,7 +2089,8 @@
        9,
        10,
        12
-      ]
+      ],
+      "state": "port_priority"
      }
     }
    }
@@ -2098,7 +2112,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "knob_mode"
      }
     }
    }
@@ -2120,7 +2135,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "holiday_switch"
      }
     }
    }
@@ -2142,7 +2158,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "clock_mode"
      }
     }
    }

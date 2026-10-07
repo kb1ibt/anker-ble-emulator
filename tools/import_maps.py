@@ -268,6 +268,29 @@ def _sub_field(part: Desc, keys: ModuleType) -> Desc:
     return sub
 
 
+def _state(part: Desc, options: list[Any] | None, keys: ModuleType) -> Desc:
+    """Return the telemetry field a setting shows in, and how its value maps there.
+
+    A setting with a divider, or whose value follows another setting, is left
+    unlinked. A converted one is linked only where its options give a table.
+    """
+    state = part.get(keys.STATE_NAME)
+    if not state or keys.VALUE_DIVIDER in part or keys.VALUE_FOLLOWS in part:
+        return {}
+    converter = part.get(keys.STATE_CONVERTER)
+    if converter is None:
+        return {"state": state}
+    if not options:
+        return {}
+    try:
+        table = {str(option): converter(option, None, {}) for option in options}
+    except (TypeError, KeyError, AttributeError, ValueError):
+        return {}
+    if not all(isinstance(value, int) for value in table.values()):
+        return {}
+    return {"state": state, "state_values": table}
+
+
 def command_layout(spec: Desc, keys: ModuleType) -> Desc:
     """Return one command's name and its fields' types and accepted values."""
     fields = {}
@@ -291,6 +314,7 @@ def command_layout(spec: Desc, keys: ModuleType) -> Desc:
             out["options"] = list(options.values())
         elif isinstance(options, list):
             out["options"] = options
+        out |= _state(part, out.get("options"), keys)
         fields[tag] = out
     return {"command": spec.get(keys.COMMAND_NAME), "fields": fields}
 

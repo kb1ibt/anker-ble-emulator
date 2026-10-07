@@ -988,7 +988,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "temp_unit_fahrenheit"
      }
     }
    }
@@ -1042,7 +1043,8 @@
        2400,
        3600,
        4800
-      ]
+      ],
+      "state": "max_load"
      },
      "a3": {
       "name": "set_max_load_type",
@@ -1074,7 +1076,8 @@
       "options": [
        5,
        10
-      ]
+      ],
+      "state": "output_cutoff_data"
      },
      "a3": {
       "name": "set_lowpower_input_data",
@@ -1108,13 +1111,15 @@
       "name": "set_min_soc",
       "type": "01",
       "min": 5,
-      "max": 20
+      "max": 20,
+      "state": "power_cutoff"
      },
      "a5": {
       "name": "set_max_soc",
       "type": "01",
       "min": 80,
-      "max": 100
+      "max": 100,
+      "state": "max_soc"
      },
      "a6": {
       "name": "set_backup_soc",
@@ -1128,7 +1133,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "backup_soc_switch"
      }
     }
    }
@@ -1150,12 +1156,14 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "light_mode"
      },
      "a3": {
       "name": "set_light_off_switch",
       "type": "01",
-      "default": 0
+      "default": 0,
+      "state": "light_off_switch"
      }
     }
    },
@@ -1172,7 +1180,8 @@
      "a2": {
       "name": "set_light_mode",
       "type": "01",
-      "default": 0
+      "default": 0,
+      "state": "light_mode"
      },
      "a3": {
       "name": "set_light_off_switch",
@@ -1180,7 +1189,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "light_off_switch"
      }
     }
    }
@@ -1205,7 +1215,8 @@
        800,
        1000,
        1200
-      ]
+      ],
+      "state": "max_load"
      },
      "a3": {
       "name": "set_max_load_type",
@@ -1240,7 +1251,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "grid_export_disabled"
      },
      "a9": {
       "name": "set_grid_export_limit",
@@ -1267,7 +1279,8 @@
       "type": "02",
       "min": 0,
       "max": 1200,
-      "step": 100
+      "step": 100,
+      "state": "ac_input_limit"
      }
     }
    }

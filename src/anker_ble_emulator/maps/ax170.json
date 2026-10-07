@@ -1049,7 +1049,8 @@
       "name": "set_low_backup_soc",
       "type": "01",
       "min": 10,
-      "max": 99
+      "max": 99,
+      "state": "low_backup_soc"
      },
      "a3": {
       "name": "set_circuit_priority",
@@ -1060,7 +1061,8 @@
       "name": "set_high_backup_soc",
       "type": "01",
       "min": 11,
-      "max": 100
+      "max": 100,
+      "state": "high_backup_soc"
      }
     }
    }

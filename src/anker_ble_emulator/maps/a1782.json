@@ -857,7 +857,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "ac_output_power_switch"
      }
     }
    },
@@ -876,7 +877,8 @@
       "type": "03",
       "min": 0,
       "max": 86400,
-      "step": 300
+      "step": 300,
+      "state": "ac_output_timeout_seconds"
      }
     }
    },
@@ -895,7 +897,8 @@
       "type": "02",
       "min": 200,
       "max": 1800,
-      "step": 100
+      "step": 100,
+      "state": "ac_input_limit"
      }
     }
    },
@@ -915,7 +918,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "ac_output_mode"
      }
     }
    }
@@ -937,7 +941,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "dc_output_power_switch"
      }
     }
    },
@@ -956,7 +961,8 @@
       "type": "03",
       "min": 0,
       "max": 86400,
-      "step": 300
+      "step": 300,
+      "state": "dc_output_timeout_seconds"
      }
     }
    },
@@ -976,7 +982,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "dc_12v_output_mode"
      }
     }
    }
@@ -998,7 +1005,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "display_switch"
      }
     }
    },
@@ -1019,7 +1027,8 @@
        1,
        2,
        3
-      ]
+      ],
+      "state": "display_mode"
      }
     }
    },
@@ -1044,7 +1053,8 @@
        60,
        300,
        1800
-      ]
+      ],
+      "state": "display_timeout_seconds"
      }
     }
    },
@@ -1070,7 +1080,8 @@
        360,
        720,
        1440
-      ]
+      ],
+      "state": "device_timeout_minutes"
      }
     }
    },
@@ -1092,7 +1103,8 @@
        1,
        2,
        3
-      ]
+      ],
+      "state": "light_mode"
      }
     }
    },
@@ -1112,7 +1124,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "port_memory_switch"
      }
     }
    },
@@ -1135,7 +1148,8 @@
        90,
        95,
        100
-      ]
+      ],
+      "state": "max_soc"
      },
      "ab": {
       "name": "set_min_soc",
@@ -1146,7 +1160,8 @@
        10,
        15,
        20
-      ]
+      ],
+      "state": "power_cutoff"
      }
     }
    }

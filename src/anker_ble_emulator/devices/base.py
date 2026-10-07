@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from importlib import resources
 from typing import TYPE_CHECKING
@@ -308,6 +308,33 @@ class EmulatedDevice:
             raise LayoutError(msg)
         self.layout.build(msgtype, values)
         self.module.values.setdefault(msgtype, {}).update(values)
+
+    @property
+    def mcu(self) -> McuScript:
+        """What the MCU answers and pushes."""
+        return self.module.mcu
+
+    def use_mcu(self, script: McuScript) -> None:
+        """Replace what the MCU answers and pushes (``McuScript()`` for a quiet one)."""
+        self.module.mcu = script
+
+    def set_reply(self, request: int, *replies: tuple[int, bytes]) -> None:
+        """Make the MCU answer ``request`` with these frames, in order.
+
+        Args:
+            request: The request's 12-bit message type.
+            replies: ``(msgtype, cleartext)`` of each frame; none for silence.
+
+        """
+        frames = tuple(mcu_frame(msgtype, cleartext) for msgtype, cleartext in replies)
+        script = self.module.mcu
+        self.use_mcu(replace(script, replies={**script.replies, request: frames}))
+
+    def set_push(self, msgtype: int, cleartext: bytes) -> None:
+        """Make the MCU push ``cleartext`` as ``msgtype`` (sent by ``push``)."""
+        script = self.module.mcu
+        frame = mcu_frame(msgtype, cleartext)
+        self.use_mcu(replace(script, pushes={**script.pushes, msgtype: frame}))
 
     @property
     def address(self) -> str:

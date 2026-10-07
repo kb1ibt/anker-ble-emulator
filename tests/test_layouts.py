@@ -1,6 +1,8 @@
 # Copyright (c) 2026 Shawn Stricker
 """Layouts: telemetry built and set by field name, commands checked by the map."""
 
+import json
+
 import pytest
 
 from anker_ble_emulator.layouts import (
@@ -96,6 +98,43 @@ def test_an_unmapped_command_is_refused() -> None:
     assert not layout.has_command(0x04B)
     with pytest.raises(LayoutError):
         layout.check(0x04B, b"")
+
+
+@pytest.mark.parametrize(
+    ("msgtype", "request_hex", "changes"),
+    [
+        pytest.param(0x04A, "a10121a2020101", {"soc": 1}, id="switch"),
+        pytest.param(0x101, "a10121a40302f401", {"power": 500}, id="limit"),
+        pytest.param(0x04C, "a10121a2020101", {"mode": 2}, id="converted"),
+        pytest.param(0x04C, "a10121a3020101", {}, id="no telemetry field"),
+        pytest.param(0x04C, "a10121a40400414243", {"serial": b"ABC"}, id="bytes"),
+        pytest.param(0x04A, "a10121a2020102", {}, id="rejected"),
+        pytest.param(0x04A, "a10121", {}, id="no setting"),
+        pytest.param(0x04B, "a10121a2020101", {}, id="unmapped"),
+        pytest.param(0x04A, "a10121a2", {}, id="truncated"),
+    ],
+)
+def test_an_accepted_command_sets_the_telemetry_it_names(
+    msgtype: int, request_hex: str, changes: dict[str, int | bytes]
+) -> None:
+    layout = Layout(LAYOUT)
+
+    assert layout.state_changes(msgtype, bytes.fromhex(request_hex)) == changes
+
+
+def test_a_converted_value_outside_its_table_sets_nothing() -> None:
+    data = json.loads(json.dumps(LAYOUT))
+    data["commands"]["004c"][0]["fields"]["a2"]["options"] = [0, 1, 7]
+
+    assert Layout(data).state_changes(0x04C, bytes.fromhex("a10121a2020107")) == {}
+
+
+def test_locate_finds_fields_and_parts() -> None:
+    layout = Layout(LAYOUT)
+
+    assert layout.locate("soc") == (0x405,)
+    assert layout.locate("limit") == (0x405,)
+    assert layout.locate("untyped") == ()
 
 
 def test_encode_value_pads_and_cuts_byte_values() -> None:

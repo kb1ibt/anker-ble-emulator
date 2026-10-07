@@ -26,6 +26,10 @@ KEY_NAMES = {
     "VALUE_STEP": "value_step",
     "VALUE_OPTIONS": "value_options",
     "VALUE_DEFAULT": "value_default",
+    "VALUE_DIVIDER": "value_divider",
+    "VALUE_FOLLOWS": "value_follows",
+    "STATE_NAME": "state_name",
+    "STATE_CONVERTER": "state_converter",
 }
 #: ``mqttcmdmap`` as the tool sees it.
 KEYS = ModuleType("mqttcmdmap")
@@ -67,6 +71,7 @@ SWITCH = {
         "name": "set_ac_output_switch",
         "type": b"\x01",
         "value_options": {"off": 0, "on": 1},
+        "state_name": "ac_output_power_switch",
     },
     "fe": {"name": "msg_timestamp", "type": b"\x03"},
 }
@@ -142,7 +147,12 @@ LAYOUT: dict[str, Any] = {
                 "command": "ac_output_switch",
                 "fields": {
                     "a1": {"name": "pattern_22"},
-                    "a2": {"name": "set_switch", "type": "01", "options": [0, 1]},
+                    "a2": {
+                        "name": "set_switch",
+                        "type": "01",
+                        "options": [0, 1],
+                        "state": "soc",
+                    },
                     "fe": {"name": "msg_timestamp", "type": "03"},
                 },
             }
@@ -157,10 +167,27 @@ LAYOUT: dict[str, Any] = {
                         "min": 100,
                         "max": 1200,
                         "step": 100,
+                        "state": "power",
                     }
                 },
             },
             {"command": "name", "fields": {"a5": {"name": "n", "type": "00"}}},
+        ],
+        "004c": [
+            {
+                "command": "mode",
+                "fields": {
+                    "a2": {
+                        "name": "set_mode",
+                        "type": "01",
+                        "options": [0, 1],
+                        "state": "mode",
+                        "state_values": {"1": 2, "0": 1},
+                    },
+                    "a3": {"name": "set_x", "type": "01", "state": "nowhere"},
+                    "a4": {"name": "set_serial", "type": "00", "state": "serial"},
+                },
+            }
         ],
     },
 }

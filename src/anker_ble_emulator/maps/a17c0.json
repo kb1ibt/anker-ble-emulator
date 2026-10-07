@@ -414,7 +414,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "temp_unit_fahrenheit"
      }
     }
    }
@@ -517,7 +518,8 @@
       "options": [
        5,
        10
-      ]
+      ],
+      "state": "output_cutoff_data"
      },
      "a3": {
       "name": "set_lowpower_input_data",
@@ -555,7 +557,8 @@
       "options": [
        5,
        10
-      ]
+      ],
+      "state": "output_cutoff_data"
      },
      "a3": {
       "name": "set_lowpower_input_data",

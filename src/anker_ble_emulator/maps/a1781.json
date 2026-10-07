@@ -422,7 +422,8 @@
       "type": "03",
       "min": 0,
       "max": 86400,
-      "step": 300
+      "step": 300,
+      "state": "ac_output_timeout_seconds"
      }
     }
    }
@@ -443,7 +444,8 @@
       "type": "03",
       "min": 0,
       "max": 86400,
-      "step": 300
+      "step": 300,
+      "state": "dc_output_timeout_seconds"
      }
     }
    }
@@ -464,7 +466,8 @@
       "type": "02",
       "min": 100,
       "max": 1440,
-      "step": 100
+      "step": 100,
+      "state": "ac_input_limit"
      }
     }
    }
@@ -489,7 +492,8 @@
        60,
        300,
        1800
-      ]
+      ],
+      "state": "display_timeout_seconds"
      }
     }
    }
@@ -511,7 +515,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "ac_output_power_switch"
      }
     }
    }
@@ -533,7 +538,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "dc_output_power_switch"
      }
     }
    }
@@ -557,7 +563,8 @@
        1,
        2,
        3
-      ]
+      ],
+      "state": "display_mode"
      }
     }
    }
@@ -579,7 +586,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "energy_saving_switch"
      }
     }
    }
@@ -604,7 +612,8 @@
        2,
        3,
        4
-      ]
+      ],
+      "state": "light_mode"
      }
     }
    }
@@ -626,7 +635,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "display_switch"
      }
     }
    }
@@ -648,7 +658,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "temp_unit_fahrenheit"
      }
     }
    }
@@ -700,7 +711,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "ac_fast_charge_switch"
      }
     }
    }

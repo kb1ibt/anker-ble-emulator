@@ -187,7 +187,8 @@
        200,
        300,
        330
-      ]
+      ],
+      "state": "ac_input_limit"
      }
     }
    }
@@ -209,7 +210,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "ac_output_power_switch"
      }
     }
    }
@@ -231,7 +233,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "dc_output_power_switch"
      }
     }
    }
@@ -255,7 +258,8 @@
        1,
        2,
        3
-      ]
+      ],
+      "state": "light_mode"
      }
     }
    }
@@ -277,7 +281,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "display_switch"
      }
     }
    }

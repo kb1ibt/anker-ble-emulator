@@ -29,7 +29,8 @@ Recorded command replies        ✅       ✅        ✅       ✅        ✅   
 Mapped command acks             ✅       ✅        ✅       ✅        ✅       ✅
 Command value checks            ✅       ✅        ✅       ✅        ✅       ✅
 Telemetry values by name        ✅       ✅        ✅       ✅        ✅       ✅
-Commands shown in telemetry     ❌       ❌        ❌       ❌        ❌       ❌
+Commands shown in telemetry     ✅       ✅        ✅       ✅        ✅       ✅
+Custom replies and pushes       ✅       ✅        ✅       ✅        ✅       ✅
 Cloud mode (no BLE link)        ✅       ✅        ✅       ✅        ✅       ✅
 =============================== ======== ========= ======== ========= ======== ========
 
@@ -41,6 +42,12 @@ Cloud mode (no BLE link)        ✅       ✅        ✅       ✅        ✅   
   ack, ``00`` when its values are ones the map accepts and ``04`` when not.
 - **Values by name** use anker-solix-api's field names
   (``device.set_values(0x421, battery_soc=55)``).
+- **Commands shown in telemetry**: an accepted command sets the telemetry
+  fields its map links it to (``state_name``), in every message that carries
+  them; a rejected one sets nothing and is answered ``04``. Settings the map
+  scales by a divider or ties to another setting stay unlinked.
+- **Custom replies and pushes**: ``device.set_reply``, ``device.set_push`` and
+  ``device.use_mcu`` replace what the MCU sends, for frames no recording has.
 - The A91B2 runs auth mode 0: it negotiates in the clear and authorizes at the
   key exchange, so it has no confirmation step.
 

@@ -854,7 +854,8 @@
        2400,
        3600,
        4800
-      ]
+      ],
+      "state": "max_load_total"
      },
      "a3": {
       "name": "set_max_load_type",
@@ -886,7 +887,8 @@
       "options": [
        5,
        10
-      ]
+      ],
+      "state": "output_cutoff_data"
      },
      "a3": {
       "name": "set_lowpower_input_data",
@@ -920,13 +922,15 @@
       "name": "set_min_soc",
       "type": "01",
       "min": 5,
-      "max": 20
+      "max": 20,
+      "state": "power_cutoff"
      },
      "a5": {
       "name": "set_max_soc",
       "type": "01",
       "min": 80,
-      "max": 100
+      "max": 100,
+      "state": "max_soc"
      },
      "a6": {
       "name": "set_backup_soc",
@@ -940,7 +944,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "backup_soc_switch"
      }
     }
    }
@@ -967,7 +972,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "grid_export_disabled"
      },
      "a9": {
       "name": "set_grid_export_limit",
@@ -997,7 +1003,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "ev_charger_switch"
      }
     }
    }
@@ -1019,7 +1026,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "3rd_party_pv_switch"
      }
     }
    }

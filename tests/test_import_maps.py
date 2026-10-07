@@ -3,6 +3,7 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 from tests.fixtures.logs import mqtt_frame, write_frame_log, write_mqtt_records
 from tests.fixtures.maps import KEYS, MAPS, SPARSE, TELEMETRY, write_solix_api
@@ -116,7 +117,12 @@ def test_commands_keep_their_types_and_accepted_values() -> None:
             "command": "ac_output_switch",
             "fields": {
                 "a1": {"name": "pattern_22"},
-                "a2": {"name": "set_ac_output_switch", "type": "01", "options": [0, 1]},
+                "a2": {
+                    "name": "set_ac_output_switch",
+                    "type": "01",
+                    "options": [0, 1],
+                    "state": "ac_output_power_switch",
+                },
                 "fe": {"name": "msg_timestamp", "type": "03"},
             },
         }
@@ -138,6 +144,41 @@ def test_a_command_field_with_a_non_value_option_is_left_bare() -> None:
     spec = {"command_name": "x", "a2": {"name": "y", "value_options": "computed"}}
 
     assert command_layout(spec, KEYS)["fields"]["a2"] == {"name": "y"}
+
+
+def test_a_converted_setting_links_through_its_option_table() -> None:
+    options = {"smart": 1, "normal": 0}
+    fields: dict[str, dict[str, Any]] = {
+        "a2": {"name": "mode", "value_options": options, "state_name": "m"},
+        "a3": {"name": "bad", "value_options": options, "state_name": "b"},
+        "a4": {"name": "text", "value_options": options, "state_name": "t"},
+        "a5": {"name": "open", "state_name": "o"},
+    }
+    fields["a2"]["state_converter"] = lambda value, _state, _cache: {1: 2, 0: 1}[value]
+    fields["a3"]["state_converter"] = lambda _value, state, _cache: state["x"]
+    fields["a4"]["state_converter"] = lambda value, _state, _cache: str(value)
+    fields["a5"]["state_converter"] = lambda value, _state, _cache: value
+
+    layout = command_layout({"command_name": "x", **fields}, KEYS)["fields"]
+
+    assert layout["a2"]["state"] == "m"
+    assert layout["a2"]["state_values"] == {"1": 2, "0": 1}
+    assert "state" not in layout["a3"]
+    assert "state" not in layout["a4"]
+    assert "state" not in layout["a5"]
+
+
+def test_a_divided_or_following_setting_is_left_unlinked() -> None:
+    spec = {
+        "command_name": "x",
+        "a2": {"name": "t", "state_name": "timeout", "value_divider": 30},
+        "a3": {"name": "c", "state_name": "cutoff", "value_follows": "other"},
+    }
+
+    fields = command_layout(spec, KEYS)["fields"]
+
+    assert "state" not in fields["a2"]
+    assert "state" not in fields["a3"]
 
 
 def test_frames_are_read_from_logs_records_and_lists(tmp_path: Path) -> None:

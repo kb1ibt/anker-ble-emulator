@@ -1844,7 +1844,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "storm_guard_switch"
      }
     }
    },
@@ -1881,7 +1882,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "backup_switch"
      }
     }
    },
@@ -1918,7 +1920,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "backup_switch"
      },
      "a6": {
       "name": "set_backup_timestamps",
@@ -1954,7 +1957,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "usage_mode"
      }
     }
    },
@@ -1975,7 +1979,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "usage_mode"
      },
      "a3": {
       "name": "set_unknown_a3",
@@ -2038,7 +2043,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "ac_output_power_switch"
      }
     }
    },
@@ -2057,7 +2063,8 @@
       "type": "03",
       "min": 0,
       "max": 86400,
-      "step": 300
+      "step": 300,
+      "state": "ac_output_timeout_seconds"
      }
     }
    },
@@ -2076,7 +2083,8 @@
       "type": "02",
       "min": 200,
       "max": 1800,
-      "step": 100
+      "step": 100,
+      "state": "ac_input_limit"
      }
     }
    },
@@ -2096,7 +2104,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "ac_output_mode"
      }
     }
    },
@@ -2116,7 +2125,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "ac_fast_charge_switch"
      }
     }
    }
@@ -2138,7 +2148,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "dc_output_power_switch"
      }
     }
    },
@@ -2158,7 +2169,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "dc_12v_output_mode"
      }
     }
    }
@@ -2180,7 +2192,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "display_switch"
      }
     }
    },
@@ -2201,7 +2214,8 @@
        1,
        2,
        3
-      ]
+      ],
+      "state": "display_mode"
      }
     }
    },
@@ -2226,7 +2240,8 @@
        60,
        300,
        1800
-      ]
+      ],
+      "state": "display_timeout_seconds"
      }
     }
    },
@@ -2246,7 +2261,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "temp_unit_fahrenheit"
      }
     }
    },
@@ -2272,7 +2288,8 @@
        360,
        720,
        1440
-      ]
+      ],
+      "state": "device_timeout_minutes"
      }
     }
    },
@@ -2292,7 +2309,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "port_memory_switch"
      }
     }
    },
@@ -2315,7 +2333,8 @@
        90,
        95,
        100
-      ]
+      ],
+      "state": "max_soc"
      },
      "ab": {
       "name": "set_min_soc",
@@ -2326,7 +2345,8 @@
        10,
        15,
        20
-      ]
+      ],
+      "state": "power_cutoff"
      }
     }
    }

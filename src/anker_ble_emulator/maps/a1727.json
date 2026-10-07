@@ -199,7 +199,8 @@
        360,
        720,
        1440
-      ]
+      ],
+      "state": "device_timeout_minutes"
      }
     }
    }
@@ -224,7 +225,8 @@
        60,
        300,
        1800
-      ]
+      ],
+      "state": "display_timeout_seconds"
      }
     }
    }
@@ -248,7 +250,8 @@
        1,
        2,
        3
-      ]
+      ],
+      "state": "display_mode"
      }
     }
    }
@@ -270,7 +273,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "temp_unit_fahrenheit"
      }
     }
    }
@@ -292,7 +296,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "display_switch"
      }
     }
    }

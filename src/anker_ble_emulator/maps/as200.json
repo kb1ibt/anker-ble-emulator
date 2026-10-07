@@ -598,7 +598,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "charger_mode"
      }
     }
    },
@@ -618,7 +619,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "car_battery_type"
      },
      "aa": {
       "name": "set_car_battery_voltage_type",
@@ -626,7 +628,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "car_battery_voltage_type"
      }
     }
    },
@@ -645,7 +648,8 @@
       "type": "02",
       "min": 500,
       "max": 800,
-      "step": 100
+      "step": 100,
+      "state": "charge_power_limit"
      },
      "b4": {
       "name": "set_charge_voltage_limit",
@@ -671,7 +675,8 @@
       "type": "02",
       "min": 500,
       "max": 800,
-      "step": 100
+      "step": 100,
+      "state": "reverse_power_limit"
      },
      "b4": {
       "name": "set_charge_voltage_limit",
@@ -698,7 +703,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "device_switch"
      }
     }
    },
@@ -724,7 +730,8 @@
       "type": "02",
       "min": 720,
       "max": 1440,
-      "step": 30
+      "step": 30,
+      "state": "device_timeout_minutes"
      },
      "bc": {
       "name": "set_device_timeout_switch",
@@ -732,7 +739,8 @@
       "options": [
        1,
        0
-      ]
+      ],
+      "state": "device_timeout_switch"
      }
     }
    },
@@ -752,7 +760,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "temp_unit_fahrenheit"
      }
     }
    },

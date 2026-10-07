@@ -7,6 +7,7 @@ from bleak.exc import BleakError
 
 from anker_ble_emulator import A1783, A2345, EmulatedBleakBackend
 from anker_ble_emulator.layouts import Layout, LayoutError
+from anker_ble_emulator.mcu import McuScript
 from anker_ble_emulator.tlv import decode_fields
 from tests.fixtures.client import SESSION, AppClient, BleakLink, cmd_hex, settle
 
@@ -14,6 +15,8 @@ from tests.fixtures.client import SESSION, AppClient, BleakLink, cmd_hex, settle
 TOKEN = b"owner-token"
 #: ``a5`` of the A1783's ``0421``: temperature, charge state, then ``battery_soc``.
 BATTERY_SOC_OFFSET = 1 + 2
+#: ``a7`` of the A1783's ``0421`` leads with ``ac_output_power_switch``.
+AC_SWITCH_OFFSET = 1
 
 
 def test_every_device_loads_its_layout() -> None:
@@ -80,6 +83,49 @@ async def test_a_value_set_by_name_reaches_the_client() -> None:
 
     telemetry = next(reply for reply in status if cmd_hex(reply.frame) == "4421")
     assert decode_fields(telemetry.plaintext)[0xA5][BATTERY_SOC_OFFSET] == 42
+
+
+def test_replies_and_pushes_can_be_set_and_silenced() -> None:
+    device = A1783()
+
+    device.set_reply(
+        0x100, (0x900, bytes.fromhex("00a10131")), (0x421, b"\xa1\x01\x31")
+    )
+    device.set_push(0x421, bytes.fromhex("a10131a20101"))
+
+    assert [frame.cmd.msgtype for frame in device.mcu.respond(0x100)] == [0x900, 0x421]
+    assert device.mcu.push(0x421).payload == bytes.fromhex("a10131a20101")
+    device.set_reply(0x100)
+    assert device.mcu.respond(0x100) == []
+    device.set_reply(0x101, (0x901, b"\xa1\x01\x31"))
+    assert device.mcu.respond(0x101)[0].payload == b"\xa1\x01\x31"
+    device.use_mcu(McuScript())
+    assert device.mcu.respond(0x057) == []
+    with pytest.raises(KeyError):
+        device.mcu.push(0x421)
+
+
+async def test_an_accepted_setter_shows_in_the_telemetry_after_it() -> None:
+    device = A1783()
+    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
+        link = BleakLink(client, AppClient())
+        await link.start()
+        await link.negotiate(TOKEN)
+        device.press_button()
+        await settle()
+        on = await link.send(0x101, [(0xA1, b"\x21"), (0xA2, b"\x01\x01")], SESSION)
+        off = await link.send(0x101, [(0xA1, b"\x21"), (0xA2, b"\x01\x00")], SESSION)
+        bad = await link.send(0x101, [(0xA1, b"\x21"), (0xA2, b"\x01\x02")], SESSION)
+
+    switch = [
+        decode_fields(reply.plaintext)[0xA7][AC_SWITCH_OFFSET]
+        for reply in (*on, *off, *bad)
+        if cmd_hex(reply.frame) == "4421"
+    ]
+    assert [cmd_hex(reply.frame) for reply in on] == ["4901", "4421"]
+    assert switch == [1, 0, 0]
+    assert on[0].plaintext[0] == 0x00
+    assert bad[0].plaintext[0] == 0x04
 
 
 async def test_going_on_the_cloud_drops_the_link_and_refuses_connects() -> None:

@@ -547,10 +547,20 @@ class Module:
             return Output(self._encode(reply_frame(frame, reply)))
         if (route.destination, route.source) != (ROUTE_MCU, ROUTE_BLE):
             return Output()
+        self._apply(frame.cmd.msgtype, plaintext)
         frames = self.mcu.respond(
             frame.cmd.msgtype, request=plaintext, values=self.values
         )
         return self._relay(link, frames)
+
+    def _apply(self, msgtype: int, plaintext: bytes) -> None:
+        """Show an accepted command's settings in the telemetry that carries them."""
+        layout = self.mcu.layout
+        if layout is None:
+            return
+        for name, value in layout.state_changes(msgtype, plaintext).items():
+            for target in layout.locate(name):
+                self.values.setdefault(target, {})[name] = value
 
     def _relay(self, link: _Link, frames: list[Frame]) -> Output:
         """Encrypt the MCU's cleartext frames for the session and send them."""

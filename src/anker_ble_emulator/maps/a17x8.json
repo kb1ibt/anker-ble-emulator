@@ -176,7 +176,8 @@
       "options": [
        0,
        1
-      ]
+      ],
+      "state": "ac_output_power_switch"
      }
     }
    }
@@ -262,7 +263,8 @@
        1,
        2,
        3
-      ]
+      ],
+      "state": "toggle_timer_mode"
      },
      "a3": {
       "name": null,
