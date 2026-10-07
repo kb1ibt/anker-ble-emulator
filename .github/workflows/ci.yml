@@ -20,6 +20,7 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy
+      - run: uv run sphinx-build -W -b html docs docs/_build/html
 
   test:
     runs-on: ubuntu-latest

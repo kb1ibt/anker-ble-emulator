@@ -44,12 +44,14 @@ source = "vcs"
 dev = [
     "construct-typing>=0.8.1",
     "mypy>=2.4.0",
+    "myst-parser>=5.1.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.16.10",
+    "sphinx>=9.0.4",
 ]
 
 [project.urls]
@@ -76,6 +78,8 @@ ignore = ["COM812", "D203", "D213"]
 # Signatures fixed by bleak's BaseBleakClient.
 "src/anker_ble_emulator/backend.py" = ["ANN401", "ARG002", "FBT001"]
 "src/anker_ble_emulator/testing.py" = ["ANN401", "FBT001"]
+# Sphinx loads its configuration as a script, not a package module.
+"docs/conf.py" = ["INP001"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 15
