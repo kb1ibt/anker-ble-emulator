@@ -32,6 +32,10 @@ dependencies = [
 requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
+[tool.uv]
+# uv.lock is written by uv 0.12; setup-uv installs the highest match.
+required-version = ">=0.12"
+
 [tool.hatch.version]
 # The release tag (v0.2.0) is the version.
 source = "vcs"
