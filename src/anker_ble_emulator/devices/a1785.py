@@ -35,6 +35,7 @@ PROFILE = Profile(
     pushes=(*solix_c_gen2.PUSHES, 0x425),
     device_version=solix_c_gen2.DEVICE_VERSION,
     version_names=solix_c_gen2.version_names("A1783"),
+    known_commands=solix_c_gen2.KNOWN_COMMANDS,
 )
 register(Product.A1785, PROFILE)
 

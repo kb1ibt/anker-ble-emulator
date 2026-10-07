@@ -37,6 +37,8 @@ PROFILE = Profile(
     pushes=(0x303,),
     device_version="v1.1.2.4",
     version_names=("A91B2", "A91B2_mcu", "A91B2_esp32"),
+    # The MCU's fid 0x0f handlers, no-op stubs left out.
+    known_commands=frozenset(range(0x200, 0x20C)) | {0x210, 0x214, 0x218, 0x21B, 0x21C},
 )
 register(Product.A91B2, PROFILE)
 

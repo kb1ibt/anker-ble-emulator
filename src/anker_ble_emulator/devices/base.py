@@ -133,6 +133,8 @@ class Profile:
         version_names: ``0830`` ``a3``-``a5``: the model and component names.
         module_replies: Msgtypes of recorded module session-op replies, by the
             build they were recorded on.
+        known_commands: The MCU firmware's command table: every request it
+            handles, emulated or not.
 
     """
 
@@ -148,6 +150,7 @@ class Profile:
     device_version: str
     version_names: tuple[str, str, str]
     module_replies: Mapping[ModuleBuild, tuple[int, ...]] = field(default_factory=dict)
+    known_commands: frozenset[int] = frozenset()
 
     def frames(self) -> dict[int, bytes]:
         """Return the recorded cleartext payloads by msgtype."""

@@ -38,6 +38,8 @@ PROFILE = Profile(
     pushes=(0x303,),
     device_version="v2.1.1.6",
     version_names=("A2345", "A2345_mcu", "A2345_esp32"),
+    # The MCU's fid 0x0f handlers; 0x201 is a factory reset.
+    known_commands=frozenset(range(0x200, 0x215)) | {0x218, 0x220, 0x221, 0x222, 0x223},
 )
 register(Product.A2345, PROFILE)
 

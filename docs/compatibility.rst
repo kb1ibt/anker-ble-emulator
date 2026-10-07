@@ -25,11 +25,6 @@ Fragmented frames               ✅       ✅        ✅       ✅        ✅   
 Recorded status reply           ✅       ✅        ✅       ✅        ✅       ✅
 Recorded telemetry pushes       ✅       ✅        ✅       ✅        ✅       ✅
 Summary push (``c490``)         ❌       ❌        ✅       ❌        N/A      N/A
-Recorded command replies        ✅       ✅        ✅       ✅        ✅       ✅
-Mapped command acks             ✅       ✅        ✅       ✅        ✅       ✅
-Command value checks            ✅       ✅        ✅       ✅        ✅       ✅
-Telemetry values by name        ✅       ✅        ✅       ✅        ✅       ✅
-Commands shown in telemetry     ✅       ✅        ✅       ✅        ✅       ✅
 Custom replies and pushes       ✅       ✅        ✅       ✅        ✅       ✅
 Cloud mode (no BLE link)        ✅       ✅        ✅       ✅        ✅       ✅
 =============================== ======== ========= ======== ========= ======== ========
@@ -38,18 +33,31 @@ Cloud mode (no BLE link)        ✅       ✅        ✅       ✅        ✅   
   (:doc:`device-sources`). The C Gen 2 models share one display-board build,
   so they answer the same commands; frames that name the unit come from each
   model's own recording.
-- **Mapped** commands are anker-solix-api's: one with no recorded reply gets an
-  ack, ``00`` when its values are ones the map accepts and ``04`` when not.
-- **Values by name** use anker-solix-api's field names
-  (``device.set_values(0x421, battery_soc=55)``).
-- **Commands shown in telemetry**: an accepted command sets the telemetry
-  fields its map links it to (``state_name``), in every message that carries
-  them; a rejected one sets nothing and is answered ``04``. Settings the map
-  scales by a divider or ties to another setting stay unlinked.
 - **Custom replies and pushes**: ``device.set_reply``, ``device.set_push`` and
   ``device.use_mcu`` replace what the MCU sends, for frames no recording has.
 - The A91B2 runs auth mode 0: it negotiates in the clear and authorizes at the
   key exchange, so it has no confirmation step.
+
+Commands and telemetry
+----------------------
+
+Measured against the commands each product is known to have: its MCU
+firmware's command table, with anything anker-solix-api maps or a recording
+answers. Generated from the package at build time.
+
+.. include:: _generated/command_coverage.rst
+
+- **Answered**: from a recording, or, for a command anker-solix-api maps that
+  no recording answers, by an ack: ``00`` when its values are ones the map
+  accepts and ``04`` when not.
+- **Values checked**: the map gives the command's accepted values; the reply's
+  status is the check, recorded reply or not.
+- **Change telemetry**: an accepted command sets the telemetry fields the map
+  links it to (``state_name``) in every message that carries them. Settings the
+  map scales by a divider or ties to another setting stay unlinked.
+- **Telemetry fields typed**: share of the product's mapped telemetry fields
+  whose type is known, so they can be set by name
+  (``device.set_values(0x421, battery_soc=55)``) and built.
 
 Layouts
 -------
