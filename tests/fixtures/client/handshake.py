@@ -23,12 +23,10 @@ def exchange(
     return [reply for data in out.frames if (reply := client.open(data)) is not None]
 
 
-def negotiate(module: Module, client: AppClient, token: bytes) -> dict[int, Reply]:
-    """Run the app's full sequence for the client's outer; replies by msgtype.
-
-    The key exchange reply installs the client's session before ``x022``.
-    """
-    replies: dict[int, Reply] = {}
+def negotiation_steps(
+    client: AppClient, token: bytes
+) -> list[tuple[int, list[tuple[int, bytes]]]]:
+    """Return the app's requests for the client's outer, in order."""
     method = b"\x44" if client.encrypted_outer else b"\x40"
     steps: list[tuple[int, list[tuple[int, bytes]]]] = [
         (0x001, [(0xA1, TIMESTAMP)]),
@@ -45,7 +43,16 @@ def negotiate(module: Module, client: AppClient, token: bytes) -> dict[int, Repl
     ]
     if client.encrypted_outer:
         steps.append((0x027, [(0xA1, TIMESTAMP), (0xA2, token)]))
-    for msgtype, fields in steps:
+    return steps
+
+
+def negotiate(module: Module, client: AppClient, token: bytes) -> dict[int, Reply]:
+    """Run the app's full sequence for the client's outer; replies by msgtype.
+
+    The key exchange reply installs the client's session before ``x022``.
+    """
+    replies: dict[int, Reply] = {}
+    for msgtype, fields in negotiation_steps(client, token):
         for reply in exchange(module, client, msgtype, fields):
             replies[reply.frame.msgtype] = reply
         if msgtype == 0x021:

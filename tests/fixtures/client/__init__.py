@@ -2,7 +2,8 @@
 """The app's side of the link, for driving the emulator in tests."""
 
 from .app_client import NEGOTIATION, SESSION, TIMESTAMP, AppClient, Reply
-from .handshake import TZ, UTC_OFFSET, exchange, negotiate
+from .bleak_link import BleakLink, settle
+from .handshake import TZ, UTC_OFFSET, exchange, negotiate, negotiation_steps
 
 
 __all__ = [
@@ -12,7 +13,10 @@ __all__ = [
     "TZ",
     "UTC_OFFSET",
     "AppClient",
+    "BleakLink",
     "Reply",
     "exchange",
     "negotiate",
+    "negotiation_steps",
+    "settle",
 ]

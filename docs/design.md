@@ -11,6 +11,7 @@ An emulated Anker Solix BLE device (the comms module and the device MCU behind i
 | crypto | `crypto.py` | static GCM, session GCM, session CBC, P-256 device key pair |
 | module | `module.py` | the comms module: negotiation handlers, link state, authorization policy, the authorize timer, the relay to and from the MCU |
 | MCU | `mcu.py` | `McuScript`: recorded cleartext replies by message type, and pushes |
+| products | `products.py` | `Product` part numbers with their SolixBLE class and anker-solix-api category; `Transport`, `Outer`, `Path` |
 | device | `device.py` | `EmulatedDevice` and its per-product subclasses: identity, profile, the module and the MCU script |
 | backend | `backend.py` | `EmulatedBleakBackend(BaseBleakClient)`: GATT services from bleak's own classes, writes into the module, notifications out |
 
@@ -24,8 +25,9 @@ EmulatedDevice(
     serial: str | None = <product default>,
     mac: str = "AA:12:DE:AD:BE:EF",
     transport: Transport = <product default>,
-    outer: Outer = <product default>,
-    path: Path = <product default>,
+    *,
+    outer: Outer | None = <product default>,
+    path: Path | None = <product default>,
 )
 class A1783(EmulatedDevice): ...
 ```
@@ -36,8 +38,8 @@ class A1783(EmulatedDevice): ...
 | `serial` | string, or `None` | the provisioned serial reported in device info. `None` emulates a module with no serial: connect falls back to `ANKER_DEFAULT_SN_1` and device info omits the field |
 | `mac` | `AA:BB:CC:DD:EE:FF` | the BLE MAC reported in device info and the advert |
 | `transport` | `Transport.NEGOTIATED` (service `ff09`), `T2215`, `LEGACY` (service `1780`) | the GATT transport |
-| `outer` | `Outer.ENCRYPTED`, `Outer.PLAIN` | the negotiation outer the module expects: `4xxx` under the static GCM key, or `0xxx` in clear |
-| `path` | `Path.ECDH`, `Path.LEGACY` | key establishment: P-256 ECDH, or the legacy account-key AES |
+| `outer` | `Outer.ENCRYPTED`, `Outer.PLAIN`, keyword-only | the negotiation outer the module expects: `4xxx` under the static GCM key, or `0xxx` in clear. `None` on a transport that doesn't negotiate |
+| `path` | `Path.ECDH`, `Path.LEGACY`, keyword-only | key establishment: P-256 ECDH, or the legacy account-key AES. `None` on a transport that doesn't negotiate |
 
 Defaults are synthetic: serials have the product's length (17 bytes on the A1783, 16 on the A2345), and the MAC is a locally administered unicast address.
 
@@ -55,7 +57,7 @@ Defaults are synthetic: serials have the product's length (17 bytes on the A1783
 
 ## Recorded data
 
-MCU replies and pushes are recorded cleartext from real units, sanitized before they enter the package: the serial, MAC, expansion serials, account tokens and device clocks are replaced with synthetic values of the same length, and the frames are re-encoded. The fixed handshake frames (`4801`, `4803`) are reproduced byte for byte; frames that carry the serial or MAC match a real capture everywhere except those fields.
+MCU replies and pushes are recorded cleartext from real units, packaged as `data/<pn>.json` (msgtype → cleartext hex) by `tools/sanitize_frames.py`. The tool takes the real identifiers on its command line, never stores them, and fails on any printable run it wasn't told is safe. The frames are sanitized before they enter the package: the serial, MAC, expansion serials, account tokens and device clocks are replaced with synthetic values of the same length, and the frames are re-encoded. The fixed handshake frames (`4801`, `4803`) are reproduced byte for byte; frames that carry the serial or MAC match a real capture everywhere except those fields.
 
 ## Testing
 

@@ -63,6 +63,9 @@ ignore = ["COM812", "D203", "D213"]
     "PLC0415", # imports inside test functions (isolation pattern)
 ]
 
+# Signatures fixed by bleak's BaseBleakClient.
+"src/anker_ble_emulator/backend.py" = ["ANN401", "ARG002", "FBT001"]
+
 [tool.ruff.lint.mccabe]
 max-complexity = 15
 
@@ -80,7 +83,7 @@ line-ending = "auto"
 [tool.mypy]
 strict = true
 python_version = "3.11"
-files = ["src", "tests"]
+files = ["src", "tests", "tools"]
 
 [tool.pytest.ini_options]
 addopts = [
