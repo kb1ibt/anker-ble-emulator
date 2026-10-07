@@ -57,6 +57,7 @@ ignore = ["COM812", "D203", "D213"]
 "tests/**" = [
     "S101",    # assert is fine in tests
     "PLR2004", # magic values in assertions
+    "D103",    # test names say what they check
     "ANN",     # type annotations not required in tests
     "ARG",     # unused arguments (pytest fixtures inject via name)
     "PLC0415", # imports inside test functions (isolation pattern)
@@ -119,6 +120,8 @@ parallel = true
 concurrency = ["multiprocessing"]
 branch = true
 sigterm = true
+# sysmon, the default on 3.14+, can't record --cov-context=test
+core = "ctrace"
 
 [tool.coverage.report]
 exclude_also = [
