@@ -32,11 +32,13 @@ from .messages import (
     CONNECT_REPLY,
     DEVICE_INFO_REPLY,
     PUBLIC_KEY_REPLY,
+    ROUTE_BLE,
+    ROUTE_LAYOUT,
     STATUS_REPLY,
     VERSION_REPLY,
     parse_request,
 )
-from .tlv import FieldError
+from .tlv import FieldError, decode_fields
 
 
 if TYPE_CHECKING:
@@ -197,6 +199,17 @@ class _Reply:
 
 def _status(status: int, *, disconnect: bool = False) -> _Reply:
     return _Reply(STATUS_REPLY.build({"status": status}), disconnect)
+
+
+def _reply_path(plaintext: bytes) -> int | None:
+    """Return the channel a session request's reply leaves by: its ``a1`` source."""
+    try:
+        route = decode_fields(plaintext).get(0xA1)
+    except FieldError:
+        return None
+    if route is None or len(route) != ROUTE_LAYOUT.sizeof():
+        return None
+    return int(ROUTE_LAYOUT.parse(route).source)
 
 
 class Module:
@@ -493,12 +506,15 @@ class Module:
         session = link.session
         if not link.authorized or session is None:
             return Output()
+        plaintext = frame.payload
         if frame.cmd.encrypted:
             try:
-                session.decrypt(frame.payload)
+                plaintext = session.decrypt(frame.payload)
             except (InvalidTag, ValueError):
                 _LOGGER.warning("Dropped undecryptable %03x", frame.cmd.msgtype)
                 return Output()
+        if _reply_path(plaintext) != ROUTE_BLE:
+            return Output()
         msgtype = frame.cmd.msgtype
         if msgtype & ~RESPONSE >= MCU_OPCODE_MIN:
             return self._relay(link, self.mcu.respond(msgtype))

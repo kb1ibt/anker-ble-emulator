@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from construct import (
+    BitStruct,
     Bytes,
     Const,
     Construct,
@@ -21,6 +22,7 @@ from construct import (
     Int16ul,
     Int32sl,
     Int32ul,
+    Nibble,
     Optional,
     Prefixed,
     Struct,
@@ -82,6 +84,12 @@ def parse_request(msgtype: int, payload: bytes) -> Fields:
             request[name] = None
     return request
 
+
+#: A session frame's ``a1``: where the frame goes (high nibble) and where it came
+#: from (low nibble); a reply goes back by the request's source.
+ROUTE_LAYOUT = BitStruct("destination" / Nibble, "source" / Nibble)
+#: The BLE channel, as a route's source or destination nibble.
+ROUTE_BLE = 0x1
 
 #: A reply with only its status byte.
 STATUS_REPLY = Struct("status" / Int8ub)

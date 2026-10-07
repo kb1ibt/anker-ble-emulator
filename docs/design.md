@@ -58,9 +58,9 @@ class A1783(EmulatedDevice): ...
 | `serial` | string, or `None` | the provisioned serial reported in device info. `None` emulates a module with no serial: connect falls back to `ANKER_DEFAULT_SN_1` and device info omits the field |
 | `mac` | `AA:BB:CC:DD:EE:FF` | the BLE MAC reported in device info and the advert |
 | `transport` | `Transport.NEGOTIATED` (service `ff09`), `T2215`, `LEGACY` (service `1780`) | the GATT transport |
-| `outer` | `Outer.ENCRYPTED`, `Outer.PLAIN`, keyword-only | the negotiation outer the module expects: `4xxx` under the static GCM key, or `0xxx` in clear. `None` on a transport that doesn't negotiate |
+| `outer` | `Outer.ENCRYPTED`, `Outer.PLAIN`, keyword-only, exclusive with `module` | the negotiation outer the module expects: `4xxx` under the static GCM key, or `0xxx` in clear. `PLAIN` makes the module accept a cleartext connect whatever its build. `None` on a transport that doesn't negotiate |
 | `path` | `Path.ECDH`, `Path.LEGACY`, keyword-only | key establishment: P-256 ECDH, or the legacy account-key AES. `None` on a transport that doesn't negotiate |
-| `module` | `ModuleBuild.V0_2_9_7`, `V0_3_0_6`, `V0_3_3_0`, keyword-only | the comms module's firmware: what `0830` reports, which recorded module replies load, and whether the module enforces the auth mode (v0.3.3.0 only) |
+| `module` | `ModuleBuild.V0_2_9_7`, `V0_3_0_6`, `V0_3_3_0`, keyword-only, exclusive with `outer` | the comms module's firmware: what `0830` reports, which recorded module replies load, and whether the module enforces the auth mode (v0.3.3.0 only) |
 
 Defaults are synthetic: serials have the product's length (17 bytes on the A1783, 16 on the A2345), and the MAC is a locally administered unicast address.
 
@@ -74,6 +74,7 @@ Defaults are synthetic: serials have the product's length (17 bytes on the A1783
 - Authorization: `0027` with an enrolled token authorizes at once; a new token gets `09` with the confirmation window and is granted by a simulated button press (`4827 00` on `030101`). Opcodes `>= 0x40` reach the MCU only once authorized.
 - Module policy: v0.3.3.0 enforces the auth mode on the encrypted outer: it drops a cleartext `0001`, refuses a non-ECDH `0005` method, and answers `0027` only after an encrypted ECDH. Earlier builds (v0.2.9.7, v0.3.0.6) accept either connect frame.
 - The authorize timer: an unauthorized link drops 30 s after connect, or `auth_timeout + 5` s after a confirmation window opens, checked every 10 s.
+- Routing: a session request's `a1` is its route, destination in the high nibble and source in the low (`21`: BLE to the MCU). The reply leaves by the request's source, `a1 (0x30 | source)` (`31` back to BLE, `32` to MQTT), so only a request from BLE draws a reply on the BLE link; one without a route draws none.
 - Relay: post-authorization requests go to the MCU script; its cleartext replies and pushes are encrypted for the session and sent on `03010f`.
 
 ## Recorded data

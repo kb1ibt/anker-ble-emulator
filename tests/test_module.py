@@ -33,6 +33,8 @@ FRAME_4803 = bytes.fromhex(
 )
 #: ``0830 a1``: the module firmware version.
 VERSION_REPLY = bytes.fromhex("00a10876302e332e332e30")
+#: A session request's route: from BLE to the module or MCU.
+BLE_ROUTE = [(0xA1, b"\x21")]
 
 
 def test_stage_one_and_two_replies_match_the_recorded_frames() -> None:
@@ -376,7 +378,7 @@ def test_unrecorded_module_session_opcode_gets_no_reply() -> None:
     client = AppClient()
     negotiate(rig.module, client, ENROLLED_TOKEN)
 
-    out = rig.module.write(client.request(0x030, [], SESSION))
+    out = rig.module.write(client.request(0x030, BLE_ROUTE, SESSION))
 
     assert out.frames == []
 
@@ -384,10 +386,10 @@ def test_unrecorded_module_session_opcode_gets_no_reply() -> None:
 def test_recorded_module_session_reply_comes_back_on_the_request_pattern() -> None:
     rig = build_module(session_replies={0x030: VERSION_REPLY})
     client = AppClient()
-    before = rig.module.write(client.request(0x030, [], SESSION))
+    before = rig.module.write(client.request(0x030, BLE_ROUTE, SESSION))
     negotiate(rig.module, client, ENROLLED_TOKEN)
 
-    out = rig.module.write(client.request(0x030, [], SESSION))
+    out = rig.module.write(client.request(0x030, BLE_ROUTE, SESSION))
 
     reply = client.open(out.frames[0])
     assert before.frames == []
@@ -395,6 +397,42 @@ def test_recorded_module_session_reply_comes_back_on_the_request_pattern() -> No
     assert pattern_hex(reply.frame) == "03000f"
     assert cmd_hex(reply.frame) == "4830"
     assert reply.plaintext == VERSION_REPLY
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param([(0xA1, b"\x22")], id="from MQTT"),
+        pytest.param([(0xA1, b"\x24")], id="from MQTT_2"),
+        pytest.param([], id="no route"),
+        pytest.param([(0xA1, b"\x21\x00")], id="route too long"),
+    ],
+)
+@pytest.mark.parametrize("msgtype", [0x100, 0x030])
+def test_a_request_routed_off_ble_gets_no_ble_reply(
+    fields: list[tuple[int, bytes]], msgtype: int
+) -> None:
+    rig = build_module(session_replies={0x030: VERSION_REPLY})
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+
+    out = rig.module.write(client.request(msgtype, fields, SESSION))
+
+    assert out.frames == []
+
+
+def test_a_request_with_malformed_fields_gets_no_reply() -> None:
+    rig = build_module()
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+    assert client.session is not None
+    request = make_frame(
+        0x00, SESSION, 0x100, client.session.encrypt(b"\xa1\x05\x21"), encrypted=True
+    )
+
+    out = rig.module.write(encode(request))
+
+    assert out.frames == []
 
 
 @pytest.mark.parametrize(

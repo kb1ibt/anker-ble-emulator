@@ -15,6 +15,7 @@ from anker_ble_emulator import (
     A2345,
     PRODUCTS,
     EmulatedDevice,
+    ModuleBuild,
     Outer,
     Path,
     Product,
@@ -68,7 +69,13 @@ def test_no_serial_leaves_it_out_of_the_module() -> None:
 def test_plain_outer_drops_the_enforcement() -> None:
     device = A1783(outer=Outer.PLAIN)
 
+    assert device.module_build is ModuleBuild.V0_3_3_0
     assert not device.module.config.enforce
+
+
+def test_outer_and_module_are_exclusive() -> None:
+    with pytest.raises(TypeError, match="not both"):
+        A1783(outer=Outer.PLAIN, module=ModuleBuild.V0_3_0_6)
 
 
 @pytest.mark.parametrize(

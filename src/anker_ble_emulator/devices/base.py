@@ -217,7 +217,7 @@ def parse_mac(mac: str) -> bytes:
 class EmulatedDevice:
     """One emulated device; a backend connects bleak clients to it."""
 
-    def __init__(  # noqa: PLR0913  # the identity plus the three protocol choices
+    def __init__(  # noqa: PLR0913  # the identity plus the four protocol choices
         self,
         pn: Product,
         serial: str | Unset | None = UNSET,
@@ -236,15 +236,21 @@ class EmulatedDevice:
             serial: The provisioned serial; None for none; unset for the default.
             mac: The BLE MAC.
             transport: The GATT transport; None for the product's.
-            outer: The negotiation outer; None for the profile's.
+            outer: The negotiation outer; None for the profile's. ``PLAIN``
+                makes the module accept a cleartext connect whatever its build.
             path: The key establishment path; None for the profile's.
-            module: The module firmware build; None for the profile's.
+            module: The module firmware build; None for the profile's. Its
+                build decides whether a cleartext connect is refused.
             clock: Time for the module's timers; the monotonic clock if None.
 
         Raises:
             NotImplementedError: If the product or a chosen option isn't emulated.
+            TypeError: If both ``outer`` and ``module`` are given.
 
         """
+        if outer is not None and module is not None:
+            msg = "pass outer or module, not both"
+            raise TypeError(msg)
         profile = PROFILES.get(pn)
         if profile is None:
             msg = f"{pn} has no emulation profile yet"
