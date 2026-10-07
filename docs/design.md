@@ -80,6 +80,18 @@ The package's own tests do not depend on any client library:
 
 Client libraries (SolixBLE, through its `MockDevice` adapter) test against the emulator in their own suites.
 
+## Releases
+
+The version is the git tag (hatch-vcs).
+
+| trigger | TestPyPI | PyPI | GitHub |
+|---|---|---|---|
+| tag `vX.Y.Z` | yes | yes | release; then every pre-release and its tag is deleted |
+| tag `vX.Y.Z-(alpha\|beta\|rc\|dev)N` | yes | no | pre-release |
+| push to `main` (CI green) | no | no | the rolling `dev` pre-release is replaced |
+
+Any other tag is ignored, and the build fails unless the built version equals the tag's (`v0.2.0-rc1` → `0.2.0rc1`).
+
 ## Roadmap
 
 1. Scaffold, CI, TestPyPI publishing.

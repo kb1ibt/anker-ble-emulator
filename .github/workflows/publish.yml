@@ -1,9 +1,16 @@
-name: Publish to TestPyPI
+name: Release
 
+# Releases: vX.Y.Z goes to TestPyPI, PyPI and a GitHub release, then removes
+# every GitHub pre-release and its tag. vX.Y.Z-(alpha|beta|rc|dev)N goes to
+# TestPyPI and a GitHub pre-release. The trusted publishers name this file.
 on:
   push:
     tags:
-      - "v*"
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-alpha[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-beta[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-rc[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-dev[0-9]+"
 
 permissions:
   contents: read
@@ -11,7 +18,23 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      prerelease: ${{ steps.tag.outputs.prerelease }}
     steps:
+      - id: tag
+        name: Check the tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc|dev)[0-9]+)?$ ]]; then
+            echo "::error::$TAG is not vX.Y.Z or vX.Y.Z-(alpha|beta|rc|dev)N"
+            exit 1
+          fi
+          if [[ "$TAG" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -19,6 +42,27 @@ jobs:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v10.2.0
       - run: uv build
+      - name: Check the built version is the tag's
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          uv run --no-project --with packaging python - <<'EOF'
+          import os
+          import pathlib
+          from packaging.utils import parse_sdist_filename, parse_wheel_filename
+          from packaging.version import Version
+
+          expected = Version(os.environ["TAG"].removeprefix("v"))
+          dist = pathlib.Path("dist")
+          wheels = [parse_wheel_filename(p.name)[1] for p in dist.glob("*.whl")]
+          sdists = [parse_sdist_filename(p.name)[1] for p in dist.glob("*.tar.gz")]
+          if len(wheels) != 1 or len(sdists) != 1:
+              raise SystemExit(f"expected one wheel and one sdist, got {wheels} {sdists}")
+          for version in (*wheels, *sdists):
+              if version != expected:
+                  raise SystemExit(f"built {version}, the tag says {expected}")
+          print(f"dist/ is {expected}")
+          EOF
       - uses: actions/upload-artifact@v7
         with:
           name: dist
@@ -40,3 +84,61 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    needs: [build, publish-testpypi]
+    if: needs.build.outputs.prerelease == 'false'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/anker-ble-emulator
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: [build, publish-testpypi, publish-pypi]
+    # publish-pypi is skipped for a pre-release; run once the rest succeeded.
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          flags=()
+          if [[ "$PRERELEASE" == "true" ]]; then flags+=(--prerelease); fi
+          gh release create "$TAG" dist/* --verify-tag --title "$TAG" --generate-notes "${flags[@]}"
+
+  cleanup:
+    needs: [build, github-release]
+    if: needs.build.outputs.prerelease == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Delete every pre-release and its tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release list --limit 1000 --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease) | .tagName' |
+          while read -r tag; do
+            echo "deleting $tag"
+            gh release delete "$tag" --cleanup-tag --yes
+          done

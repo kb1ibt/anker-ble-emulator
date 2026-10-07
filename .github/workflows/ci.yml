@@ -37,3 +37,35 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --locked
       - run: uv run pytest -n8 -rs
+
+  # A rolling GitHub pre-release of main; a full release deletes it.
+  dev-release:
+    needs: [lint, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: dev-release
+      cancel-in-progress: true
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uv build
+      - name: Replace the dev pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version=$(uv run --no-project --with packaging python -c \
+            "import pathlib; from packaging.utils import parse_wheel_filename as p; print(p(next(pathlib.Path('dist').glob('*.whl')).name)[1])")
+          if gh release view dev >/dev/null 2>&1; then
+            gh release delete dev --cleanup-tag --yes
+          fi
+          gh release create dev dist/*.whl dist/*.tar.gz --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Development build $version" \
+            --notes "Built from ${GITHUB_SHA} on main. Replaced on every push; removed by the next full release."
