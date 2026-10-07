@@ -15,4 +15,14 @@ device.press_button()  # grant a pending owner confirmation
 device.push(0x421)  # make the MCU push its recorded telemetry
 ```
 
+For a client library that connects through bleak-retry-connector, `EmulatedConnection` patches its `establish_connection` so the library's own connect path lands on the emulator:
+
+```python
+from anker_ble_emulator.testing import EmulatedConnection
+
+async with EmulatedConnection(A1783()) as emulated:  # patches SolixBLE.device.establish_connection
+    ...  # the library connects, negotiates and polls as against a real device
+    emulated.check_assertions()  # if you set expect_ordered(...)
+```
+
 The emulated module runs the real negotiation (static-key GCM, P-256 ECDH, the session cipher), the module's authorization policy and its authorize timer; the MCU behind it answers with recorded, sanitized frames. See [docs/design.md](docs/design.md).

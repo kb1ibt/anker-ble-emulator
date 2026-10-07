@@ -67,6 +67,7 @@ ignore = ["COM812", "D203", "D213"]
 
 # Signatures fixed by bleak's BaseBleakClient.
 "src/anker_ble_emulator/backend.py" = ["ANN401", "ARG002", "FBT001"]
+"src/anker_ble_emulator/testing.py" = ["ANN401", "FBT001"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 15

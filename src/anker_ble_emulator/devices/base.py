@@ -253,6 +253,14 @@ class EmulatedDevice:
         """Make the MCU push its recorded frame of ``msgtype``."""
         self._emit(self.module.push(msgtype))
 
+    def notify(self, frames: list[bytes]) -> None:
+        """Send raw bytes to the connected client as notifications, in order."""
+        self._emit(Output(frames))
+
+    def drop(self) -> None:
+        """Drop the link from the device side."""
+        self._emit(Output(disconnect=True))
+
     def _emit(self, output: Output) -> None:
         if self._listener is not None:
             self._listener(output)

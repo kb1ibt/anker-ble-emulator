@@ -15,6 +15,7 @@ An emulated Anker Solix BLE device (the comms module and the device MCU behind i
 | products | `products.py` | `Product` part numbers with their SolixBLE class and anker-solix-api category; `Transport`, `Outer`, `Path` |
 | devices | `devices/` | `base.py`: `EmulatedDevice`, `Profile`, `Advert`; one module per product (`a1783.py`) holding its profile and subclass; recorded frames in `devices/data/` |
 | backend | `backend.py` | `EmulatedBleakBackend(BaseBleakClient)`: GATT services from bleak's own classes, writes into the module, notifications out |
+| testing | `testing.py` | `EmulatedConnection`: patches a client library's `establish_connection` (SolixBLE's by default) to return a real connected `BleakClient` on the emulator; keeps SolixBLE `MockDevice`'s names (`expect_ordered` as an optional write assertion, `refuse_after`, `disconnect`, `send_data`, `new_connection_error`, `allow_connect`, `check_assertions`, `writes`) |
 
 Every wire parse and build is a [construct](https://construct.readthedocs.io) layout: the frame (`PATTERN_LAYOUT`, `COMMAND_LAYOUT` with the link flags and 12-bit msgtype, `FRAME_LAYOUT`, `FRAGMENT_LAYOUT`), the fields and messages, the key material (`GCM_KEYS_LAYOUT`, `CBC_KEYS_LAYOUT` over the shared secret), the P-256 point (`POINT_LAYOUT`) and the advert record (`ADVERT_LAYOUT`). Frames and parsed messages are construct `Container`s; plain classes hold only settings and link state, which have no wire form.
 
