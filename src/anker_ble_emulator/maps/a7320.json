@@ -1,0 +1,413 @@
+{
+ "pn": "A7320",
+ "source": "anker-solix-api 29eece3 2026-10-06",
+ "messages": {
+  "0405": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "device_sn"
+    },
+    {
+     "tag": "a3",
+     "name": "paired_device_sn"
+    },
+    {
+     "tag": "a4",
+     "name": "tbd_0405_a4?"
+    },
+    {
+     "tag": "a5",
+     "name": null,
+     "bytes": [
+      {
+       "name": "tbd_0405_a5_u16_01?",
+       "type": "02",
+       "offset": 0
+      },
+      {
+       "name": "ac_dc_mode",
+       "type": "01",
+       "offset": 2
+      },
+      {
+       "name": "tbd_0405_a5_u16_03?",
+       "type": "02",
+       "offset": 4
+      }
+     ]
+    },
+    {
+     "tag": "a7",
+     "name": "sw_version?"
+    },
+    {
+     "tag": "aa",
+     "name": null,
+     "bytes": [
+      {
+       "name": "tbd_0405_aa_u32_01?",
+       "type": "03",
+       "offset": 0
+      },
+      {
+       "name": "tbd_0405_aa_u32_02?",
+       "type": "03",
+       "offset": 4
+      },
+      {
+       "name": "tbd_0405_aa_u32_03?",
+       "type": "03",
+       "offset": 8
+      },
+      {
+       "name": "tbd_0405_aa_u32_04?",
+       "type": "03",
+       "offset": 18
+      },
+      {
+       "name": "tbd_0405_aa_u16_05?",
+       "type": "02",
+       "offset": 22
+      },
+      {
+       "name": "tbd_0405_aa_u16_06?",
+       "type": "02",
+       "offset": 24
+      }
+     ]
+    },
+    {
+     "tag": "ac",
+     "name": null,
+     "bytes": [
+      {
+       "name": "tbd_0405_ac_u32_01?",
+       "type": "03",
+       "offset": 64
+      },
+      {
+       "name": "lpg_remaining_percent",
+       "type": "02",
+       "offset": 68
+      },
+      {
+       "name": "tbd_0405_ac_u32_03?",
+       "type": "03",
+       "offset": 72
+      },
+      {
+       "name": "lpg_remaining_lb",
+       "type": "02",
+       "offset": 82
+      },
+      {
+       "name": "lpg_full_lb",
+       "type": "02",
+       "offset": 86
+      }
+     ]
+    },
+    {
+     "tag": "ae",
+     "name": null,
+     "bytes": [
+      {
+       "name": "tbd_0405_ae_u16_01?",
+       "type": "02",
+       "offset": 0
+      },
+      {
+       "name": "tbd_0405_ae_u16_02?",
+       "type": "02",
+       "offset": 2
+      },
+      {
+       "name": "tbd_0405_ae_u16_03?",
+       "type": "02",
+       "offset": 4
+      },
+      {
+       "name": "tbd_0405_ae_u16_04?",
+       "type": "02",
+       "offset": 6
+      }
+     ]
+    },
+    {
+     "tag": "af",
+     "name": "tbd_0405_af?"
+    },
+    {
+     "tag": "b0",
+     "name": "tbd_0405_b0?"
+    },
+    {
+     "tag": "b2",
+     "name": "tbd_0405_b2?"
+    },
+    {
+     "tag": "b3",
+     "name": "tbd_0405_b3?"
+    },
+    {
+     "tag": "b4",
+     "name": "tbd_0405_b4?"
+    },
+    {
+     "tag": "b5",
+     "name": "temperature?"
+    },
+    {
+     "tag": "b6",
+     "name": "tbd_0405_b6?"
+    },
+    {
+     "tag": "b7",
+     "name": "tbd_0405_b7?"
+    },
+    {
+     "tag": "b8",
+     "name": "tbd_0405_b8?"
+    },
+    {
+     "tag": "b9",
+     "name": "tbd_0405_b9?"
+    },
+    {
+     "tag": "ba",
+     "name": "tbd_0405_ba?"
+    },
+    {
+     "tag": "bb",
+     "name": "tbd_0405_bb?"
+    },
+    {
+     "tag": "bc",
+     "name": "generator_mode"
+    },
+    {
+     "tag": "bd",
+     "name": "runtime_hours?"
+    },
+    {
+     "tag": "be",
+     "name": "tbd_0405_be?"
+    },
+    {
+     "tag": "bf",
+     "name": "tbd_0405_bf?"
+    },
+    {
+     "tag": "c0",
+     "name": "tbd_0405_c0?"
+    },
+    {
+     "tag": "c1",
+     "name": "tbd_0405_c1?"
+    },
+    {
+     "tag": "c2",
+     "name": "tbd_0405_c2?"
+    },
+    {
+     "tag": "c3",
+     "name": "tbd_0405_c3?"
+    },
+    {
+     "tag": "c4",
+     "name": "tbd_0405_c4?"
+    },
+    {
+     "tag": "c5",
+     "name": "tbd_0405_c5?"
+    },
+    {
+     "tag": "c6",
+     "name": "tbd_0405_c6?"
+    },
+    {
+     "tag": "ca",
+     "name": "tbd_0405_ca?"
+    },
+    {
+     "tag": "cb",
+     "name": "tbd_0405_cb?"
+    },
+    {
+     "tag": "fd",
+     "name": "tbd_0405_fd?"
+    },
+    {
+     "tag": "fe",
+     "name": "msg_timestamp",
+     "type": "03",
+     "length": 5,
+     "from": "name"
+    }
+   ]
+  },
+  "0408": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "device_sn"
+    },
+    {
+     "tag": "a3",
+     "name": "paired_device_sn"
+    },
+    {
+     "tag": "a4",
+     "name": "tbd_0408_a4?"
+    },
+    {
+     "tag": "a5",
+     "name": null,
+     "bytes": [
+      {
+       "name": "tbd_0408_a5_u16_01?",
+       "type": "02",
+       "offset": 0
+      },
+      {
+       "name": "ac_dc_mode",
+       "type": "01",
+       "offset": 2
+      },
+      {
+       "name": "tbd_0408_a5_u16_03?",
+       "type": "02",
+       "offset": 4
+      }
+     ]
+    },
+    {
+     "tag": "ae",
+     "name": null,
+     "bytes": [
+      {
+       "name": "tbd_0408_ae_u16_01?",
+       "type": "02",
+       "offset": 0
+      },
+      {
+       "name": "tbd_0408_ae_u16_02?",
+       "type": "02",
+       "offset": 2
+      },
+      {
+       "name": "tbd_0408_ae_u16_03?",
+       "type": "02",
+       "offset": 4
+      },
+      {
+       "name": "tbd_0408_ae_u16_04?",
+       "type": "02",
+       "offset": 6
+      }
+     ]
+    },
+    {
+     "tag": "af",
+     "name": "tbd_0408_af?"
+    },
+    {
+     "tag": "b0",
+     "name": "tbd_0408_b0?"
+    },
+    {
+     "tag": "b2",
+     "name": "tbd_0408_b2?"
+    },
+    {
+     "tag": "b3",
+     "name": "tbd_0408_b3?"
+    },
+    {
+     "tag": "b4",
+     "name": "tbd_0408_b4?"
+    },
+    {
+     "tag": "b5",
+     "name": "tbd_0408_b5?"
+    },
+    {
+     "tag": "b6",
+     "name": "tbd_0408_b6?"
+    },
+    {
+     "tag": "b7",
+     "name": "tbd_0408_b7?"
+    },
+    {
+     "tag": "fd",
+     "name": "tbd_0408_fd?"
+    },
+    {
+     "tag": "fe",
+     "name": "msg_timestamp",
+     "type": "03",
+     "length": 5,
+     "from": "name"
+    }
+   ]
+  }
+ },
+ "commands": {
+  "0057": [
+   {
+    "command": "realtime_trigger",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_realtime_trigger",
+      "type": "01",
+      "default": 1,
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a3": {
+      "name": "trigger_timeout_sec",
+      "type": "03",
+      "min": 30,
+      "max": 600,
+      "default": 60
+     }
+    }
+   }
+  ],
+  "0073": [
+   {
+    "command": "ac_dc_mode_select",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a5": {
+      "name": "set_ac_dc_mode",
+      "type": "01",
+      "options": [
+       1,
+       3
+      ]
+     }
+    }
+   }
+  ]
+ }
+}

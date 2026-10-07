@@ -1,0 +1,164 @@
+{
+ "pn": "AE1X0",
+ "source": "anker-solix-api 29eece3 2026-10-06",
+ "messages": {
+  "0405": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "device_sn"
+    },
+    {
+     "tag": "a6",
+     "name": "sw_version"
+    },
+    {
+     "tag": "a8",
+     "name": "grid_power_signed_l1"
+    },
+    {
+     "tag": "a9",
+     "name": "grid_power_signed_l2"
+    },
+    {
+     "tag": "aa",
+     "name": "grid_power_signed_l3"
+    },
+    {
+     "tag": "ab",
+     "name": "grid_power_signed"
+    },
+    {
+     "tag": "ac",
+     "name": "voltage_l1"
+    },
+    {
+     "tag": "ad",
+     "name": "voltage_l2"
+    },
+    {
+     "tag": "ae",
+     "name": "voltage_l3"
+    },
+    {
+     "tag": "af",
+     "name": "current_l1"
+    },
+    {
+     "tag": "b0",
+     "name": "current_l2"
+    },
+    {
+     "tag": "b1",
+     "name": "current_l3"
+    },
+    {
+     "tag": "b2",
+     "name": "grid_export_energy"
+    },
+    {
+     "tag": "b3",
+     "name": "grid_import_energy"
+    }
+   ]
+  },
+  "0428": {
+   "topic": "state_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "grid_power_signed_l1"
+    },
+    {
+     "tag": "a3",
+     "name": "grid_power_signed_l2"
+    },
+    {
+     "tag": "a4",
+     "name": "grid_power_signed_l3"
+    },
+    {
+     "tag": "a5",
+     "name": "grid_power_signed"
+    },
+    {
+     "tag": "a6",
+     "name": "grid_export_energy_l1"
+    },
+    {
+     "tag": "a7",
+     "name": "grid_export_energy_l2"
+    },
+    {
+     "tag": "a8",
+     "name": "grid_export_energy_l3"
+    },
+    {
+     "tag": "a9",
+     "name": "grid_import_energy_l1"
+    },
+    {
+     "tag": "aa",
+     "name": "grid_import_energy_l2"
+    },
+    {
+     "tag": "ab",
+     "name": "grid_import_energy_l3"
+    },
+    {
+     "tag": "ac",
+     "name": "grid_export_energy"
+    },
+    {
+     "tag": "ad",
+     "name": "grid_import_energy"
+    },
+    {
+     "tag": "ae",
+     "name": "energy_local_timestamp"
+    },
+    {
+     "tag": "af",
+     "name": "energy_utc_timestamp"
+    },
+    {
+     "tag": "b0",
+     "name": "device_sn"
+    }
+   ]
+  }
+ },
+ "commands": {
+  "0057": [
+   {
+    "command": "realtime_trigger",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_realtime_trigger",
+      "type": "01",
+      "default": 1,
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a3": {
+      "name": "trigger_timeout_sec",
+      "type": "03",
+      "min": 30,
+      "max": 600,
+      "default": 60
+     }
+    }
+   }
+  ]
+ }
+}

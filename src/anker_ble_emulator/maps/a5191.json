@@ -1,0 +1,1227 @@
+{
+ "pn": "A5191",
+ "source": "anker-solix-api 29eece3 2026-10-06",
+ "messages": {
+  "0400": {
+   "topic": "state_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "unknown_setting_400_a2"
+    },
+    {
+     "tag": "a3",
+     "name": "unknown_setting_400_a3"
+    },
+    {
+     "tag": "a4",
+     "name": "unknown_setting_400_a4"
+    }
+   ]
+  },
+  "0403": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a5",
+     "name": "charging_window_seconds"
+    },
+    {
+     "tag": "a6",
+     "name": "solar_evcharge_min_current?"
+    }
+   ]
+  },
+  "0405": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "unknown_limit?"
+    },
+    {
+     "tag": "a3",
+     "name": "plug_lock_switch"
+    },
+    {
+     "tag": "a4",
+     "name": "auto_start_switch"
+    },
+    {
+     "tag": "a8",
+     "name": "max_evcharge_current"
+    },
+    {
+     "tag": "aa",
+     "name": "light_brightness"
+    },
+    {
+     "tag": "ac",
+     "name": "auto_charge_restart_switch"
+    },
+    {
+     "tag": "ad",
+     "name": "random_delay_switch"
+    },
+    {
+     "tag": "af",
+     "name": "wipe_up_mode"
+    },
+    {
+     "tag": "b0",
+     "name": "wipe_down_mode"
+    },
+    {
+     "tag": "b2",
+     "name": "smart_touch_mode"
+    },
+    {
+     "tag": "b4",
+     "name": "light_off_schedule_switch"
+    },
+    {
+     "tag": "b5",
+     "name": "light_off_start_time"
+    },
+    {
+     "tag": "b6",
+     "name": "light_off_end_time"
+    },
+    {
+     "tag": "b7",
+     "name": "modbus_switch"
+    },
+    {
+     "tag": "cc",
+     "name": "tcp_timeout_seconds"
+    },
+    {
+     "tag": "ce",
+     "name": "max_current_limit"
+    },
+    {
+     "tag": "cf",
+     "name": "tcp_port"
+    },
+    {
+     "tag": "d0",
+     "name": "ip_address"
+    },
+    {
+     "tag": "d3",
+     "name": "load_balance_switch"
+    },
+    {
+     "tag": "d4",
+     "name": "main_breaker_limit"
+    },
+    {
+     "tag": "d5",
+     "name": "load_balance_setting_d5"
+    },
+    {
+     "tag": "d6",
+     "name": "load_balance_setting_d6"
+    },
+    {
+     "tag": "d7",
+     "name": "load_balance_monitor_device"
+    },
+    {
+     "tag": "d8",
+     "name": "solar_evcharge_switch"
+    },
+    {
+     "tag": "d9",
+     "name": "solar_evcharge_mode"
+    },
+    {
+     "tag": "da",
+     "name": "solar_evcharge_min_current"
+    },
+    {
+     "tag": "db",
+     "name": "phase_operating_mode"
+    },
+    {
+     "tag": "dc",
+     "name": "solar_evcharge_monitoring_mode"
+    },
+    {
+     "tag": "dd",
+     "name": "auto_phase_switch"
+    },
+    {
+     "tag": "de",
+     "name": "solar_evcharge_monitor_device"
+    },
+    {
+     "tag": "df",
+     "name": "boost_status"
+    },
+    {
+     "tag": "e0",
+     "name": "cp_signal_status"
+    },
+    {
+     "tag": "e2",
+     "name": "plug_status"
+    },
+    {
+     "tag": "e3",
+     "name": "ev_charger_status"
+    },
+    {
+     "tag": "e6",
+     "name": "schedule_switch"
+    },
+    {
+     "tag": "e7",
+     "name": "week_start_time"
+    },
+    {
+     "tag": "e8",
+     "name": "week_end_time"
+    },
+    {
+     "tag": "e9",
+     "name": "weekend_start_time"
+    },
+    {
+     "tag": "ea",
+     "name": "weekend_end_time"
+    },
+    {
+     "tag": "eb",
+     "name": "weekend_mode"
+    },
+    {
+     "tag": "ec",
+     "name": "schedule_mode"
+    },
+    {
+     "tag": "f1",
+     "name": "sw_version"
+    },
+    {
+     "tag": "f2",
+     "name": "sw_controller",
+     "type": "02",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "f3",
+     "name": "hw_version"
+    },
+    {
+     "tag": "fe",
+     "name": "min_current_limit"
+    }
+   ]
+  },
+  "0410": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "voltage_l1"
+    },
+    {
+     "tag": "a3",
+     "name": "voltage_l2"
+    },
+    {
+     "tag": "a4",
+     "name": "voltage_l3"
+    },
+    {
+     "tag": "a5",
+     "name": "current_l1"
+    },
+    {
+     "tag": "a6",
+     "name": "current_l2"
+    },
+    {
+     "tag": "a7",
+     "name": "current_l3"
+    },
+    {
+     "tag": "a8",
+     "name": "bat_charge_power"
+    },
+    {
+     "tag": "a9",
+     "name": "charging_duration_seconds"
+    },
+    {
+     "tag": "aa",
+     "name": "charging_energy"
+    },
+    {
+     "tag": "ac",
+     "name": "charging_mode?"
+    },
+    {
+     "tag": "ab",
+     "name": "charging_start_timestamp"
+    },
+    {
+     "tag": "ad",
+     "name": "plug_countdown_seconds"
+    },
+    {
+     "tag": "ae",
+     "name": "start_countdown_seconds"
+    },
+    {
+     "tag": "af",
+     "name": "charging_window_seconds"
+    },
+    {
+     "tag": "b0",
+     "name": "power_l1"
+    },
+    {
+     "tag": "b1",
+     "name": "power_l2"
+    },
+    {
+     "tag": "b2",
+     "name": "power_l3"
+    },
+    {
+     "tag": "b3",
+     "name": "charging_energy_l1"
+    },
+    {
+     "tag": "b4",
+     "name": "charging_energy_l2"
+    },
+    {
+     "tag": "b5",
+     "name": "charging_energy_l3"
+    },
+    {
+     "tag": "b6",
+     "name": "order_id?"
+    },
+    {
+     "tag": "b7",
+     "name": "unknown_b7?"
+    },
+    {
+     "tag": "b8",
+     "name": "ocpp_connect_status"
+    },
+    {
+     "tag": "ba",
+     "name": "phase_operating_mode"
+    },
+    {
+     "tag": "bb",
+     "name": "ev_charger_status"
+    }
+   ]
+  },
+  "0840": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "unknown_limit?"
+    },
+    {
+     "tag": "a3",
+     "name": "plug_lock_switch"
+    },
+    {
+     "tag": "a4",
+     "name": "auto_start_switch"
+    },
+    {
+     "tag": "a8",
+     "name": "max_evcharge_current"
+    },
+    {
+     "tag": "aa",
+     "name": "light_brightness"
+    },
+    {
+     "tag": "ac",
+     "name": "auto_charge_restart_switch"
+    },
+    {
+     "tag": "ad",
+     "name": "random_delay_switch"
+    },
+    {
+     "tag": "af",
+     "name": "wipe_up_mode"
+    },
+    {
+     "tag": "b0",
+     "name": "wipe_down_mode"
+    },
+    {
+     "tag": "b2",
+     "name": "smart_touch_mode"
+    },
+    {
+     "tag": "b4",
+     "name": "light_off_schedule_switch"
+    },
+    {
+     "tag": "b5",
+     "name": "light_off_start_time"
+    },
+    {
+     "tag": "b6",
+     "name": "light_off_end_time"
+    },
+    {
+     "tag": "b7",
+     "name": "modbus_switch"
+    },
+    {
+     "tag": "cc",
+     "name": "tcp_timeout_seconds"
+    },
+    {
+     "tag": "ce",
+     "name": "max_current_limit"
+    },
+    {
+     "tag": "cf",
+     "name": "tcp_port"
+    },
+    {
+     "tag": "d0",
+     "name": "ip_address"
+    },
+    {
+     "tag": "d3",
+     "name": "load_balance_switch"
+    },
+    {
+     "tag": "d4",
+     "name": "main_breaker_limit"
+    },
+    {
+     "tag": "d5",
+     "name": "load_balance_setting_d5"
+    },
+    {
+     "tag": "d6",
+     "name": "load_balance_setting_d6"
+    },
+    {
+     "tag": "d7",
+     "name": "load_balance_monitor_device"
+    },
+    {
+     "tag": "d8",
+     "name": "solar_evcharge_switch"
+    },
+    {
+     "tag": "d9",
+     "name": "solar_evcharge_mode"
+    },
+    {
+     "tag": "da",
+     "name": "solar_evcharge_min_current"
+    },
+    {
+     "tag": "db",
+     "name": "phase_operating_mode"
+    },
+    {
+     "tag": "dc",
+     "name": "solar_evcharge_monitoring_mode"
+    },
+    {
+     "tag": "dd",
+     "name": "auto_phase_switch"
+    },
+    {
+     "tag": "de",
+     "name": "solar_evcharge_monitor_device"
+    },
+    {
+     "tag": "df",
+     "name": "boost_status"
+    },
+    {
+     "tag": "e0",
+     "name": "cp_signal_status"
+    },
+    {
+     "tag": "e2",
+     "name": "plug_status"
+    },
+    {
+     "tag": "e3",
+     "name": "ev_charger_status"
+    },
+    {
+     "tag": "e6",
+     "name": "schedule_switch"
+    },
+    {
+     "tag": "e7",
+     "name": "week_start_time"
+    },
+    {
+     "tag": "e8",
+     "name": "week_end_time"
+    },
+    {
+     "tag": "e9",
+     "name": "weekend_start_time"
+    },
+    {
+     "tag": "ea",
+     "name": "weekend_end_time"
+    },
+    {
+     "tag": "eb",
+     "name": "weekend_mode"
+    },
+    {
+     "tag": "ec",
+     "name": "schedule_mode"
+    },
+    {
+     "tag": "f1",
+     "name": "sw_version"
+    },
+    {
+     "tag": "f2",
+     "name": "sw_controller",
+     "type": "02",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "f3",
+     "name": "hw_version"
+    },
+    {
+     "tag": "fe",
+     "name": "min_current_limit"
+    }
+   ]
+  },
+  "0900": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "unknown_limit?"
+    },
+    {
+     "tag": "a3",
+     "name": "plug_lock_switch"
+    },
+    {
+     "tag": "a4",
+     "name": "auto_start_switch"
+    },
+    {
+     "tag": "a8",
+     "name": "max_evcharge_current"
+    },
+    {
+     "tag": "aa",
+     "name": "light_brightness"
+    },
+    {
+     "tag": "ac",
+     "name": "auto_charge_restart_switch"
+    },
+    {
+     "tag": "ad",
+     "name": "random_delay_switch"
+    },
+    {
+     "tag": "af",
+     "name": "wipe_up_mode"
+    },
+    {
+     "tag": "b0",
+     "name": "wipe_down_mode"
+    },
+    {
+     "tag": "b2",
+     "name": "smart_touch_mode"
+    },
+    {
+     "tag": "b4",
+     "name": "light_off_schedule_switch"
+    },
+    {
+     "tag": "b5",
+     "name": "light_off_start_time"
+    },
+    {
+     "tag": "b6",
+     "name": "light_off_end_time"
+    },
+    {
+     "tag": "b7",
+     "name": "modbus_switch"
+    },
+    {
+     "tag": "cc",
+     "name": "tcp_timeout_seconds"
+    },
+    {
+     "tag": "ce",
+     "name": "max_current_limit"
+    },
+    {
+     "tag": "cf",
+     "name": "tcp_port"
+    },
+    {
+     "tag": "d0",
+     "name": "ip_address"
+    },
+    {
+     "tag": "d3",
+     "name": "load_balance_switch"
+    },
+    {
+     "tag": "d4",
+     "name": "main_breaker_limit"
+    },
+    {
+     "tag": "d5",
+     "name": "load_balance_setting_d5"
+    },
+    {
+     "tag": "d6",
+     "name": "load_balance_setting_d6"
+    },
+    {
+     "tag": "d7",
+     "name": "load_balance_monitor_device"
+    },
+    {
+     "tag": "d8",
+     "name": "solar_evcharge_switch"
+    },
+    {
+     "tag": "d9",
+     "name": "solar_evcharge_mode"
+    },
+    {
+     "tag": "da",
+     "name": "solar_evcharge_min_current"
+    },
+    {
+     "tag": "db",
+     "name": "phase_operating_mode"
+    },
+    {
+     "tag": "dc",
+     "name": "solar_evcharge_monitoring_mode"
+    },
+    {
+     "tag": "dd",
+     "name": "auto_phase_switch"
+    },
+    {
+     "tag": "de",
+     "name": "solar_evcharge_monitor_device"
+    },
+    {
+     "tag": "df",
+     "name": "boost_status"
+    },
+    {
+     "tag": "e0",
+     "name": "cp_signal_status"
+    },
+    {
+     "tag": "e2",
+     "name": "plug_status"
+    },
+    {
+     "tag": "e3",
+     "name": "ev_charger_status"
+    },
+    {
+     "tag": "e6",
+     "name": "schedule_switch"
+    },
+    {
+     "tag": "e7",
+     "name": "week_start_time"
+    },
+    {
+     "tag": "e8",
+     "name": "week_end_time"
+    },
+    {
+     "tag": "e9",
+     "name": "weekend_start_time"
+    },
+    {
+     "tag": "ea",
+     "name": "weekend_end_time"
+    },
+    {
+     "tag": "eb",
+     "name": "weekend_mode"
+    },
+    {
+     "tag": "ec",
+     "name": "schedule_mode"
+    },
+    {
+     "tag": "f1",
+     "name": "sw_version"
+    },
+    {
+     "tag": "f2",
+     "name": "sw_controller",
+     "type": "02",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "f3",
+     "name": "hw_version"
+    },
+    {
+     "tag": "fe",
+     "name": "min_current_limit"
+    }
+   ]
+  }
+ },
+ "commands": {
+  "0057": [
+   {
+    "command": "realtime_trigger",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_realtime_trigger",
+      "type": "01",
+      "default": 1,
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a3": {
+      "name": "trigger_timeout_sec",
+      "type": "03",
+      "min": 30,
+      "max": 600,
+      "default": 60
+     }
+    }
+   }
+  ],
+  "0100": [
+   {
+    "command": "plug_lock_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a3": {
+      "name": "set_plug_lock_switch",
+      "type": "01",
+      "options": [
+       1,
+       2
+      ]
+     }
+    }
+   },
+   {
+    "command": "ev_auto_start_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a4": {
+      "name": "set_auto_start_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   },
+   {
+    "command": "ev_max_charge_current",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a8": {
+      "name": "set_max_evcharge_current",
+      "type": "02",
+      "min": 6,
+      "max": 16,
+      "step": 1
+     }
+    }
+   },
+   {
+    "command": "light_brightness",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "aa": {
+      "name": "set_light_brightness",
+      "type": "01",
+      "min": 0,
+      "max": 100,
+      "step": 10
+     }
+    }
+   },
+   {
+    "command": "ev_auto_charge_restart_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "ac": {
+      "name": "set_auto_charge_restart_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   },
+   {
+    "command": "ev_random_delay_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "ad": {
+      "name": "set_random_delay_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   },
+   {
+    "command": "swipe_up_mode_select",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "af": {
+      "name": "set_wipe_up_mode_select",
+      "type": "01",
+      "options": [
+       0,
+       1,
+       2,
+       3
+      ]
+     }
+    }
+   },
+   {
+    "command": "swipe_down_mode_select",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "b0": {
+      "name": "set_wipe_down_mode_select",
+      "type": "01",
+      "options": [
+       0,
+       1,
+       2,
+       3
+      ]
+     }
+    }
+   },
+   {
+    "command": "smart_touch_mode_select",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "b2": {
+      "name": "set_smart_touch_mode_select",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   },
+   {
+    "command": "light_off_schedule",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "b4": {
+      "name": "set_light_off_schedule_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     },
+     "b5": {
+      "name": "set_light_off_start_time",
+      "type": "02",
+      "min": 0,
+      "max": 5947,
+      "step": 1
+     },
+     "b6": {
+      "name": "set_light_off_end_time",
+      "type": "02",
+      "min": 0,
+      "max": 5947,
+      "step": 1
+     }
+    }
+   },
+   {
+    "command": "modbus_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "b7": {
+      "name": "set_modbus_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  ],
+  "0105": [
+   {
+    "command": "ev_charger_mode_select",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_ev_charger_mode",
+      "type": "01",
+      "options": [
+       1,
+       2,
+       3,
+       4
+      ]
+     }
+    }
+   }
+  ],
+  "0106": [
+   {
+    "command": "ev_charger_schedule_settings",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_schedule_switch",
+      "type": "01",
+      "options": [
+       1,
+       2
+      ]
+     },
+     "a8": {
+      "name": "set_schedule_mode",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   },
+   {
+    "command": "ev_charger_schedule_times",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a3": {
+      "name": "set_week_start_time",
+      "type": "02",
+      "min": 0,
+      "max": 5947,
+      "step": 1
+     },
+     "a4": {
+      "name": "set_week_end_time",
+      "type": "02",
+      "min": 0,
+      "max": 5947,
+      "step": 1
+     },
+     "a5": {
+      "name": "set_weekend_start_time",
+      "type": "02",
+      "min": 0,
+      "max": 5947,
+      "step": 1
+     },
+     "a6": {
+      "name": "set_weekend_end_time",
+      "type": "02",
+      "min": 0,
+      "max": 5947,
+      "step": 1
+     },
+     "a7": {
+      "name": "set_weekend_mode",
+      "type": "01",
+      "options": [
+       1,
+       2
+      ]
+     }
+    }
+   }
+  ],
+  "0108": [
+   {
+    "command": "device_power_mode",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_device_power_mode",
+      "type": "01",
+      "default": 5,
+      "options": [
+       5
+      ]
+     }
+    }
+   }
+  ],
+  "010c": [
+   {
+    "command": "main_breaker_limit",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a3": {
+      "name": "set_main_breaker_limit",
+      "type": "02",
+      "min": 10,
+      "max": 500,
+      "step": 1
+     }
+    }
+   },
+   {
+    "command": "ev_load_balancing",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_load_balance_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a4": {
+      "name": "set_load_balance_setting_d5",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a5": {
+      "name": "set_load_balance_setting_d6",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a6": {
+      "name": "set_load_balance_monitor_device",
+      "type": "00",
+      "length": 16
+     }
+    }
+   }
+  ],
+  "010e": [
+   {
+    "command": "ev_solar_charging",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_solar_evcharge_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a3": {
+      "name": "set_solar_evcharge_mode",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a4": {
+      "name": "set_solar_evcharge_min_current",
+      "type": "02",
+      "min": 6,
+      "max": 16,
+      "step": 1
+     },
+     "a5": {
+      "name": "set_phase_operating_mode?",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a6": {
+      "name": "set_solar_evcharge_monitoring_mode",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a7": {
+      "name": "set_auto_phase_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a8": {
+      "name": "set_solar_evcharge_monitor_device",
+      "type": "00",
+      "length": 16
+     }
+    }
+   }
+  ]
+ }
+}

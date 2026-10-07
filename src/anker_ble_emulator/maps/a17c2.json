@@ -1,0 +1,1276 @@
+{
+ "pn": "A17C2",
+ "source": "anker-solix-api 29eece3 2026-10-06",
+ "messages": {
+  "0405": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "device_sn",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "a3",
+     "name": "main_battery_soc",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "a4",
+     "name": "battery_status",
+     "type": "04",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "a5",
+     "name": "temperature",
+     "type": "04",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "a6",
+     "name": "battery_soc",
+     "type": "04",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "a7",
+     "name": "sw_version",
+     "type": "04",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "a8",
+     "name": "sw_controller?",
+     "type": "04",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "a9",
+     "name": "sw_expansion",
+     "type": "04",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "ab",
+     "name": "photovoltaic_power",
+     "type": "04",
+     "length": 20,
+     "from": "recorded"
+    },
+    {
+     "tag": "ac",
+     "name": "battery_power_signed",
+     "type": "04",
+     "length": 20,
+     "from": "recorded"
+    },
+    {
+     "tag": "ad",
+     "name": "output_power",
+     "type": "04",
+     "length": 20,
+     "from": "recorded"
+    },
+    {
+     "tag": "ae",
+     "name": "ac_output_power_signed",
+     "type": "04",
+     "length": 20,
+     "from": "recorded"
+    },
+    {
+     "tag": "b0",
+     "name": "pv_yield",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "b1",
+     "name": "charged_energy",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "b2",
+     "name": "discharged_energy",
+     "type": "04",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "b3",
+     "name": "output_energy",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "b4",
+     "name": "consumed_energy",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "b5",
+     "name": "min_soc",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "b7",
+     "name": "active_charge_soc",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "b8",
+     "name": "usage_mode",
+     "type": "04",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "b9",
+     "name": "home_load_preset",
+     "type": "04",
+     "length": 6,
+     "from": "recorded"
+    },
+    {
+     "tag": "ba",
+     "name": null,
+     "type": "04",
+     "length": 13,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "light_mode",
+       "mask": 64,
+       "offset": 0
+      },
+      {
+       "name": "light_off_switch",
+       "mask": 32,
+       "offset": 0
+      },
+      {
+       "name": "ac_socket_switch",
+       "mask": 8,
+       "offset": 0
+      },
+      {
+       "name": "temp_unit_fahrenheit",
+       "mask": 1,
+       "offset": 0
+      }
+     ]
+    },
+    {
+     "tag": "bb",
+     "name": "heating_power",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "bc",
+     "name": "grid_to_battery_power",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "bd",
+     "name": "max_load",
+     "type": "04",
+     "length": 17,
+     "from": "recorded"
+    },
+    {
+     "tag": "be",
+     "name": "max_load_legal",
+     "type": "04",
+     "length": 17,
+     "from": "recorded"
+    },
+    {
+     "tag": "bf",
+     "name": "backup_start_timestamp",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "c0",
+     "name": "backup_end_timestamp"
+    },
+    {
+     "tag": "c2",
+     "name": "photovoltaic_power?"
+    },
+    {
+     "tag": "c4",
+     "name": "grid_power_signed"
+    },
+    {
+     "tag": "c5",
+     "name": "home_demand"
+    },
+    {
+     "tag": "c6",
+     "name": "pv_1_power",
+     "type": "04",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "c7",
+     "name": "pv_2_power",
+     "type": "04",
+     "length": 19,
+     "from": "name"
+    },
+    {
+     "tag": "c8",
+     "name": "pv_3_power"
+    },
+    {
+     "tag": "c9",
+     "name": "pv_4_power"
+    },
+    {
+     "tag": "cb",
+     "name": "expansion_packs"
+    },
+    {
+     "tag": "d4",
+     "name": "device_timeout_minutes",
+     "type": "02",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "d5",
+     "name": "pv_limit"
+    },
+    {
+     "tag": "d6",
+     "name": "ac_input_limit",
+     "type": "02",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "d8",
+     "name": null,
+     "bytes": [
+      {
+       "name": "max_soc",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "backup_soc",
+       "type": "01",
+       "offset": 1
+      }
+     ]
+    },
+    {
+     "tag": "fb",
+     "name": null,
+     "bytes": [
+      {
+       "name": "grid_export_disabled",
+       "mask": 1,
+       "offset": 0
+      }
+     ]
+    },
+    {
+     "tag": "fe",
+     "name": "msg_timestamp",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    }
+   ]
+  },
+  "0407": {
+   "topic": "state_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "device_sn",
+     "type": "00",
+     "length": 17,
+     "from": "recorded"
+    },
+    {
+     "tag": "a3",
+     "name": "wifi_name",
+     "type": "00",
+     "length": 14,
+     "from": "recorded"
+    },
+    {
+     "tag": "a4",
+     "name": "wifi_signal",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "a5",
+     "name": "charging_status",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    }
+   ]
+  },
+  "0408": {
+   "topic": "state_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "device_sn"
+    },
+    {
+     "tag": "a3",
+     "name": "local_timestamp"
+    },
+    {
+     "tag": "a4",
+     "name": "utc_timestamp"
+    },
+    {
+     "tag": "a5",
+     "name": "battery_soc_calc",
+     "type": "03",
+     "length": 5,
+     "from": "name"
+    },
+    {
+     "tag": "a6",
+     "name": "battery_soh"
+    },
+    {
+     "tag": "a7",
+     "name": "battery_soc"
+    },
+    {
+     "tag": "a9",
+     "name": "usage_mode"
+    },
+    {
+     "tag": "a8",
+     "name": "charging_status?",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "aa",
+     "name": "home_load_preset"
+    },
+    {
+     "tag": "ab",
+     "name": "photovoltaic_power"
+    },
+    {
+     "tag": "ac",
+     "name": "pv_yield"
+    },
+    {
+     "tag": "b1",
+     "name": "home_demand"
+    },
+    {
+     "tag": "b2",
+     "name": "home_consumption"
+    },
+    {
+     "tag": "b6",
+     "name": "battery_power_signed?"
+    },
+    {
+     "tag": "b7",
+     "name": "charged_energy"
+    },
+    {
+     "tag": "b8",
+     "name": "discharged_energy"
+    },
+    {
+     "tag": "bd",
+     "name": "grid_power_signed?"
+    },
+    {
+     "tag": "be",
+     "name": "grid_import_energy"
+    },
+    {
+     "tag": "bf",
+     "name": "grid_export_energy"
+    },
+    {
+     "tag": "c7",
+     "name": "pv_1_power",
+     "type": "04",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "c8",
+     "name": "pv_2_power",
+     "type": "04",
+     "length": 19,
+     "from": "name"
+    },
+    {
+     "tag": "c9",
+     "name": "pv_3_power"
+    },
+    {
+     "tag": "ca",
+     "name": "pv_4_power"
+    },
+    {
+     "tag": "cc",
+     "name": "temperature"
+    },
+    {
+     "tag": "d3",
+     "name": "ac_output_power"
+    },
+    {
+     "tag": "d5",
+     "name": "grid_to_home_power"
+    },
+    {
+     "tag": "d6",
+     "name": "timestamp_1?"
+    },
+    {
+     "tag": "dc",
+     "name": "max_load",
+     "type": "04",
+     "length": 17,
+     "from": "name"
+    },
+    {
+     "tag": "dd",
+     "name": "ac_input_limit",
+     "type": "02",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "e0",
+     "name": "active_discharge_soc"
+    },
+    {
+     "tag": "e6",
+     "name": "pv_limit"
+    },
+    {
+     "tag": "e7",
+     "name": "ac_input_limit",
+     "type": "02",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "e8",
+     "name": "max_soc"
+    }
+   ]
+  },
+  "040a": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "expansion_packs"
+    },
+    {
+     "tag": "a3",
+     "name": "main_battery_soc"
+    },
+    {
+     "tag": "a4",
+     "name": null,
+     "bytes": [
+      {
+       "name": "exp_1_controller_sn",
+       "type": "00",
+       "length": 16,
+       "offset": 0
+      },
+      {
+       "name": "unknown_exp_1_16?",
+       "type": "02",
+       "offset": 22
+      },
+      {
+       "name": "exp_1_battery_status?",
+       "type": "01",
+       "offset": 24
+      },
+      {
+       "name": "exp_1_temperature",
+       "type": "01",
+       "offset": 25
+      },
+      {
+       "name": "unknown_exp_1_20?",
+       "type": "01",
+       "offset": 32
+      },
+      {
+       "name": "exp_1_soc",
+       "type": "01",
+       "offset": 33
+      },
+      {
+       "name": "exp_1_soh",
+       "type": "01",
+       "offset": 34
+      },
+      {
+       "name": "exp_1_sn",
+       "type": "00",
+       "length": 17,
+       "offset": 39
+      },
+      {
+       "name": "unknown_exp_1_44?",
+       "type": "01",
+       "offset": 68
+      },
+      {
+       "name": "unknown_exp_1_45?",
+       "type": "01",
+       "offset": 69
+      },
+      {
+       "name": "unknown_exp_1_48?",
+       "type": "01",
+       "offset": 72
+      }
+     ]
+    },
+    {
+     "tag": "a5",
+     "name": null,
+     "bytes": [
+      {
+       "name": "exp_2_controller_sn",
+       "type": "00",
+       "length": 16,
+       "offset": 0
+      },
+      {
+       "name": "unknown_exp_2_16?",
+       "type": "02",
+       "offset": 22
+      },
+      {
+       "name": "exp_2_battery_status?",
+       "type": "01",
+       "offset": 24
+      },
+      {
+       "name": "exp_2_temperature",
+       "type": "01",
+       "offset": 25
+      },
+      {
+       "name": "unknown_exp_2_20?",
+       "type": "01",
+       "offset": 32
+      },
+      {
+       "name": "exp_2_soc",
+       "type": "01",
+       "offset": 33
+      },
+      {
+       "name": "exp_2_soh",
+       "type": "01",
+       "offset": 34
+      },
+      {
+       "name": "exp_2_sn",
+       "type": "00",
+       "length": 17,
+       "offset": 39
+      },
+      {
+       "name": "unknown_exp_2_44?",
+       "type": "01",
+       "offset": 68
+      },
+      {
+       "name": "unknown_exp_2_45?",
+       "type": "01",
+       "offset": 69
+      },
+      {
+       "name": "unknown_exp_2_48?",
+       "type": "01",
+       "offset": 72
+      }
+     ]
+    },
+    {
+     "tag": "a6",
+     "name": null,
+     "bytes": [
+      {
+       "name": "exp_3_controller_sn",
+       "type": "00",
+       "length": 16,
+       "offset": 0
+      },
+      {
+       "name": "unknown_exp_3_16?",
+       "type": "02",
+       "offset": 22
+      },
+      {
+       "name": "exp_3_battery_status?",
+       "type": "01",
+       "offset": 24
+      },
+      {
+       "name": "exp_3_temperature",
+       "type": "01",
+       "offset": 25
+      },
+      {
+       "name": "unknown_exp_3_20?",
+       "type": "01",
+       "offset": 32
+      },
+      {
+       "name": "exp_3_soc",
+       "type": "01",
+       "offset": 33
+      },
+      {
+       "name": "exp_3_soh",
+       "type": "01",
+       "offset": 34
+      },
+      {
+       "name": "exp_3_sn",
+       "type": "00",
+       "length": 17,
+       "offset": 39
+      },
+      {
+       "name": "unknown_exp_3_44?",
+       "type": "01",
+       "offset": 68
+      },
+      {
+       "name": "unknown_exp_3_45?",
+       "type": "01",
+       "offset": 69
+      },
+      {
+       "name": "unknown_exp_3_48?",
+       "type": "01",
+       "offset": 72
+      }
+     ]
+    },
+    {
+     "tag": "a7",
+     "name": null,
+     "bytes": [
+      {
+       "name": "exp_4_controller_sn",
+       "type": "00",
+       "length": 16,
+       "offset": 0
+      },
+      {
+       "name": "unknown_exp_4_16?",
+       "type": "02",
+       "offset": 22
+      },
+      {
+       "name": "exp_4_battery_status?",
+       "type": "01",
+       "offset": 24
+      },
+      {
+       "name": "exp_4_temperature",
+       "type": "01",
+       "offset": 25
+      },
+      {
+       "name": "unknown_exp_4_20?",
+       "type": "01",
+       "offset": 32
+      },
+      {
+       "name": "exp_4_soc",
+       "type": "01",
+       "offset": 33
+      },
+      {
+       "name": "exp_4_soh",
+       "type": "01",
+       "offset": 34
+      },
+      {
+       "name": "exp_4_sn",
+       "type": "00",
+       "length": 17,
+       "offset": 39
+      },
+      {
+       "name": "unknown_exp_4_44?",
+       "type": "01",
+       "offset": 68
+      },
+      {
+       "name": "unknown_exp_4_45?",
+       "type": "01",
+       "offset": 69
+      },
+      {
+       "name": "unknown_exp_4_48?",
+       "type": "01",
+       "offset": 72
+      }
+     ]
+    },
+    {
+     "tag": "a8",
+     "name": null,
+     "bytes": [
+      {
+       "name": "exp_5_controller_sn",
+       "type": "00",
+       "length": 16,
+       "offset": 0
+      },
+      {
+       "name": "unknown_exp_5_16?",
+       "type": "02",
+       "offset": 22
+      },
+      {
+       "name": "exp_5_battery_status?",
+       "type": "01",
+       "offset": 24
+      },
+      {
+       "name": "exp_5_temperature",
+       "type": "01",
+       "offset": 25
+      },
+      {
+       "name": "unknown_exp_5_20?",
+       "type": "01",
+       "offset": 32
+      },
+      {
+       "name": "exp_5_soc",
+       "type": "01",
+       "offset": 33
+      },
+      {
+       "name": "exp_5_soh",
+       "type": "01",
+       "offset": 34
+      },
+      {
+       "name": "exp_5_sn",
+       "type": "00",
+       "length": 17,
+       "offset": 39
+      },
+      {
+       "name": "unknown_exp_5_44?",
+       "type": "01",
+       "offset": 68
+      },
+      {
+       "name": "unknown_exp_5_45?",
+       "type": "01",
+       "offset": 69
+      },
+      {
+       "name": "unknown_exp_5_48?",
+       "type": "01",
+       "offset": 72
+      }
+     ]
+    },
+    {
+     "tag": "fe",
+     "name": "msg_timestamp",
+     "type": "03",
+     "length": 5,
+     "from": "name"
+    }
+   ]
+  },
+  "0500": {
+   "topic": "state_info",
+   "fields": [
+    {
+     "tag": "a4",
+     "name": null,
+     "bytes": [
+      {
+       "name": "battery_position",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "battery_type",
+       "type": "01",
+       "offset": 323
+      },
+      {
+       "name": "main_controller_sn",
+       "type": "00",
+       "offset": 326
+      }
+     ]
+    },
+    {
+     "tag": "a5",
+     "name": null,
+     "bytes": [
+      {
+       "name": "exp_1_position",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "exp_1_type",
+       "type": "01",
+       "offset": 323
+      },
+      {
+       "name": "exp_1_controller_sn",
+       "type": "00",
+       "offset": 326
+      }
+     ]
+    },
+    {
+     "tag": "a6",
+     "name": null,
+     "bytes": [
+      {
+       "name": "exp_2_position",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "exp_2_type",
+       "type": "01",
+       "offset": 323
+      },
+      {
+       "name": "exp_2_controller_sn",
+       "type": "00",
+       "offset": 326
+      }
+     ]
+    },
+    {
+     "tag": "a7",
+     "name": null,
+     "bytes": [
+      {
+       "name": "exp_3_position",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "exp_3_type",
+       "type": "01",
+       "offset": 323
+      },
+      {
+       "name": "exp_3_controller_sn",
+       "type": "00",
+       "offset": 326
+      }
+     ]
+    },
+    {
+     "tag": "a8",
+     "name": null,
+     "bytes": [
+      {
+       "name": "exp_4_position",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "exp_4_type",
+       "type": "01",
+       "offset": 323
+      },
+      {
+       "name": "exp_4_controller_sn",
+       "type": "00",
+       "offset": 326
+      }
+     ]
+    },
+    {
+     "tag": "a9",
+     "name": null,
+     "bytes": [
+      {
+       "name": "exp_5_position",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "exp_5_type",
+       "type": "01",
+       "offset": 323
+      },
+      {
+       "name": "exp_5_controller_sn",
+       "type": "00",
+       "offset": 326
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "commands": {
+  "0050": [
+   {
+    "command": "temp_unit_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_temp_unit_fahrenheit",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  ],
+  "0057": [
+   {
+    "command": "realtime_trigger",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_realtime_trigger",
+      "type": "01",
+      "default": 1,
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a3": {
+      "name": "trigger_timeout_sec",
+      "type": "03",
+      "min": 30,
+      "max": 600,
+      "default": 60
+     }
+    }
+   }
+  ],
+  "005a": [
+   {
+    "command": "sb_max_load_parallel",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_max_load",
+      "type": "02",
+      "options": [
+       1200,
+       2400,
+       3600,
+       4800
+      ]
+     },
+     "a3": {
+      "name": "set_max_load_type",
+      "type": "02",
+      "default": 2,
+      "options": [
+       0,
+       2,
+       3
+      ]
+     }
+    }
+   }
+  ],
+  "0067": [
+   {
+    "command": "sb_power_cutoff_select",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_output_cutoff_data",
+      "type": "01",
+      "options": [
+       5,
+       10
+      ]
+     },
+     "a3": {
+      "name": "set_lowpower_input_data",
+      "type": "01",
+      "options": [
+       4,
+       5
+      ]
+     },
+     "a4": {
+      "name": "set_input_cutoff_data",
+      "type": "01",
+      "options": [
+       5,
+       10
+      ]
+     }
+    }
+   },
+   {
+    "command": "sb_soc_limits",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_min_soc",
+      "type": "01",
+      "min": 5,
+      "max": 20
+     },
+     "a5": {
+      "name": "set_max_soc",
+      "type": "01",
+      "min": 80,
+      "max": 100
+     },
+     "a6": {
+      "name": "set_backup_soc",
+      "type": "01",
+      "min": 0,
+      "max": 100
+     },
+     "a7": {
+      "name": "set_backup_soc_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  ],
+  "0068": [
+   {
+    "command": "sb_light_mode_select",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_light_mode",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a3": {
+      "name": "set_light_off_switch",
+      "type": "01",
+      "default": 0
+     }
+    }
+   },
+   {
+    "command": "sb_light_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_light_mode",
+      "type": "01",
+      "default": 0
+     },
+     "a3": {
+      "name": "set_light_off_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  ],
+  "0080": [
+   {
+    "command": "sb_max_load",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_max_load",
+      "type": "02",
+      "options": [
+       350,
+       600,
+       800,
+       1000,
+       1200
+      ]
+     },
+     "a3": {
+      "name": "set_max_load_type",
+      "type": "02",
+      "default": 0,
+      "options": [
+       0,
+       2,
+       3
+      ]
+     }
+    }
+   },
+   {
+    "command": "sb_disable_grid_export_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a5": {
+      "name": "set_disable_grid_export_a5?",
+      "type": "02",
+      "default": 0
+     },
+     "a6": {
+      "name": "set_disable_grid_export_switch",
+      "type": "02",
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a9": {
+      "name": "set_grid_export_limit",
+      "type": "02",
+      "min": 0,
+      "max": 100000,
+      "step": 100,
+      "default": 0
+     }
+    }
+   },
+   {
+    "command": "sb_ac_input_limit",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a8": {
+      "name": "set_ac_input_limit",
+      "type": "02",
+      "min": 0,
+      "max": 1200,
+      "step": 100
+     }
+    }
+   }
+  ]
+ }
+}

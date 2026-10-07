@@ -1,0 +1,616 @@
+{
+ "pn": "A17C0",
+ "source": "anker-solix-api 29eece3 2026-10-06",
+ "messages": {
+  "0405": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "device_sn",
+     "type": "00",
+     "length": 17,
+     "from": "recorded"
+    },
+    {
+     "tag": "a3",
+     "name": "battery_soc",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "a4",
+     "name": "405_unknown_1?",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "a5",
+     "name": "error_code",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "a6",
+     "name": "sw_version",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "a7",
+     "name": "sw_controller",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "a8",
+     "name": "hw_version",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "a9",
+     "name": "temp_unit_fahrenheit",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "aa",
+     "name": "temperature",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "ab",
+     "name": "photovoltaic_power",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "ac",
+     "name": "output_power",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "ad",
+     "name": "charging_status?",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "b0",
+     "name": "bat_charge_power",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "b1",
+     "name": "pv_yield",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "b2",
+     "name": "charged_energy",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "b3",
+     "name": "output_energy",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "b4",
+     "name": "output_cutoff_data",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "b5",
+     "name": "lowpower_input_data",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "b6",
+     "name": "input_cutoff_data",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "b7",
+     "name": "inverter_brand",
+     "type": "00",
+     "length": 17,
+     "from": "recorded"
+    },
+    {
+     "tag": "b8",
+     "name": "inverter_model",
+     "type": "00",
+     "length": 17,
+     "from": "recorded"
+    },
+    {
+     "tag": "b9",
+     "name": "min_load",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "c0",
+     "name": "0w_switch_sn",
+     "type": "00",
+     "length": 17,
+     "from": "recorded"
+    },
+    {
+     "tag": "c1",
+     "name": "0w_switch_bt_mac",
+     "type": "00",
+     "length": 13,
+     "from": "recorded"
+    },
+    {
+     "tag": "fe",
+     "name": "msg_timestamp",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    }
+   ]
+  },
+  "0407": {
+   "topic": "state_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "device_sn",
+     "type": "00",
+     "length": 17,
+     "from": "recorded"
+    },
+    {
+     "tag": "a3",
+     "name": "wifi_name",
+     "type": "00",
+     "length": 14,
+     "from": "recorded"
+    },
+    {
+     "tag": "a4",
+     "name": "wifi_signal",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "a5",
+     "name": "charging_status",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    }
+   ]
+  },
+  "0408": {
+   "topic": "state_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "device_sn",
+     "type": "00",
+     "length": 17,
+     "from": "recorded"
+    },
+    {
+     "tag": "a3",
+     "name": "local_timestamp",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "a4",
+     "name": "utc_timestamp",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "a5",
+     "name": "battery_soc_calc",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "a6",
+     "name": "battery_soh",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "a8",
+     "name": "charging_status",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "a9",
+     "name": "home_load_preset",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "aa",
+     "name": "photovoltaic_power",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "ab",
+     "name": "bat_charge_power",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "ac",
+     "name": "output_power",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "ad",
+     "name": "408_unknown_1?",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "ae",
+     "name": "408_unknown_2?",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "af",
+     "name": "408_unknown_3?",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "b0",
+     "name": "battery_soc",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "b1",
+     "name": "pv_yield",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "b2",
+     "name": "charged_energy",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "b3",
+     "name": "output_energy",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "b4",
+     "name": "discharged_energy",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "b5",
+     "name": "bypass_energy",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "b6",
+     "name": "temperature",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "b7",
+     "name": "pv_voltage",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "b8",
+     "name": "output_voltage",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "b9",
+     "name": "battery_voltage",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    }
+   ]
+  }
+ },
+ "commands": {
+  "0040": [
+   {
+    "command": "status_request",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     }
+    }
+   }
+  ],
+  "0050": [
+   {
+    "command": "temp_unit_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_temp_unit_fahrenheit",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  ],
+  "0056": [
+   {
+    "command": "sb_status_check",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "device_sn",
+      "type": "00",
+      "length": 16
+     },
+     "a3": {
+      "name": "charging_status",
+      "type": "01"
+     },
+     "a4": {
+      "name": "set_output_preset",
+      "type": "03"
+     },
+     "a5": {
+      "name": "status_timeout_sec?",
+      "type": "03"
+     },
+     "a6": {
+      "name": "local_timestamp",
+      "type": "03"
+     },
+     "a7": {
+      "name": "next_status_timestamp",
+      "type": "03"
+     },
+     "a8": {
+      "name": "status_check_unknown_1?",
+      "type": "01"
+     },
+     "a9": {
+      "name": "status_check_unknown_2?",
+      "type": "01"
+     },
+     "aa": {
+      "name": "status_check_unknown_3?",
+      "type": "01"
+     }
+    }
+   }
+  ],
+  "0057": [
+   {
+    "command": "realtime_trigger",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_realtime_trigger",
+      "type": "01",
+      "default": 1,
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a3": {
+      "name": "trigger_timeout_sec",
+      "type": "03",
+      "min": 30,
+      "max": 600,
+      "default": 60
+     }
+    }
+   }
+  ],
+  "0067": [
+   {
+    "command": "sb_power_cutoff_select",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_output_cutoff_data",
+      "type": "01",
+      "options": [
+       5,
+       10
+      ]
+     },
+     "a3": {
+      "name": "set_lowpower_input_data",
+      "type": "01",
+      "options": [
+       4,
+       5
+      ]
+     },
+     "a4": {
+      "name": "set_input_cutoff_data",
+      "type": "01",
+      "options": [
+       5,
+       10
+      ]
+     }
+    }
+   }
+  ],
+  "0068": [
+   {
+    "command": "sb_inverter_type_select",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_output_cutoff_data",
+      "type": "01",
+      "options": [
+       5,
+       10
+      ]
+     },
+     "a3": {
+      "name": "set_lowpower_input_data",
+      "type": "01",
+      "options": [
+       4,
+       5
+      ]
+     },
+     "a4": {
+      "name": "set_input_cutoff_data",
+      "type": "01",
+      "options": [
+       5,
+       10
+      ]
+     },
+     "a5": {
+      "name": "set_inverter_brand",
+      "type": "04"
+     },
+     "a6": {
+      "name": "set_inverter_model",
+      "type": "04"
+     },
+     "a7": {
+      "name": "set_min_load",
+      "type": "02"
+     },
+     "a8": {
+      "name": "set_max_load",
+      "type": "02"
+     },
+     "a9": {
+      "name": "set_inverter_unknown_1?",
+      "type": "01"
+     },
+     "aa": {
+      "name": "set_ch_1_min_what?",
+      "type": "03"
+     },
+     "ab": {
+      "name": "set_ch_1_max_what?",
+      "type": "03"
+     },
+     "ac": {
+      "name": "set_ch_2_min_what?",
+      "type": "03"
+     },
+     "ad": {
+      "name": "set_ch_2_max_what?",
+      "type": "03"
+     }
+    }
+   }
+  ]
+ }
+}

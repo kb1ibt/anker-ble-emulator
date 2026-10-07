@@ -37,7 +37,6 @@ PROFILE = Profile(
     module_replies={
         ModuleBuild.V0_3_3_0: (0x820, 0x828, 0x82E, 0x82F, 0x836, 0x838),
     },
-    push_route_requests=solix_c_gen2.PUSH_ROUTE_REQUESTS,
 )
 register(Product.A1783, PROFILE)
 

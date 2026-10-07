@@ -3,7 +3,7 @@
 
 import pytest
 
-from anker_ble_emulator.frame import decode, encode, fragment, make_frame
+from anker_ble_emulator.frame import CHANNEL_APP, decode, encode, fragment, make_frame
 from anker_ble_emulator.module import AuthMode
 from tests.fixtures.client import (
     SESSION,
@@ -457,20 +457,14 @@ def test_a_logging_channel_request_is_answered_by_the_module() -> None:
     assert reply.plaintext == b"\x00"
 
 
-def test_cloud_push_keeps_push_routed_frames_off_ble() -> None:
+def test_an_mcu_request_on_fid_0x11_gets_no_reply() -> None:
     rig = build_module()
     client = AppClient()
     negotiate(rig.module, client, ENROLLED_TOKEN)
-    rig.module.cloud_push = True
 
-    status = rig.module.write(client.request(0x100, BLE_ROUTE, SESSION))
-    ack = rig.module.write(client.request(0x057, BLE_ROUTE, SESSION))
-    push = rig.module.push(0x421)
+    out = rig.module.write(client.request(0x057, BLE_ROUTE, CHANNEL_APP))
 
-    replies = [reply for data in ack.frames if (reply := client.open(data))]
-    assert status.frames == []
-    assert push.frames == []
-    assert [cmd_hex(reply.frame) for reply in replies] == ["4857"]
+    assert out.frames == []
 
 
 def test_a_request_with_malformed_fields_gets_no_reply() -> None:

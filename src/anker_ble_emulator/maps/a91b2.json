@@ -1,0 +1,1006 @@
+{
+ "pn": "A91B2",
+ "source": "anker-solix-api 29eece3 2026-10-06",
+ "messages": {
+  "0302": {
+   "topic": null,
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "set_port_switch_select"
+    },
+    {
+     "tag": "a3",
+     "name": "set_port_switch"
+    },
+    {
+     "tag": "fe",
+     "name": "msg_timestamp",
+     "type": "03",
+     "length": 5,
+     "from": "name"
+    }
+   ]
+  },
+  "0303": {
+   "topic": "state_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": null,
+     "type": "04",
+     "length": 8,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "usbc_1_status",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "usbc_1_voltage",
+       "type": "02",
+       "offset": 1
+      },
+      {
+       "name": "usbc_1_current",
+       "type": "02",
+       "offset": 3
+      },
+      {
+       "name": "usbc_1_power",
+       "type": "02",
+       "offset": 5
+      }
+     ]
+    },
+    {
+     "tag": "a3",
+     "name": null,
+     "type": "04",
+     "length": 8,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "usbc_2_status",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "usbc_2_voltage",
+       "type": "02",
+       "offset": 1
+      },
+      {
+       "name": "usbc_2_current",
+       "type": "02",
+       "offset": 3
+      },
+      {
+       "name": "usbc_2_power",
+       "type": "02",
+       "offset": 5
+      }
+     ]
+    },
+    {
+     "tag": "a4",
+     "name": null,
+     "type": "04",
+     "length": 8,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "usbc_3_status",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "usbc_3_voltage",
+       "type": "02",
+       "offset": 1
+      },
+      {
+       "name": "usbc_3_current",
+       "type": "02",
+       "offset": 3
+      },
+      {
+       "name": "usbc_3_power",
+       "type": "02",
+       "offset": 5
+      }
+     ]
+    },
+    {
+     "tag": "a5",
+     "name": null,
+     "type": "04",
+     "length": 8,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "usbc_4_status",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "usbc_4_voltage",
+       "type": "02",
+       "offset": 1
+      },
+      {
+       "name": "usbc_4_current",
+       "type": "02",
+       "offset": 3
+      },
+      {
+       "name": "usbc_4_power",
+       "type": "02",
+       "offset": 5
+      }
+     ]
+    },
+    {
+     "tag": "a6",
+     "name": null,
+     "type": "04",
+     "length": 8,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "usba_1_status",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "usba_1_voltage",
+       "type": "02",
+       "offset": 1
+      },
+      {
+       "name": "usba_1_current",
+       "type": "02",
+       "offset": 3
+      },
+      {
+       "name": "usba_1_power",
+       "type": "02",
+       "offset": 5
+      }
+     ]
+    },
+    {
+     "tag": "a7",
+     "name": null,
+     "type": "04",
+     "length": 8,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "usba_2_status",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "usba_2_voltage",
+       "type": "02",
+       "offset": 1
+      },
+      {
+       "name": "usba_2_current",
+       "type": "02",
+       "offset": 3
+      },
+      {
+       "name": "usba_2_power",
+       "type": "02",
+       "offset": 5
+      }
+     ]
+    },
+    {
+     "tag": "fe",
+     "name": "msg_timestamp",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    }
+   ]
+  },
+  "0a00": {
+   "topic": null,
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "sw_version",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "a3",
+     "name": "unknown_a3",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "a4",
+     "name": null,
+     "type": "04",
+     "length": 8,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "usbc_1_status",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "usbc_1_voltage",
+       "type": "02",
+       "offset": 1
+      },
+      {
+       "name": "usbc_1_current",
+       "type": "02",
+       "offset": 3
+      },
+      {
+       "name": "usbc_1_power",
+       "type": "02",
+       "offset": 5
+      }
+     ]
+    },
+    {
+     "tag": "a5",
+     "name": null,
+     "type": "04",
+     "length": 8,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "usbc_2_status",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "usbc_2_voltage",
+       "type": "02",
+       "offset": 1
+      },
+      {
+       "name": "usbc_2_current",
+       "type": "02",
+       "offset": 3
+      },
+      {
+       "name": "usbc_2_power",
+       "type": "02",
+       "offset": 5
+      }
+     ]
+    },
+    {
+     "tag": "a6",
+     "name": null,
+     "type": "04",
+     "length": 8,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "usbc_3_status",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "usbc_3_voltage",
+       "type": "02",
+       "offset": 1
+      },
+      {
+       "name": "usbc_3_current",
+       "type": "02",
+       "offset": 3
+      },
+      {
+       "name": "usbc_3_power",
+       "type": "02",
+       "offset": 5
+      }
+     ]
+    },
+    {
+     "tag": "a7",
+     "name": null,
+     "type": "04",
+     "length": 8,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "usbc_4_status",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "usbc_4_voltage",
+       "type": "02",
+       "offset": 1
+      },
+      {
+       "name": "usbc_4_current",
+       "type": "02",
+       "offset": 3
+      },
+      {
+       "name": "usbc_4_power",
+       "type": "02",
+       "offset": 5
+      }
+     ]
+    },
+    {
+     "tag": "a8",
+     "name": null,
+     "type": "04",
+     "length": 8,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "usba_1_status",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "usba_1_voltage",
+       "type": "02",
+       "offset": 1
+      },
+      {
+       "name": "usba_1_current",
+       "type": "02",
+       "offset": 3
+      },
+      {
+       "name": "usba_1_power",
+       "type": "02",
+       "offset": 5
+      }
+     ]
+    },
+    {
+     "tag": "a9",
+     "name": null,
+     "type": "04",
+     "length": 8,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "usba_2_status",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "usba_2_voltage",
+       "type": "02",
+       "offset": 1
+      },
+      {
+       "name": "usba_2_current",
+       "type": "02",
+       "offset": 3
+      },
+      {
+       "name": "usba_2_power",
+       "type": "02",
+       "offset": 5
+      }
+     ]
+    },
+    {
+     "tag": "aa",
+     "name": null,
+     "type": "04",
+     "length": 19,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "ac_1_switch",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "ac_1_start_switch",
+       "type": "01",
+       "offset": 1
+      },
+      {
+       "name": "ac_1_start_hour",
+       "type": "01",
+       "offset": 2
+      },
+      {
+       "name": "ac_1_start_minute",
+       "type": "01",
+       "offset": 3
+      },
+      {
+       "name": "ac_1_start_weekdays",
+       "type": "01",
+       "offset": 4
+      },
+      {
+       "name": "ac_1_end_switch",
+       "type": "01",
+       "offset": 5
+      },
+      {
+       "name": "ac_1_end_hour",
+       "type": "01",
+       "offset": 6
+      },
+      {
+       "name": "ac_1_end_minute",
+       "type": "01",
+       "offset": 7
+      },
+      {
+       "name": "ac_1_end_weekdays",
+       "type": "01",
+       "offset": 8
+      },
+      {
+       "name": "ac_1_timer_switch",
+       "type": "01",
+       "offset": 9
+      },
+      {
+       "name": "ac_1_timer_seconds",
+       "type": "03",
+       "offset": 16
+      },
+      {
+       "name": "ac_1_timer_remaining_seconds",
+       "type": "03",
+       "offset": 20
+      }
+     ]
+    },
+    {
+     "tag": "ab",
+     "name": null,
+     "type": "04",
+     "length": 19,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "ac_2_switch",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "ac_2_start_switch",
+       "type": "01",
+       "offset": 1
+      },
+      {
+       "name": "ac_2_start_hour",
+       "type": "01",
+       "offset": 2
+      },
+      {
+       "name": "ac_2_start_minute",
+       "type": "01",
+       "offset": 3
+      },
+      {
+       "name": "ac_2_start_weekdays",
+       "type": "01",
+       "offset": 4
+      },
+      {
+       "name": "ac_2_end_switch",
+       "type": "01",
+       "offset": 5
+      },
+      {
+       "name": "ac_2_end_hour",
+       "type": "01",
+       "offset": 6
+      },
+      {
+       "name": "ac_2_end_minute",
+       "type": "01",
+       "offset": 7
+      },
+      {
+       "name": "ac_2_end_weekdays",
+       "type": "01",
+       "offset": 8
+      },
+      {
+       "name": "ac_2_timer_switch",
+       "type": "01",
+       "offset": 9
+      },
+      {
+       "name": "ac_2_timer_seconds",
+       "type": "03",
+       "offset": 16
+      },
+      {
+       "name": "ac_2_timer_remaining_seconds",
+       "type": "03",
+       "offset": 20
+      }
+     ]
+    },
+    {
+     "tag": "b0",
+     "name": null,
+     "type": "04",
+     "length": 19,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "usbc_1_switch",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "usbc_1_start_switch",
+       "type": "01",
+       "offset": 1
+      },
+      {
+       "name": "usbc_1_start_hour",
+       "type": "01",
+       "offset": 2
+      },
+      {
+       "name": "usbc_1_start_minute",
+       "type": "01",
+       "offset": 3
+      },
+      {
+       "name": "usbc_1_start_weekdays",
+       "type": "01",
+       "offset": 4
+      },
+      {
+       "name": "usbc_1_end_switch",
+       "type": "01",
+       "offset": 5
+      },
+      {
+       "name": "usbc_1_end_hour",
+       "type": "01",
+       "offset": 6
+      },
+      {
+       "name": "usbc_1_end_minute",
+       "type": "01",
+       "offset": 7
+      },
+      {
+       "name": "usbc_1_end_weekdays",
+       "type": "01",
+       "offset": 8
+      },
+      {
+       "name": "usbc_1_timer_switch",
+       "type": "01",
+       "offset": 9
+      },
+      {
+       "name": "usbc_1_timer_seconds",
+       "type": "03",
+       "offset": 16
+      },
+      {
+       "name": "usbc_1_timer_remaining_seconds",
+       "type": "03",
+       "offset": 20
+      }
+     ]
+    },
+    {
+     "tag": "b1",
+     "name": null,
+     "type": "04",
+     "length": 19,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "usbc_2_switch",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "usbc_2_start_switch",
+       "type": "01",
+       "offset": 1
+      },
+      {
+       "name": "usbc_2_start_hour",
+       "type": "01",
+       "offset": 2
+      },
+      {
+       "name": "usbc_2_start_minute",
+       "type": "01",
+       "offset": 3
+      },
+      {
+       "name": "usbc_2_start_weekdays",
+       "type": "01",
+       "offset": 4
+      },
+      {
+       "name": "usbc_2_end_switch",
+       "type": "01",
+       "offset": 5
+      },
+      {
+       "name": "usbc_2_end_hour",
+       "type": "01",
+       "offset": 6
+      },
+      {
+       "name": "usbc_2_end_minute",
+       "type": "01",
+       "offset": 7
+      },
+      {
+       "name": "usbc_2_end_weekdays",
+       "type": "01",
+       "offset": 8
+      },
+      {
+       "name": "usbc_2_timer_switch",
+       "type": "01",
+       "offset": 9
+      },
+      {
+       "name": "usbc_2_timer_seconds",
+       "type": "03",
+       "offset": 16
+      },
+      {
+       "name": "usbc_2_timer_remaining_seconds",
+       "type": "03",
+       "offset": 20
+      }
+     ]
+    },
+    {
+     "tag": "b2",
+     "name": null,
+     "type": "04",
+     "length": 19,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "usbc_3_switch",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "usbc_3_start_switch",
+       "type": "01",
+       "offset": 1
+      },
+      {
+       "name": "usbc_3_start_hour",
+       "type": "01",
+       "offset": 2
+      },
+      {
+       "name": "usbc_3_start_minute",
+       "type": "01",
+       "offset": 3
+      },
+      {
+       "name": "usbc_3_start_weekdays",
+       "type": "01",
+       "offset": 4
+      },
+      {
+       "name": "usbc_3_end_switch",
+       "type": "01",
+       "offset": 5
+      },
+      {
+       "name": "usbc_3_end_hour",
+       "type": "01",
+       "offset": 6
+      },
+      {
+       "name": "usbc_3_end_minute",
+       "type": "01",
+       "offset": 7
+      },
+      {
+       "name": "usbc_3_end_weekdays",
+       "type": "01",
+       "offset": 8
+      },
+      {
+       "name": "usbc_3_timer_switch",
+       "type": "01",
+       "offset": 9
+      },
+      {
+       "name": "usbc_3_timer_seconds",
+       "type": "03",
+       "offset": 16
+      },
+      {
+       "name": "usbc_3_timer_remaining_seconds",
+       "type": "03",
+       "offset": 20
+      }
+     ]
+    },
+    {
+     "tag": "b3",
+     "name": null,
+     "type": "04",
+     "length": 19,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "usbc_4_switch",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "usbc_4_start_switch",
+       "type": "01",
+       "offset": 1
+      },
+      {
+       "name": "usbc_4_start_hour",
+       "type": "01",
+       "offset": 2
+      },
+      {
+       "name": "usbc_4_start_minute",
+       "type": "01",
+       "offset": 3
+      },
+      {
+       "name": "usbc_4_start_weekdays",
+       "type": "01",
+       "offset": 4
+      },
+      {
+       "name": "usbc_4_end_switch",
+       "type": "01",
+       "offset": 5
+      },
+      {
+       "name": "usbc_4_end_hour",
+       "type": "01",
+       "offset": 6
+      },
+      {
+       "name": "usbc_4_end_minute",
+       "type": "01",
+       "offset": 7
+      },
+      {
+       "name": "usbc_4_end_weekdays",
+       "type": "01",
+       "offset": 8
+      },
+      {
+       "name": "usbc_4_timer_switch",
+       "type": "01",
+       "offset": 9
+      },
+      {
+       "name": "usbc_4_timer_seconds",
+       "type": "03",
+       "offset": 16
+      },
+      {
+       "name": "usbc_4_timer_remaining_seconds",
+       "type": "03",
+       "offset": 20
+      }
+     ]
+    },
+    {
+     "tag": "ac",
+     "name": null,
+     "type": "01",
+     "length": 2,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "clock_switch",
+       "mask": 128,
+       "offset": 0
+      },
+      {
+       "name": "theme_index",
+       "mask": 127,
+       "offset": 0
+      }
+     ]
+    },
+    {
+     "tag": "ad",
+     "name": null,
+     "type": "01",
+     "length": 2,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "display_brightness",
+       "mask": 240,
+       "offset": 0
+      },
+      {
+       "name": "display_timeout_mode",
+       "mask": 15,
+       "offset": 0
+      }
+     ]
+    },
+    {
+     "tag": "ae",
+     "name": null,
+     "type": "04",
+     "length": 3,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "charging_mode",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "charging_submode",
+       "type": "01",
+       "offset": 1
+      }
+     ]
+    },
+    {
+     "tag": "af",
+     "name": null,
+     "type": "04",
+     "length": 3,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "ota_busy",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "ota_state",
+       "type": "01",
+       "offset": 1
+      }
+     ]
+    },
+    {
+     "tag": "b4",
+     "name": "clock_mode",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "b5",
+     "name": "ac_light_mode",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "fe",
+     "name": "msg_timestamp",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    }
+   ]
+  }
+ },
+ "commands": {
+  "0200": [
+   {
+    "command": "status_request",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     }
+    }
+   }
+  ],
+  "0207": [
+   {
+    "command": "ac_1_port_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_ac_port_switch_select",
+      "type": "01",
+      "default": 0,
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a3": {
+      "name": "set_ac_port_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   },
+   {
+    "command": "ac_2_port_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_ac_port_switch_select",
+      "type": "01",
+      "default": 1,
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a3": {
+      "name": "set_ac_port_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  ],
+  "020b": [
+   {
+    "command": "realtime_trigger",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     }
+    }
+   }
+  ]
+ }
+}

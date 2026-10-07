@@ -27,11 +27,6 @@ REPLIES = {
 
 #: Pushes every model can send.
 PUSHES = (0x421, 0x489)
-
-#: Requests the display board answers by its push rule, not by the request's
-#: route; the rest are acks.
-PUSH_ROUTE_REQUESTS = frozenset({0x065, 0x066, 0x089, 0x092, 0x100})
-
 #: The display-board firmware ``0830`` reports.
 DEVICE_VERSION = "v1.2.1.6"
 

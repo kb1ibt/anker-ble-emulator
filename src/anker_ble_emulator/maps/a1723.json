@@ -1,0 +1,316 @@
+{
+ "pn": "A1723",
+ "source": "anker-solix-api 29eece3 2026-10-06",
+ "messages": {
+  "0405": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a4",
+     "name": "remaining_time_hours",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "a7",
+     "name": "usbc_1_power",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "a8",
+     "name": "usbc_2_power",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "a9",
+     "name": "usbc_3_power",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "aa",
+     "name": "usba_1_power",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "ac",
+     "name": "dc_input_power_total",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "ad",
+     "name": "ac_input_power_total",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "ae",
+     "name": "ac_output_power_total",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "b0",
+     "name": "ac_input_plug_status",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "b7",
+     "name": "ac_output_power_switch",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "b8",
+     "name": "dc_charging_status",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "b9",
+     "name": "temperature",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "ba",
+     "name": "battery_status",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "bb",
+     "name": "battery_soc",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "bc",
+     "name": "battery_soh",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "c1",
+     "name": "dc_output_power_switch",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "c5",
+     "name": "device_sn",
+     "type": "00",
+     "length": 17,
+     "from": "recorded"
+    },
+    {
+     "tag": "c6",
+     "name": "ac_input_limit",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "cf",
+     "name": "display_mode",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "fe",
+     "name": "msg_timestamp",
+     "type": "03",
+     "length": 5,
+     "from": "name"
+    }
+   ]
+  },
+  "0830": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a1",
+     "name": "hw_version",
+     "type": "76",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "a2",
+     "name": "sw_version",
+     "type": "76",
+     "length": 8,
+     "from": "recorded"
+    }
+   ]
+  }
+ },
+ "commands": {
+  "0044": [
+   {
+    "command": "ac_charge_limit",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_ac_input_limit",
+      "type": "02",
+      "options": [
+       100,
+       200,
+       300,
+       330
+      ]
+     }
+    }
+   }
+  ],
+  "004a": [
+   {
+    "command": "ac_output_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_ac_output_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  ],
+  "004b": [
+   {
+    "command": "dc_output_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_dc_output_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  ],
+  "004f": [
+   {
+    "command": "light_mode_select",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_light_mode",
+      "type": "01",
+      "options": [
+       0,
+       1,
+       2,
+       3
+      ]
+     }
+    }
+   }
+  ],
+  "0052": [
+   {
+    "command": "display_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_display_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  ],
+  "0057": [
+   {
+    "command": "realtime_trigger",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_realtime_trigger",
+      "type": "01",
+      "default": 1,
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a3": {
+      "name": "trigger_timeout_sec",
+      "type": "03",
+      "min": 30,
+      "max": 600,
+      "default": 60
+     }
+    }
+   }
+  ]
+ }
+}

@@ -1,0 +1,781 @@
+{
+ "pn": "AS200",
+ "source": "anker-solix-api 29eece3 2026-10-06",
+ "messages": {
+  "0421": {
+   "topic": null,
+   "fields": [
+    {
+     "tag": "a2",
+     "name": null,
+     "bytes": [
+      {
+       "name": "device_sn",
+       "type": "00",
+       "offset": 1
+      },
+      {
+       "name": "device_pn",
+       "type": "00",
+       "offset": 32
+      }
+     ]
+    },
+    {
+     "tag": "a3",
+     "name": null,
+     "bytes": [
+      {
+       "name": "output_power",
+       "type": "02",
+       "offset": 4
+      },
+      {
+       "name": "output_voltage?",
+       "type": "02",
+       "offset": 6
+      },
+      {
+       "name": "unknown_a3_08?",
+       "type": "02",
+       "offset": 8
+      }
+     ]
+    },
+    {
+     "tag": "a4",
+     "name": null,
+     "bytes": [
+      {
+       "name": "device_switch",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "charger_mode",
+       "type": "01",
+       "offset": 1
+      },
+      {
+       "name": "car_battery_type",
+       "type": "01",
+       "offset": 2
+      },
+      {
+       "name": "car_battery_voltage_type",
+       "type": "01",
+       "offset": 3
+      },
+      {
+       "name": "charge_voltage_limit",
+       "type": "02",
+       "offset": 5
+      },
+      {
+       "name": "charge_power_limit",
+       "type": "02",
+       "offset": 7
+      },
+      {
+       "name": "reverse_power_limit",
+       "type": "02",
+       "offset": 9
+      },
+      {
+       "name": "active_device_timeout_minutes",
+       "type": "02",
+       "offset": 17
+      },
+      {
+       "name": "temp_unit_fahrenheit",
+       "type": "01",
+       "offset": 19
+      },
+      {
+       "name": "device_timeout_minutes",
+       "type": "02",
+       "offset": 22
+      },
+      {
+       "name": "device_timeout_switch",
+       "type": "01",
+       "offset": 24
+      }
+     ]
+    },
+    {
+     "tag": "a6",
+     "name": null,
+     "bytes": [
+      {
+       "name": "temperature",
+       "type": "01",
+       "offset": 2
+      },
+      {
+       "name": "device_1_status",
+       "type": "01",
+       "offset": 4
+      },
+      {
+       "name": "charge_power_limit_min",
+       "type": "02",
+       "offset": 6
+      },
+      {
+       "name": "charge_power_limit_max",
+       "type": "02",
+       "offset": 8
+      },
+      {
+       "name": "reverse_power_limit_min",
+       "type": "02",
+       "offset": 16
+      },
+      {
+       "name": "reverse_power_limit_max",
+       "type": "02",
+       "offset": 18
+      },
+      {
+       "name": "charge_voltage_limit_min",
+       "type": "02",
+       "offset": 20
+      },
+      {
+       "name": "charge_voltage_limit_max",
+       "type": "02",
+       "offset": 22
+      },
+      {
+       "name": "battery_voltage",
+       "type": "02",
+       "offset": 24
+      },
+      {
+       "name": "unknown_device_1_a6_24",
+       "type": "01",
+       "offset": 36
+      },
+      {
+       "name": "device_1_output_power",
+       "type": "02",
+       "offset": 37
+      },
+      {
+       "name": "xt60i_cable",
+       "type": "01",
+       "offset": 39
+      }
+     ]
+    },
+    {
+     "tag": "a7",
+     "name": null,
+     "bytes": [
+      {
+       "name": "unknown_pps_a7_00",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "unknown_pps_a7_01",
+       "type": "01",
+       "offset": 1
+      },
+      {
+       "name": "device_1_temperature",
+       "type": "01",
+       "offset": 2
+      },
+      {
+       "name": "unknown_pps_a7_03",
+       "type": "01",
+       "offset": 3
+      },
+      {
+       "name": "remaining_time_hours",
+       "type": "02",
+       "offset": 4
+      },
+      {
+       "name": "reverse_remaining_time_hours",
+       "type": "02",
+       "offset": 6
+      },
+      {
+       "name": "device_1_soc",
+       "type": "01",
+       "offset": 8
+      },
+      {
+       "name": "device_1_sn",
+       "type": "00",
+       "offset": 17
+      },
+      {
+       "name": "device_1_pn",
+       "type": "00",
+       "offset": 41
+      }
+     ]
+    },
+    {
+     "tag": "f9",
+     "name": null,
+     "bytes": [
+      {
+       "name": "unknown_pps_f9_24",
+       "type": "02",
+       "offset": 36
+      },
+      {
+       "name": "unknown_pps_f9_25",
+       "type": "02",
+       "offset": 37
+      },
+      {
+       "name": "unknown_pps_f9_26",
+       "type": "01",
+       "offset": 38
+      }
+     ]
+    },
+    {
+     "tag": "fd",
+     "name": null,
+     "bytes": [
+      {
+       "name": "local_timestamp",
+       "type": "00",
+       "length": 13,
+       "offset": 0
+      }
+     ]
+    },
+    {
+     "tag": "fe",
+     "name": null,
+     "bytes": [
+      {
+       "name": "msg_timestamp",
+       "type": "03",
+       "offset": 0
+      }
+     ]
+    }
+   ]
+  },
+  "0900": {
+   "topic": null,
+   "fields": [
+    {
+     "tag": "a2",
+     "name": null,
+     "bytes": [
+      {
+       "name": "device_sn",
+       "type": "00",
+       "offset": 1
+      },
+      {
+       "name": "device_pn",
+       "type": "00",
+       "offset": 32
+      }
+     ]
+    },
+    {
+     "tag": "a3",
+     "name": null,
+     "bytes": [
+      {
+       "name": "output_power",
+       "type": "02",
+       "offset": 4
+      },
+      {
+       "name": "output_voltage?",
+       "type": "02",
+       "offset": 6
+      },
+      {
+       "name": "unknown_a3_08?",
+       "type": "02",
+       "offset": 8
+      }
+     ]
+    },
+    {
+     "tag": "a4",
+     "name": null,
+     "bytes": [
+      {
+       "name": "device_switch",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "charger_mode",
+       "type": "01",
+       "offset": 1
+      },
+      {
+       "name": "car_battery_type",
+       "type": "01",
+       "offset": 2
+      },
+      {
+       "name": "car_battery_voltage_type",
+       "type": "01",
+       "offset": 3
+      },
+      {
+       "name": "charge_voltage_limit",
+       "type": "02",
+       "offset": 5
+      },
+      {
+       "name": "charge_power_limit",
+       "type": "02",
+       "offset": 7
+      },
+      {
+       "name": "reverse_power_limit",
+       "type": "02",
+       "offset": 9
+      },
+      {
+       "name": "active_device_timeout_minutes",
+       "type": "02",
+       "offset": 17
+      },
+      {
+       "name": "temp_unit_fahrenheit",
+       "type": "01",
+       "offset": 19
+      },
+      {
+       "name": "device_timeout_minutes",
+       "type": "02",
+       "offset": 22
+      },
+      {
+       "name": "device_timeout_switch",
+       "type": "01",
+       "offset": 24
+      }
+     ]
+    },
+    {
+     "tag": "a6",
+     "name": null,
+     "bytes": [
+      {
+       "name": "temperature",
+       "type": "01",
+       "offset": 2
+      },
+      {
+       "name": "device_1_status",
+       "type": "01",
+       "offset": 4
+      },
+      {
+       "name": "charge_power_limit_min",
+       "type": "02",
+       "offset": 6
+      },
+      {
+       "name": "charge_power_limit_max",
+       "type": "02",
+       "offset": 8
+      },
+      {
+       "name": "reverse_power_limit_min",
+       "type": "02",
+       "offset": 16
+      },
+      {
+       "name": "reverse_power_limit_max",
+       "type": "02",
+       "offset": 18
+      },
+      {
+       "name": "charge_voltage_limit_min",
+       "type": "02",
+       "offset": 20
+      },
+      {
+       "name": "charge_voltage_limit_max",
+       "type": "02",
+       "offset": 22
+      },
+      {
+       "name": "battery_voltage",
+       "type": "02",
+       "offset": 24
+      },
+      {
+       "name": "unknown_device_1_a6_24",
+       "type": "01",
+       "offset": 36
+      },
+      {
+       "name": "device_1_output_power",
+       "type": "02",
+       "offset": 37
+      },
+      {
+       "name": "xt60i_cable",
+       "type": "01",
+       "offset": 39
+      }
+     ]
+    },
+    {
+     "tag": "a7",
+     "name": null,
+     "bytes": [
+      {
+       "name": "unknown_pps_a7_00",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "unknown_pps_a7_01",
+       "type": "01",
+       "offset": 1
+      },
+      {
+       "name": "device_1_temperature",
+       "type": "01",
+       "offset": 2
+      },
+      {
+       "name": "unknown_pps_a7_03",
+       "type": "01",
+       "offset": 3
+      },
+      {
+       "name": "remaining_time_hours",
+       "type": "02",
+       "offset": 4
+      },
+      {
+       "name": "reverse_remaining_time_hours",
+       "type": "02",
+       "offset": 6
+      },
+      {
+       "name": "device_1_soc",
+       "type": "01",
+       "offset": 8
+      },
+      {
+       "name": "device_1_sn",
+       "type": "00",
+       "offset": 17
+      },
+      {
+       "name": "device_1_pn",
+       "type": "00",
+       "offset": 41
+      }
+     ]
+    },
+    {
+     "tag": "f9",
+     "name": null,
+     "bytes": [
+      {
+       "name": "unknown_pps_f9_24",
+       "type": "02",
+       "offset": 36
+      },
+      {
+       "name": "unknown_pps_f9_25",
+       "type": "02",
+       "offset": 37
+      },
+      {
+       "name": "unknown_pps_f9_26",
+       "type": "01",
+       "offset": 38
+      }
+     ]
+    },
+    {
+     "tag": "fd",
+     "name": null,
+     "bytes": [
+      {
+       "name": "local_timestamp",
+       "type": "00",
+       "length": 13,
+       "offset": 0
+      }
+     ]
+    },
+    {
+     "tag": "fe",
+     "name": null,
+     "bytes": [
+      {
+       "name": "msg_timestamp",
+       "type": "03",
+       "offset": 0
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "commands": {
+  "0057": [
+   {
+    "command": "realtime_trigger",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_realtime_trigger",
+      "type": "01",
+      "default": 1,
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a3": {
+      "name": "trigger_timeout_sec",
+      "type": "03",
+      "min": 30,
+      "max": 600,
+      "default": 60
+     }
+    }
+   }
+  ],
+  "0100": [
+   {
+    "command": "status_request",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": null,
+      "type": "04",
+      "length": 1
+     }
+    }
+   }
+  ],
+  "0103": [
+   {
+    "command": "charger_mode_select",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fd": {
+      "name": "msg_timestamp",
+      "type": "00"
+     },
+     "a2": {
+      "name": "set_charger_mode",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   },
+   {
+    "command": "car_battery_type",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fd": {
+      "name": "msg_timestamp",
+      "type": "00"
+     },
+     "a3": {
+      "name": "set_car_battery_type",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     },
+     "aa": {
+      "name": "set_car_battery_voltage_type",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   },
+   {
+    "command": "battery_charge_limits",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fd": {
+      "name": "msg_timestamp",
+      "type": "00"
+     },
+     "a5": {
+      "name": "set_charge_power_limit",
+      "type": "02",
+      "min": 500,
+      "max": 800,
+      "step": 100
+     },
+     "b4": {
+      "name": "set_charge_voltage_limit",
+      "type": "02",
+      "min": 12.0,
+      "max": 13.8,
+      "step": 0.1
+     }
+    }
+   },
+   {
+    "command": "reverse_charge_limits",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fd": {
+      "name": "msg_timestamp",
+      "type": "00"
+     },
+     "a6": {
+      "name": "set_reverse_power_limit",
+      "type": "02",
+      "min": 500,
+      "max": 800,
+      "step": 100
+     },
+     "b4": {
+      "name": "set_charge_voltage_limit",
+      "type": "02",
+      "min": 12.0,
+      "max": 13.8,
+      "step": 0.1
+     }
+    }
+   },
+   {
+    "command": "device_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fd": {
+      "name": "msg_timestamp",
+      "type": "00"
+     },
+     "ac": {
+      "name": "set_device_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   },
+   {
+    "command": "device_timeout_minutes",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fd": {
+      "name": "msg_timestamp",
+      "type": "00"
+     },
+     "ae": {
+      "name": "set_active_device_timeout_minutes",
+      "type": "02",
+      "min": 0,
+      "max": 1440,
+      "step": 30
+     },
+     "bb": {
+      "name": "set_device_timeout_minutes",
+      "type": "02",
+      "min": 720,
+      "max": 1440,
+      "step": 30
+     },
+     "bc": {
+      "name": "set_device_timeout_switch",
+      "type": "01",
+      "options": [
+       1,
+       0
+      ]
+     }
+    }
+   },
+   {
+    "command": "temp_unit_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fd": {
+      "name": "msg_timestamp",
+      "type": "00"
+     },
+     "b2": {
+      "name": "set_temp_unit_fahrenheit",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   },
+   {
+    "command": "device_power_mode",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fd": {
+      "name": "msg_timestamp",
+      "type": "00"
+     },
+     "b8": {
+      "name": "set_device_power_mode",
+      "type": "01",
+      "default": 1,
+      "options": [
+       1
+      ]
+     }
+    }
+   }
+  ]
+ }
+}

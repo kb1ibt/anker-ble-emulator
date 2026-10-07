@@ -1,0 +1,51 @@
+{
+ "pn": "A17A4",
+ "source": "anker-solix-api 29eece3 2026-10-06",
+ "messages": {
+  "0830": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a1",
+     "name": "hw_version",
+     "type": "76",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "a2",
+     "name": "sw_version",
+     "type": "76",
+     "length": 8,
+     "from": "recorded"
+    }
+   ]
+  },
+  "0889": {
+   "topic": null,
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "setting_0889_a2"
+    },
+    {
+     "tag": "a3",
+     "name": "setting_0889_a3"
+    },
+    {
+     "tag": "a4",
+     "name": "setting_0889_a4"
+    },
+    {
+     "tag": "a5",
+     "name": "setting_0889_a5"
+    },
+    {
+     "tag": "a6",
+     "name": "setting_0889_a6"
+    }
+   ]
+  }
+ },
+ "commands": {}
+}

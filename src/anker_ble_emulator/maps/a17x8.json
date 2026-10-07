@@ -1,0 +1,303 @@
+{
+ "pn": "A17X8",
+ "source": "anker-solix-api 29eece3 2026-10-06",
+ "messages": {
+  "0405": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "device_sn"
+    },
+    {
+     "tag": "a4",
+     "name": "ac_output_power_switch",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "a6",
+     "name": "sw_version"
+    },
+    {
+     "tag": "a7",
+     "name": "sw_controller",
+     "type": "02",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "a8",
+     "name": "voltage"
+    },
+    {
+     "tag": "a9",
+     "name": "current"
+    },
+    {
+     "tag": "aa",
+     "name": "power"
+    },
+    {
+     "tag": "ab",
+     "name": "output_energy"
+    },
+    {
+     "tag": "ad",
+     "name": null,
+     "bytes": [
+      {
+       "name": "toggle_to_delay_time",
+       "type": "03",
+       "length": 3,
+       "offset": 0
+      },
+      {
+       "name": "toggle_to_switch",
+       "type": "01",
+       "offset": 3
+      },
+      {
+       "name": "toggle_timer_mode",
+       "type": "01",
+       "offset": 4
+      },
+      {
+       "name": "toggle_to_elapsed_time",
+       "type": "03",
+       "length": 3,
+       "offset": 5
+      }
+     ]
+    },
+    {
+     "tag": "fe",
+     "name": "msg_timestamp",
+     "type": "03",
+     "length": 5,
+     "from": "name"
+    }
+   ]
+  },
+  "087f": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": null,
+     "bytes": [
+      {
+       "name": "toggle_to_delay_time",
+       "type": "03",
+       "length": 3,
+       "offset": 0
+      },
+      {
+       "name": "toggle_to_switch",
+       "type": "01",
+       "offset": 3
+      },
+      {
+       "name": "toggle_timer_mode",
+       "type": "01",
+       "offset": 4
+      },
+      {
+       "name": "toggle_to_elapsed_time",
+       "type": "03",
+       "length": 3,
+       "offset": 5
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "commands": {
+  "0040": [
+   {
+    "command": "status_request",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     }
+    }
+   }
+  ],
+  "0057": [
+   {
+    "command": "realtime_trigger",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_realtime_trigger",
+      "type": "01",
+      "default": 1,
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a3": {
+      "name": "trigger_timeout_sec",
+      "type": "03",
+      "min": 30,
+      "max": 600,
+      "default": 60
+     }
+    }
+   }
+  ],
+  "007a": [
+   {
+    "command": "ac_output_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_ac_output_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  ],
+  "007c": [
+   {
+    "command": "plug_schedule",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_plug_schedule_action",
+      "type": "01",
+      "options": [
+       0,
+       1,
+       2
+      ]
+     },
+     "a3": {
+      "name": "set_plug_schedule_slot",
+      "type": "01",
+      "min": 1,
+      "max": 10
+     },
+     "a4": {
+      "name": "set_plug_schedule_enabled",
+      "type": "01",
+      "default": 1
+     },
+     "a5": {
+      "name": "set_plug_schedule_time",
+      "type": "02",
+      "min": 0,
+      "max": 5947,
+      "step": 1
+     },
+     "a6": {
+      "name": "set_plug_schedule_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a7": {
+      "name": "set_plug_schedule_weekdays",
+      "type": "04",
+      "options": [
+       1,
+       2,
+       3,
+       4,
+       5,
+       6,
+       7
+      ]
+     }
+    }
+   }
+  ],
+  "007e": [
+   {
+    "command": "plug_delayed_toggle",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_toggle_timer_mode",
+      "type": "01",
+      "options": [
+       0,
+       1,
+       2,
+       3
+      ]
+     },
+     "a3": {
+      "name": null,
+      "type": "04",
+      "length": 3
+     },
+     "a4": {
+      "name": "set_toggle_to_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a5": {
+      "name": null,
+      "type": "04",
+      "length": 3
+     }
+    }
+   }
+  ],
+  "007f": [
+   {
+    "command": "timer_request",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     }
+    }
+   }
+  ]
+ }
+}

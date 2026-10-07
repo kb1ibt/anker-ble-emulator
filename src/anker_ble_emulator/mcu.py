@@ -7,19 +7,14 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from .frame import CHANNEL_SESSION, COMPOSER_SEND, RESPONSE, make_frame
-from .messages import (
-    BLE_REPLY_ROUTE,
-    CLOUD_REPLY_ROUTE,
-    ROUTE_APP,
-    ROUTE_BLE,
-    with_route,
-)
+from .messages import BLE_REPLY_ROUTE, ROUTE_FIELD
 
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from .frame import Frame
+    from .layouts import Layout, Value
 
 
 def mcu_frame(msgtype: int, cleartext: bytes) -> Frame:
@@ -31,60 +26,58 @@ def mcu_frame(msgtype: int, cleartext: bytes) -> Frame:
 class McuScript:
     """What the MCU answers, by request msgtype, and what it can push.
 
-    The MCU routes each frame by its own ``a1``: a reply to an ack op goes back
-    by the request's source; a reply to a push-rule op, and every push, goes to
-    BLE, or to MQTT ``param_info`` while the MCU reports to the cloud.
+    A command the layout maps but nothing recorded answers gets an ack whose
+    status is the layout's check of its values.
 
     Attributes:
         replies: Cleartext frames sent in order for a request msgtype.
         pushes: Cleartext frames by push msgtype, sent on demand.
-        push_route_requests: Requests whose replies follow the push rule.
+        layout: The product's layout, for command acks and named values.
 
     """
 
     replies: Mapping[int, Sequence[Frame]] = field(default_factory=dict)
     pushes: Mapping[int, Frame] = field(default_factory=dict)
-    push_route_requests: frozenset[int] = frozenset()
+    layout: Layout | None = None
 
     def respond(
-        self, msgtype: int, source: int = ROUTE_BLE, *, cloud: bool = False
+        self,
+        msgtype: int,
+        *,
+        request: bytes = b"",
+        values: Mapping[int, Mapping[str, Value]] | None = None,
     ) -> list[Frame]:
-        """Return the frames answering a request, routed; none for an unscripted one.
+        """Return the frames answering a request; none for an unknown one.
 
         Args:
             msgtype: The request's 12-bit message type.
-            source: The request's route source nibble.
-            cloud: The MCU sends push-rule frames to the cloud.
+            request: The request's cleartext fields, checked against the layout.
+            values: Telemetry values set by name, by frame msgtype.
 
         """
-        reply_route = (
-            _push_route(cloud=cloud)
-            if msgtype in self.push_route_requests
-            else ROUTE_APP << 4 | source
-        )
-        return [
-            _routed(
-                frame,
-                reply_route
-                if frame.cmd.msgtype == msgtype | RESPONSE
-                else _push_route(cloud=cloud),
-            )
-            for frame in self.replies.get(msgtype, ())
-        ]
+        frames = list(self.replies.get(msgtype, ()))
+        if not frames and self.layout is not None and self.layout.has_command(msgtype):
+            status = self.layout.check(msgtype, request)
+            ack = bytes([status]) + ROUTE_FIELD.build({"route": BLE_REPLY_ROUTE})
+            frames = [mcu_frame(msgtype | RESPONSE, ack)]
+        return [self._with_values(frame, values) for frame in frames]
 
-    def push(self, msgtype: int, *, cloud: bool = False) -> Frame:
-        """Return the scripted push of ``msgtype``, routed.
+    def push(
+        self, msgtype: int, *, values: Mapping[int, Mapping[str, Value]] | None = None
+    ) -> Frame:
+        """Return the scripted push of ``msgtype``.
 
         Raises:
             KeyError: If the script has no such push.
 
         """
-        return _routed(self.pushes[msgtype], _push_route(cloud=cloud))
+        return self._with_values(self.pushes[msgtype], values)
 
-
-def _push_route(*, cloud: bool) -> int:
-    return CLOUD_REPLY_ROUTE if cloud else BLE_REPLY_ROUTE
-
-
-def _routed(frame: Frame, route: int) -> Frame:
-    return mcu_frame(frame.cmd.msgtype, with_route(frame.payload, route))
+    def _with_values(
+        self, frame: Frame, values: Mapping[int, Mapping[str, Value]] | None
+    ) -> Frame:
+        named = (values or {}).get(frame.cmd.msgtype)
+        if not named or self.layout is None:
+            return frame
+        payload = self.layout.update(frame.cmd.msgtype, frame.payload, named)
+        return mcu_frame(frame.cmd.msgtype, payload)

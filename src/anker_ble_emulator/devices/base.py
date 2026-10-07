@@ -15,6 +15,7 @@ from construct import Bytes, Int8ub, Optional, Struct
 
 from anker_ble_emulator.clock import MonotonicClock
 from anker_ble_emulator.frame import RESPONSE
+from anker_ble_emulator.layouts import Layout, LayoutError
 from anker_ble_emulator.mcu import McuScript, mcu_frame
 from anker_ble_emulator.module import (
     TIMER_PERIOD,
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
     from anker_ble_emulator.clock import Clock
+    from anker_ble_emulator.layouts import Value
 
 #: A locally administered unicast MAC.
 DEFAULT_MAC = "AA:12:DE:AD:BE:EF"
@@ -131,7 +133,6 @@ class Profile:
         version_names: ``0830`` ``a3``-``a5``: the model and component names.
         module_replies: Msgtypes of recorded module session-op replies, by the
             build they were recorded on.
-        push_route_requests: Requests the MCU answers by its push rule.
 
     """
 
@@ -147,7 +148,6 @@ class Profile:
     device_version: str
     version_names: tuple[str, str, str]
     module_replies: Mapping[ModuleBuild, tuple[int, ...]] = field(default_factory=dict)
-    push_route_requests: frozenset[int] = frozenset()
 
     def frames(self) -> dict[int, bytes]:
         """Return the recorded cleartext payloads by msgtype."""
@@ -179,8 +179,13 @@ class Profile:
             esp32=esp32,
         )
 
-    def script(self) -> McuScript:
-        """Return the MCU script built from the packaged recorded frames."""
+    def script(self, layout: Layout | None = None) -> McuScript:
+        """Return the MCU script built from the packaged recorded frames.
+
+        Args:
+            layout: The product's layout, for command acks and named values.
+
+        """
         frames = self.frames()
         return McuScript(
             replies={
@@ -190,7 +195,7 @@ class Profile:
             pushes={
                 msgtype: mcu_frame(msgtype, frames[msgtype]) for msgtype in self.pushes
             },
-            push_route_requests=self.push_route_requests,
+            layout=layout,
         )
 
 
@@ -277,10 +282,32 @@ class EmulatedDevice:
             session_replies=profile.session_replies(self.module_build),
             versions=profile.versions(self.module_build),
         )
-        self.module = Module(config, profile.script(), clock or MonotonicClock())
+        #: The product's layout from anker-solix-api's maps, where it has one.
+        self.layout = Layout.load(pn)
+        self.module = Module(
+            config, profile.script(self.layout), clock or MonotonicClock()
+        )
         #: Seconds between runs of the module's authorize timer.
         self.timer_period = TIMER_PERIOD
+        #: On WiFi to the cloud, with no BLE link (``set_cloud``).
+        self.cloud = False
         self._listener: Callable[[Output], None] | None = None
+
+    def set_values(self, msgtype: int, **values: Value) -> None:
+        """Set telemetry values by field name in every later frame of ``msgtype``.
+
+        Names are the product layout's (anker-solix-api's field names).
+
+        Raises:
+            LayoutError: If the product has no layout, or ``msgtype`` no such
+                typed field.
+
+        """
+        if self.layout is None:
+            msg = f"{self.pn} has no layout"
+            raise LayoutError(msg)
+        self.layout.build(msgtype, values)
+        self.module.values.setdefault(msgtype, {}).update(values)
 
     @property
     def address(self) -> str:
@@ -333,6 +360,16 @@ class EmulatedDevice:
     def drop(self) -> None:
         """Drop the link from the device side."""
         self._emit(Output(disconnect=True))
+
+    def set_cloud(self, on: bool) -> None:  # noqa: FBT001  # a switch
+        """Put the device on WiFi to the cloud, or back on BLE.
+
+        On the cloud (bound, with the module's cloud flag set) the device has no
+        BLE link: an open link drops and connecting fails until it's switched off.
+        """
+        self.cloud = on
+        if on:
+            self.drop()
 
     def _emit(self, output: Output) -> None:
         if self._listener is not None:

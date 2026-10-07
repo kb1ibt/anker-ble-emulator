@@ -88,9 +88,12 @@ class EmulatedBleakBackend(BaseBleakClient):
         """Bring the link up and start the device's authorize timer.
 
         Raises:
-            BleakError: If another client holds the device.
+            BleakError: If the device is on the cloud, or another client holds it.
 
         """
+        if self.device.cloud:
+            msg = f"{self.address} is on WiFi to the cloud, not on BLE"
+            raise BleakError(msg)
         if self.device.module.connected:
             msg = f"{self.address} is already connected"
             raise BleakError(msg)

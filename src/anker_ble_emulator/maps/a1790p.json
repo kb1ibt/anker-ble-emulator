@@ -1,0 +1,1300 @@
+{
+ "pn": "A1790P",
+ "source": "anker-solix-api 29eece3 2026-10-06",
+ "messages": {
+  "0405": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "ac_output_timeout_seconds",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "a3",
+     "name": "dc_output_timeout_seconds",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "a4",
+     "name": "remaining_time_hours",
+     "type": "04",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "a5",
+     "name": "ac_input_power",
+     "type": "04",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "a6",
+     "name": "ac_output_power",
+     "type": "04",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "a7",
+     "name": "usbc_1_power",
+     "type": "04",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "a8",
+     "name": "usbc_2_power",
+     "type": "04",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "a9",
+     "name": "usbc_3_power",
+     "type": "04",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "aa",
+     "name": "usba_1_power",
+     "type": "04",
+     "length": 19,
+     "from": "recorded"
+    },
+    {
+     "tag": "ab",
+     "name": "usba_2_power",
+     "type": "04",
+     "length": 19,
+     "from": "recorded"
+    },
+    {
+     "tag": "ac",
+     "name": "dc_12v_1_power",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "ad",
+     "name": "battery_soc",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "ae",
+     "name": "photovoltaic_power",
+     "type": "04",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "af",
+     "name": "pv_1_power",
+     "type": "04",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "b0",
+     "name": "pv_2_power",
+     "type": "04",
+     "length": 19,
+     "from": "recorded"
+    },
+    {
+     "tag": "b1",
+     "name": "bat_charge_power",
+     "type": "04",
+     "length": 19,
+     "from": "recorded"
+    },
+    {
+     "tag": "b2",
+     "name": "output_power_total",
+     "type": "04",
+     "length": 19,
+     "from": "recorded"
+    },
+    {
+     "tag": "b4",
+     "name": "bat_discharge_power?",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "b5",
+     "name": "sw_version",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "ba",
+     "name": "sw_expansion"
+    },
+    {
+     "tag": "bb",
+     "name": "sw_controller",
+     "type": "02",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "bc",
+     "name": "ac_output_power_switch",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "bd",
+     "name": "charging_status",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "be",
+     "name": "temperature"
+    },
+    {
+     "tag": "bf",
+     "name": "battery_status"
+    },
+    {
+     "tag": "c0",
+     "name": "main_battery_soc"
+    },
+    {
+     "tag": "c1",
+     "name": "battery_soh"
+    },
+    {
+     "tag": "c2",
+     "name": "usbc_1_status",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "c3",
+     "name": "usbc_2_status",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "c4",
+     "name": "usbc_3_status",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "c5",
+     "name": "usba_1_status",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "c6",
+     "name": "usba_2_status",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "c7",
+     "name": "dc_12v_1_status",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "cc",
+     "name": "device_sn"
+    },
+    {
+     "tag": "cd",
+     "name": "ac_input_limit",
+     "type": "02",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "ce",
+     "name": "device_timeout_minutes",
+     "type": "02",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "cf",
+     "name": "display_timeout_seconds",
+     "type": "02",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "d3",
+     "name": "ac_output_power_switch_dup?"
+    },
+    {
+     "tag": "d4",
+     "name": "dc_output_power_switch",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "d5",
+     "name": "display_mode",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "d6",
+     "name": "ac_frequency",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "d8",
+     "name": "temp_unit_fahrenheit",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "d9",
+     "name": "light_mode",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "e6",
+     "name": "ac_input_limit_max"
+    },
+    {
+     "tag": "f6",
+     "name": null,
+     "bytes": [
+      {
+       "name": "country_code",
+       "type": "00",
+       "length": 2,
+       "offset": 0
+      }
+     ]
+    },
+    {
+     "tag": "f7",
+     "name": "port_memory_switch"
+    },
+    {
+     "tag": "fd",
+     "name": "exp_1_type",
+     "type": "00",
+     "length": 11,
+     "from": "name"
+    },
+    {
+     "tag": "fe",
+     "name": "msg_timestamp",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    }
+   ]
+  },
+  "0407": {
+   "topic": "state_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "device_sn"
+    },
+    {
+     "tag": "a3",
+     "name": "wifi_name",
+     "type": "00",
+     "length": 14,
+     "from": "name"
+    },
+    {
+     "tag": "a4",
+     "name": "wifi_signal",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "a6",
+     "name": "ac_input_limit",
+     "type": "02",
+     "length": 3,
+     "from": "name"
+    }
+   ]
+  },
+  "040a": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "expansion_packs"
+    },
+    {
+     "tag": "a3",
+     "name": "expansion_soc"
+    },
+    {
+     "tag": "a4",
+     "name": null,
+     "bytes": [
+      {
+       "name": "exp_1_sn",
+       "type": "00",
+       "length": 16,
+       "offset": 0
+      },
+      {
+       "name": "exp_1_temperature",
+       "type": "01",
+       "offset": 25
+      },
+      {
+       "name": "exp_1_soc",
+       "type": "01",
+       "offset": 33
+      },
+      {
+       "name": "exp_1_soh",
+       "type": "01",
+       "offset": 34
+      },
+      {
+       "name": "exp_1_type",
+       "type": "00",
+       "length": 10,
+       "offset": 40
+      }
+     ]
+    },
+    {
+     "tag": "a5",
+     "name": null,
+     "bytes": [
+      {
+       "name": "exp_2_sn",
+       "type": "00",
+       "length": 16,
+       "offset": 0
+      },
+      {
+       "name": "exp_2_temperature",
+       "type": "01",
+       "offset": 25
+      },
+      {
+       "name": "exp_2_soc",
+       "type": "01",
+       "offset": 33
+      },
+      {
+       "name": "exp_2_soh",
+       "type": "01",
+       "offset": 34
+      },
+      {
+       "name": "exp_2_type",
+       "type": "00",
+       "length": 10,
+       "offset": 40
+      }
+     ]
+    },
+    {
+     "tag": "a6",
+     "name": null,
+     "bytes": [
+      {
+       "name": "exp_3_sn",
+       "type": "00",
+       "length": 16,
+       "offset": 0
+      },
+      {
+       "name": "exp_3_temperature",
+       "type": "01",
+       "offset": 25
+      },
+      {
+       "name": "exp_3_soc",
+       "type": "01",
+       "offset": 33
+      },
+      {
+       "name": "exp_3_soh",
+       "type": "01",
+       "offset": 34
+      },
+      {
+       "name": "exp_3_type",
+       "type": "00",
+       "length": 10,
+       "offset": 40
+      }
+     ]
+    },
+    {
+     "tag": "a7",
+     "name": null,
+     "bytes": [
+      {
+       "name": "exp_4_sn",
+       "type": "00",
+       "length": 16,
+       "offset": 0
+      },
+      {
+       "name": "exp_4_temperature",
+       "type": "01",
+       "offset": 25
+      },
+      {
+       "name": "exp_4_soc",
+       "type": "01",
+       "offset": 33
+      },
+      {
+       "name": "exp_4_soh",
+       "type": "01",
+       "offset": 34
+      },
+      {
+       "name": "exp_4_type",
+       "type": "00",
+       "length": 10,
+       "offset": 40
+      }
+     ]
+    },
+    {
+     "tag": "a8",
+     "name": null,
+     "bytes": [
+      {
+       "name": "exp_5_sn",
+       "type": "00",
+       "length": 16,
+       "offset": 0
+      },
+      {
+       "name": "exp_5_temperature",
+       "type": "01",
+       "offset": 25
+      },
+      {
+       "name": "exp_5_soc",
+       "type": "01",
+       "offset": 33
+      },
+      {
+       "name": "exp_5_soh",
+       "type": "01",
+       "offset": 34
+      },
+      {
+       "name": "exp_5_type",
+       "type": "00",
+       "length": 10,
+       "offset": 40
+      }
+     ]
+    },
+    {
+     "tag": "a9",
+     "name": null,
+     "bytes": [
+      {
+       "name": "exp_6_sn",
+       "type": "00",
+       "length": 16,
+       "offset": 0
+      },
+      {
+       "name": "exp_6_temperature",
+       "type": "01",
+       "offset": 25
+      },
+      {
+       "name": "exp_6_soc",
+       "type": "01",
+       "offset": 33
+      },
+      {
+       "name": "exp_6_soh",
+       "type": "01",
+       "offset": 34
+      },
+      {
+       "name": "exp_6_type",
+       "type": "00",
+       "length": 10,
+       "offset": 40
+      }
+     ]
+    },
+    {
+     "tag": "fe",
+     "name": "msg_timestamp",
+     "type": "03",
+     "length": 5,
+     "from": "name"
+    }
+   ]
+  },
+  "0410": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": null,
+     "bytes": [
+      {
+       "name": "power_panel_sn",
+       "type": "00",
+       "length": 16,
+       "offset": 0
+      }
+     ]
+    },
+    {
+     "tag": "a3",
+     "name": null,
+     "bytes": [
+      {
+       "name": "device_1_sn",
+       "type": "00",
+       "length": 16,
+       "offset": 0
+      },
+      {
+       "name": "device_1_soc",
+       "type": "01",
+       "offset": 25
+      },
+      {
+       "name": "device_1_temperature",
+       "type": "01",
+       "offset": 32
+      }
+     ]
+    },
+    {
+     "tag": "a4",
+     "name": null,
+     "bytes": [
+      {
+       "name": "device_2_sn",
+       "type": "00",
+       "length": 16,
+       "offset": 0
+      },
+      {
+       "name": "device_2_soc",
+       "type": "01",
+       "offset": 25
+      },
+      {
+       "name": "device_2_temperature",
+       "type": "01",
+       "offset": 32
+      }
+     ]
+    },
+    {
+     "tag": "a5",
+     "name": "device_1_pn"
+    },
+    {
+     "tag": "a6",
+     "name": "device_2_pn"
+    },
+    {
+     "tag": "fe",
+     "name": "msg_timestamp",
+     "type": "03",
+     "length": 5,
+     "from": "name"
+    }
+   ]
+  },
+  "0804": {
+   "topic": "param_info",
+   "fields": []
+  },
+  "0830": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a1",
+     "name": "hw_version",
+     "type": "76",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "a2",
+     "name": "sw_version",
+     "type": "76",
+     "length": 8,
+     "from": "recorded"
+    }
+   ]
+  },
+  "0840": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "ac_output_timeout_seconds",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "a3",
+     "name": "dc_output_timeout_seconds",
+     "type": "02",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "a4",
+     "name": "remaining_time_hours",
+     "type": "04",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "a5",
+     "name": "ac_input_power",
+     "type": "04",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "a6",
+     "name": "ac_output_power",
+     "type": "04",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "a7",
+     "name": "usbc_1_power",
+     "type": "04",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "a8",
+     "name": "usbc_2_power",
+     "type": "04",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "a9",
+     "name": "usbc_3_power",
+     "type": "04",
+     "length": 8,
+     "from": "recorded"
+    },
+    {
+     "tag": "aa",
+     "name": "usba_1_power",
+     "type": "04",
+     "length": 19,
+     "from": "recorded"
+    },
+    {
+     "tag": "ab",
+     "name": "usba_2_power",
+     "type": "04",
+     "length": 19,
+     "from": "recorded"
+    },
+    {
+     "tag": "ac",
+     "name": "dc_12v_1_power",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "ad",
+     "name": "battery_soc",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "ae",
+     "name": "photovoltaic_power",
+     "type": "04",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "af",
+     "name": "pv_1_power",
+     "type": "04",
+     "length": 3,
+     "from": "recorded"
+    },
+    {
+     "tag": "b0",
+     "name": "pv_2_power",
+     "type": "04",
+     "length": 19,
+     "from": "recorded"
+    },
+    {
+     "tag": "b1",
+     "name": "bat_charge_power",
+     "type": "04",
+     "length": 19,
+     "from": "recorded"
+    },
+    {
+     "tag": "b2",
+     "name": "output_power_total",
+     "type": "04",
+     "length": 19,
+     "from": "recorded"
+    },
+    {
+     "tag": "b4",
+     "name": "bat_discharge_power?",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "b5",
+     "name": "sw_version",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "ba",
+     "name": "sw_expansion"
+    },
+    {
+     "tag": "bb",
+     "name": "sw_controller",
+     "type": "02",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "bc",
+     "name": "ac_output_power_switch",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "bd",
+     "name": "charging_status",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "be",
+     "name": "temperature"
+    },
+    {
+     "tag": "bf",
+     "name": "battery_status"
+    },
+    {
+     "tag": "c0",
+     "name": "main_battery_soc"
+    },
+    {
+     "tag": "c1",
+     "name": "battery_soh"
+    },
+    {
+     "tag": "c2",
+     "name": "usbc_1_status",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "c3",
+     "name": "usbc_2_status",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "c4",
+     "name": "usbc_3_status",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "c5",
+     "name": "usba_1_status",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "c6",
+     "name": "usba_2_status",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "c7",
+     "name": "dc_12v_1_status",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "cc",
+     "name": "device_sn"
+    },
+    {
+     "tag": "cd",
+     "name": "ac_input_limit",
+     "type": "02",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "ce",
+     "name": "device_timeout_minutes",
+     "type": "02",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "cf",
+     "name": "display_timeout_seconds",
+     "type": "02",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "d3",
+     "name": "ac_output_power_switch_dup?"
+    },
+    {
+     "tag": "d4",
+     "name": "dc_output_power_switch",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "d5",
+     "name": "display_mode",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "d6",
+     "name": "ac_frequency",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "d8",
+     "name": "temp_unit_fahrenheit",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "d9",
+     "name": "light_mode",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "e6",
+     "name": "ac_input_limit_max"
+    },
+    {
+     "tag": "f6",
+     "name": null,
+     "bytes": [
+      {
+       "name": "country_code",
+       "type": "00",
+       "length": 2,
+       "offset": 0
+      }
+     ]
+    },
+    {
+     "tag": "f7",
+     "name": "port_memory_switch"
+    },
+    {
+     "tag": "fd",
+     "name": "exp_1_type",
+     "type": "00",
+     "length": 11,
+     "from": "name"
+    },
+    {
+     "tag": "fe",
+     "name": "msg_timestamp",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    }
+   ]
+  }
+ },
+ "commands": {
+  "0044": [
+   {
+    "command": "ac_charge_limit",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_ac_input_limit",
+      "type": "02",
+      "min": 100,
+      "max": 1800,
+      "step": 100
+     }
+    }
+   }
+  ],
+  "0045": [
+   {
+    "command": "device_timeout_minutes",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_device_timeout_min",
+      "type": "02",
+      "options": [
+       0,
+       30,
+       60,
+       120,
+       240,
+       360,
+       720,
+       1440
+      ]
+     }
+    }
+   }
+  ],
+  "0046": [
+   {
+    "command": "display_timeout_seconds",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_display_timeout_sec",
+      "type": "02",
+      "options": [
+       20,
+       30,
+       60,
+       300,
+       1800
+      ]
+     }
+    }
+   }
+  ],
+  "004a": [
+   {
+    "command": "ac_output_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_ac_output_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  ],
+  "004b": [
+   {
+    "command": "dc_output_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_dc_output_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  ],
+  "004c": [
+   {
+    "command": "display_mode_select",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_display_mode",
+      "type": "01",
+      "options": [
+       0,
+       1,
+       2,
+       3
+      ]
+     }
+    }
+   }
+  ],
+  "004f": [
+   {
+    "command": "light_mode_select",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_light_mode",
+      "type": "01",
+      "options": [
+       0,
+       1,
+       2,
+       3,
+       4
+      ]
+     }
+    }
+   }
+  ],
+  "0050": [
+   {
+    "command": "temp_unit_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_temp_unit_fahrenheit",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  ],
+  "0052": [
+   {
+    "command": "display_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_display_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  ],
+  "0057": [
+   {
+    "command": "realtime_trigger",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_realtime_trigger",
+      "type": "01",
+      "default": 1,
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a3": {
+      "name": "trigger_timeout_sec",
+      "type": "03",
+      "min": 30,
+      "max": 600,
+      "default": 60
+     }
+    }
+   }
+  ],
+  "0076": [
+   {
+    "command": "dc_12v_output_mode_select",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_dc_12v_output_mode",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  ],
+  "0077": [
+   {
+    "command": "ac_output_mode_select",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_ac_output_mode",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  ],
+  "0079": [
+   {
+    "command": "port_memory_switch",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_port_memory_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     }
+    }
+   }
+  ]
+ }
+}

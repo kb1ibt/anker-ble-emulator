@@ -1,0 +1,1069 @@
+{
+ "pn": "AX170",
+ "source": "anker-solix-api 29eece3 2026-10-06",
+ "messages": {
+  "0405": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "device_sn"
+    },
+    {
+     "tag": "a6",
+     "name": "battery_soc_total",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "a7",
+     "name": "sw_version"
+    },
+    {
+     "tag": "a8",
+     "name": "sw_controller",
+     "type": "02",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "a9",
+     "name": "hw_version"
+    },
+    {
+     "tag": "ab",
+     "name": "pv_power_total"
+    },
+    {
+     "tag": "ac",
+     "name": "battery_power_signed_total",
+     "type": "05",
+     "length": 5,
+     "from": "name"
+    },
+    {
+     "tag": "b0",
+     "name": "pv_yield"
+    },
+    {
+     "tag": "b1",
+     "name": "charged_energy"
+    },
+    {
+     "tag": "b2",
+     "name": "discharged_energy"
+    },
+    {
+     "tag": "b4",
+     "name": "grid_import_energy"
+    },
+    {
+     "tag": "b5",
+     "name": "backup_soc"
+    },
+    {
+     "tag": "b7",
+     "name": "max_soc?"
+    },
+    {
+     "tag": "b8",
+     "name": "usage_mode"
+    },
+    {
+     "tag": "b9",
+     "name": "main_breaker_limit?"
+    },
+    {
+     "tag": "bf",
+     "name": "backup_start_timestamp",
+     "type": "01",
+     "length": 2,
+     "from": "name"
+    },
+    {
+     "tag": "c0",
+     "name": "backup_end_timestamp"
+    },
+    {
+     "tag": "c2",
+     "name": "input_power_total"
+    },
+    {
+     "tag": "c3",
+     "name": "use_time_band?"
+    },
+    {
+     "tag": "c4",
+     "name": "grid_power_signed"
+    },
+    {
+     "tag": "c5",
+     "name": "home_demand_total"
+    },
+    {
+     "tag": "cc",
+     "name": null,
+     "bytes": [
+      {
+       "name": "powerdock_state_code_1?",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "powerdock_charging_status?",
+       "type": "01",
+       "offset": 1
+      }
+     ]
+    },
+    {
+     "tag": "cd",
+     "name": "home_demand_circuit_total"
+    },
+    {
+     "tag": "ce",
+     "name": "generator_plug_status"
+    },
+    {
+     "tag": "d4",
+     "name": "pv_power_3rd_party"
+    },
+    {
+     "tag": "d6",
+     "name": "generator_power"
+    },
+    {
+     "tag": "d8",
+     "name": "voltage_l1l2"
+    },
+    {
+     "tag": "dd",
+     "name": "display_timeout_seconds",
+     "type": "02",
+     "length": 3,
+     "from": "name"
+    },
+    {
+     "tag": "de",
+     "name": "max_load_limit_total?"
+    },
+    {
+     "tag": "e3",
+     "name": null,
+     "bytes": [
+      {
+       "name": "low_backup_soc",
+       "type": "01",
+       "offset": 0
+      },
+      {
+       "name": "circuit_setup",
+       "type": "04",
+       "length": 36,
+       "offset": 1
+      }
+     ]
+    },
+    {
+     "tag": "e4",
+     "name": null,
+     "bytes": [
+      {
+       "name": "home_demand_circuit_01",
+       "type": "05",
+       "offset": 0
+      },
+      {
+       "name": "home_demand_circuit_02",
+       "type": "05",
+       "offset": 4
+      },
+      {
+       "name": "home_demand_circuit_03",
+       "type": "05",
+       "offset": 8
+      },
+      {
+       "name": "home_demand_circuit_04",
+       "type": "05",
+       "offset": 18
+      },
+      {
+       "name": "home_demand_circuit_05",
+       "type": "05",
+       "offset": 22
+      },
+      {
+       "name": "home_demand_circuit_06",
+       "type": "05",
+       "offset": 32
+      },
+      {
+       "name": "home_demand_circuit_07",
+       "type": "05",
+       "offset": 36
+      },
+      {
+       "name": "home_demand_circuit_08",
+       "type": "05",
+       "offset": 40
+      },
+      {
+       "name": "home_demand_circuit_09",
+       "type": "05",
+       "offset": 50
+      },
+      {
+       "name": "home_demand_circuit_10",
+       "type": "05",
+       "offset": 54
+      },
+      {
+       "name": "home_demand_circuit_11",
+       "type": "05",
+       "offset": 64
+      },
+      {
+       "name": "home_demand_circuit_12",
+       "type": "05",
+       "offset": 68
+      },
+      {
+       "name": "home_demand_other",
+       "type": "05",
+       "offset": 72
+      }
+     ]
+    },
+    {
+     "tag": "e8",
+     "name": null,
+     "bytes": [
+      {
+       "name": "device_1_pn",
+       "type": "00",
+       "offset": 0
+      },
+      {
+       "name": "device_1_sn",
+       "type": "00",
+       "offset": 17
+      },
+      {
+       "name": "device_1_temperature",
+       "type": "01",
+       "offset": 55
+      },
+      {
+       "name": "device_1_soc",
+       "type": "01",
+       "offset": 65
+      },
+      {
+       "name": "device_1_pv_1_power",
+       "type": "02",
+       "offset": 66
+      },
+      {
+       "name": "device_1_pv_2_power",
+       "type": "02",
+       "offset": 70
+      },
+      {
+       "name": "device_1_battery_power",
+       "type": "02",
+       "offset": 88
+      },
+      {
+       "name": "device_1_exp_packs",
+       "type": "01",
+       "offset": 102
+      }
+     ]
+    },
+    {
+     "tag": "e9",
+     "name": null,
+     "bytes": [
+      {
+       "name": "device_2_pn",
+       "type": "00",
+       "offset": 0
+      },
+      {
+       "name": "device_2_sn",
+       "type": "00",
+       "offset": 17
+      },
+      {
+       "name": "device_2_temperature",
+       "type": "01",
+       "offset": 55
+      },
+      {
+       "name": "device_2_soc",
+       "type": "01",
+       "offset": 65
+      },
+      {
+       "name": "device_2_pv_1_power",
+       "type": "02",
+       "offset": 66
+      },
+      {
+       "name": "device_2_pv_2_power",
+       "type": "02",
+       "offset": 70
+      },
+      {
+       "name": "device_2_battery_power",
+       "type": "02",
+       "offset": 88
+      },
+      {
+       "name": "device_2_exp_packs",
+       "type": "01",
+       "offset": 102
+      }
+     ]
+    },
+    {
+     "tag": "ea",
+     "name": null,
+     "bytes": [
+      {
+       "name": "device_3_pn",
+       "type": "00",
+       "offset": 0
+      },
+      {
+       "name": "device_3_sn",
+       "type": "00",
+       "offset": 17
+      },
+      {
+       "name": "device_3_temperature",
+       "type": "01",
+       "offset": 55
+      },
+      {
+       "name": "device_3_soc",
+       "type": "01",
+       "offset": 65
+      },
+      {
+       "name": "device_3_pv_1_power",
+       "type": "02",
+       "offset": 66
+      },
+      {
+       "name": "device_3_pv_2_power",
+       "type": "02",
+       "offset": 70
+      },
+      {
+       "name": "device_3_battery_power",
+       "type": "02",
+       "offset": 88
+      },
+      {
+       "name": "device_3_exp_packs",
+       "type": "01",
+       "offset": 102
+      }
+     ]
+    },
+    {
+     "tag": "eb",
+     "name": null,
+     "bytes": [
+      {
+       "name": "device_4_pn",
+       "type": "00",
+       "offset": 0
+      },
+      {
+       "name": "device_4_sn",
+       "type": "00",
+       "offset": 17
+      },
+      {
+       "name": "device_4_temperature",
+       "type": "01",
+       "offset": 55
+      },
+      {
+       "name": "device_4_soc",
+       "type": "01",
+       "offset": 65
+      },
+      {
+       "name": "device_4_pv_1_power",
+       "type": "02",
+       "offset": 66
+      },
+      {
+       "name": "device_4_pv_2_power",
+       "type": "02",
+       "offset": 70
+      },
+      {
+       "name": "device_4_battery_power",
+       "type": "02",
+       "offset": 88
+      },
+      {
+       "name": "device_4_exp_packs",
+       "type": "01",
+       "offset": 102
+      }
+     ]
+    },
+    {
+     "tag": "ec",
+     "name": null,
+     "bytes": [
+      {
+       "name": "device_5_pn",
+       "type": "00",
+       "offset": 0
+      },
+      {
+       "name": "device_5_sn",
+       "type": "00",
+       "offset": 17
+      },
+      {
+       "name": "device_5_temperature",
+       "type": "01",
+       "offset": 55
+      },
+      {
+       "name": "device_5_soc",
+       "type": "01",
+       "offset": 65
+      },
+      {
+       "name": "device_5_pv_1_power",
+       "type": "02",
+       "offset": 66
+      },
+      {
+       "name": "device_5_pv_2_power",
+       "type": "02",
+       "offset": 70
+      },
+      {
+       "name": "device_5_battery_power",
+       "type": "02",
+       "offset": 88
+      },
+      {
+       "name": "device_5_exp_packs",
+       "type": "01",
+       "offset": 102
+      }
+     ]
+    },
+    {
+     "tag": "ed",
+     "name": null,
+     "bytes": [
+      {
+       "name": "device_6_pn",
+       "type": "00",
+       "offset": 0
+      },
+      {
+       "name": "device_6_sn",
+       "type": "00",
+       "offset": 17
+      },
+      {
+       "name": "device_6_temperature",
+       "type": "01",
+       "offset": 55
+      },
+      {
+       "name": "device_6_soc",
+       "type": "01",
+       "offset": 65
+      },
+      {
+       "name": "device_6_pv_1_power",
+       "type": "02",
+       "offset": 66
+      },
+      {
+       "name": "device_6_pv_2_power",
+       "type": "02",
+       "offset": 70
+      },
+      {
+       "name": "device_6_battery_power",
+       "type": "02",
+       "offset": 88
+      },
+      {
+       "name": "device_6_exp_packs",
+       "type": "01",
+       "offset": 102
+      }
+     ]
+    },
+    {
+     "tag": "fd",
+     "name": "high_backup_soc"
+    },
+    {
+     "tag": "fe",
+     "name": "msg_timestamp",
+     "type": "03",
+     "length": 5,
+     "from": "name"
+    }
+   ]
+  },
+  "0408": {
+   "topic": "param_info",
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "device_sn",
+     "type": "00",
+     "length": 18,
+     "from": "recorded"
+    },
+    {
+     "tag": "a3",
+     "name": "local_timestamp",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "a4",
+     "name": "utc_timestamp",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "a7",
+     "name": "battery_soc_total",
+     "type": "01",
+     "length": 2,
+     "from": "recorded"
+    },
+    {
+     "tag": "ad",
+     "name": "pv_yield_today?",
+     "type": "05",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "df",
+     "name": "pv_yield_today_df?",
+     "type": "05",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "b1",
+     "name": "tbd_power_total_b1?",
+     "type": "05",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "b3",
+     "name": "input_energy_today?",
+     "type": "05",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "b4",
+     "name": "discharged_energy_today?",
+     "type": "05",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "b6",
+     "name": "battery_power_signed_total",
+     "type": "05",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "ba",
+     "name": "discharged_energy_today_ba?",
+     "type": "05",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "c0",
+     "name": "grid_import_energy_today_c0?",
+     "type": "05",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "d6",
+     "name": "timestamp_0408_d6?",
+     "type": "03",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "ea",
+     "name": "pv_yield_today_ea?",
+     "type": "05",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "eb",
+     "name": "pv_yield_today_eb?",
+     "type": "05",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "ee",
+     "name": "pv_power_total?",
+     "type": "05",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "f3",
+     "name": "pv_yield_today_f3?",
+     "type": "05",
+     "length": 5,
+     "from": "recorded"
+    },
+    {
+     "tag": "f5",
+     "name": null,
+     "type": "04",
+     "length": 53,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "circuit_01_energy_today",
+       "type": "05",
+       "offset": 0
+      },
+      {
+       "name": "circuit_02_energy_today",
+       "type": "05",
+       "offset": 4
+      },
+      {
+       "name": "circuit_03_energy_today",
+       "type": "05",
+       "offset": 8
+      },
+      {
+       "name": "circuit_04_energy_today",
+       "type": "05",
+       "offset": 18
+      },
+      {
+       "name": "circuit_05_energy_today",
+       "type": "05",
+       "offset": 22
+      },
+      {
+       "name": "circuit_06_energy_today",
+       "type": "05",
+       "offset": 32
+      },
+      {
+       "name": "circuit_07_energy_today",
+       "type": "05",
+       "offset": 36
+      },
+      {
+       "name": "circuit_08_energy_today",
+       "type": "05",
+       "offset": 40
+      },
+      {
+       "name": "circuit_09_energy_today",
+       "type": "05",
+       "offset": 50
+      },
+      {
+       "name": "circuit_10_energy_today",
+       "type": "05",
+       "offset": 54
+      },
+      {
+       "name": "circuit_11_energy_today",
+       "type": "05",
+       "offset": 64
+      },
+      {
+       "name": "circuit_12_energy_today",
+       "type": "05",
+       "offset": 68
+      },
+      {
+       "name": "other_energy_today",
+       "type": "05",
+       "offset": 72
+      }
+     ]
+    },
+    {
+     "tag": "f6",
+     "name": null,
+     "type": "04",
+     "length": 53,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "home_demand_circuit_01",
+       "type": "05",
+       "offset": 0
+      },
+      {
+       "name": "home_demand_circuit_02",
+       "type": "05",
+       "offset": 4
+      },
+      {
+       "name": "home_demand_circuit_03",
+       "type": "05",
+       "offset": 8
+      },
+      {
+       "name": "home_demand_circuit_04",
+       "type": "05",
+       "offset": 18
+      },
+      {
+       "name": "home_demand_circuit_05",
+       "type": "05",
+       "offset": 22
+      },
+      {
+       "name": "home_demand_circuit_06",
+       "type": "05",
+       "offset": 32
+      },
+      {
+       "name": "home_demand_circuit_07",
+       "type": "05",
+       "offset": 36
+      },
+      {
+       "name": "home_demand_circuit_08",
+       "type": "05",
+       "offset": 40
+      },
+      {
+       "name": "home_demand_circuit_09",
+       "type": "05",
+       "offset": 50
+      },
+      {
+       "name": "home_demand_circuit_10",
+       "type": "05",
+       "offset": 54
+      },
+      {
+       "name": "home_demand_circuit_11",
+       "type": "05",
+       "offset": 64
+      },
+      {
+       "name": "home_demand_circuit_12",
+       "type": "05",
+       "offset": 68
+      },
+      {
+       "name": "home_demand_other",
+       "type": "05",
+       "offset": 72
+      }
+     ]
+    },
+    {
+     "tag": "f7",
+     "name": null,
+     "type": "04",
+     "length": 47,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "device_1_pn",
+       "type": "00",
+       "offset": 0
+      },
+      {
+       "name": "device_1_sn",
+       "type": "00",
+       "offset": 17
+      },
+      {
+       "name": "device_1_soc",
+       "type": "01",
+       "offset": 41
+      },
+      {
+       "name": "device_1_ac_output_power_signed",
+       "type": "02",
+       "offset": 52
+      },
+      {
+       "name": "device_1_pv_power?",
+       "type": "05",
+       "offset": 66
+      }
+     ]
+    },
+    {
+     "tag": "f8",
+     "name": null,
+     "type": "04",
+     "length": 47,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "device_2_pn",
+       "type": "00",
+       "offset": 0
+      },
+      {
+       "name": "device_2_sn",
+       "type": "00",
+       "offset": 17
+      },
+      {
+       "name": "device_2_soc",
+       "type": "01",
+       "offset": 41
+      },
+      {
+       "name": "device_2_ac_output_power_signed",
+       "type": "02",
+       "offset": 52
+      },
+      {
+       "name": "device_2_pv_power?",
+       "type": "05",
+       "offset": 66
+      }
+     ]
+    },
+    {
+     "tag": "f9",
+     "name": null,
+     "type": "04",
+     "length": 47,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "device_3_pn",
+       "type": "00",
+       "offset": 0
+      },
+      {
+       "name": "device_3_sn",
+       "type": "00",
+       "offset": 17
+      },
+      {
+       "name": "device_3_soc",
+       "type": "01",
+       "offset": 41
+      },
+      {
+       "name": "device_3_ac_output_power_signed",
+       "type": "02",
+       "offset": 52
+      },
+      {
+       "name": "device_3_pv_power?",
+       "type": "05",
+       "offset": 66
+      }
+     ]
+    },
+    {
+     "tag": "fa",
+     "name": null,
+     "type": "04",
+     "length": 47,
+     "from": "recorded",
+     "bytes": [
+      {
+       "name": "device_4_pn",
+       "type": "00",
+       "offset": 0
+      },
+      {
+       "name": "device_4_sn",
+       "type": "00",
+       "offset": 17
+      },
+      {
+       "name": "device_4_soc",
+       "type": "01",
+       "offset": 41
+      },
+      {
+       "name": "device_4_ac_output_power_signed",
+       "type": "02",
+       "offset": 52
+      },
+      {
+       "name": "device_4_pv_power?",
+       "type": "05",
+       "offset": 66
+      }
+     ]
+    }
+   ]
+  },
+  "0666": {
+   "topic": null,
+   "fields": [
+    {
+     "tag": "a2",
+     "name": "sn"
+    },
+    {
+     "tag": "a3",
+     "name": "type"
+    },
+    {
+     "tag": "a4",
+     "name": "tlv"
+    }
+   ]
+  }
+ },
+ "commands": {
+  "0057": [
+   {
+    "command": "realtime_trigger",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_realtime_trigger",
+      "type": "01",
+      "default": 1,
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a3": {
+      "name": "trigger_timeout_sec",
+      "type": "03",
+      "min": 30,
+      "max": 600,
+      "default": 60
+     }
+    }
+   }
+  ],
+  "005e": [
+   {
+    "command": "backup_charge_plan",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_plan_id",
+      "type": "01",
+      "default": 4,
+      "options": [
+       4
+      ]
+     },
+     "a3": {
+      "name": "set_backup_option_select",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a4": {
+      "name": "set_backup_option_switch",
+      "type": "01",
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a5": {
+      "name": "set_backup_timestamps",
+      "type": "01",
+      "default": 1,
+      "options": [
+       0,
+       1
+      ]
+     },
+     "a6": {
+      "name": null,
+      "type": "04",
+      "length": 10
+     }
+    }
+   }
+  ],
+  "0412": [
+   {
+    "command": "circuit_priority",
+    "fields": {
+     "a1": {
+      "name": "pattern_22"
+     },
+     "fe": {
+      "name": "msg_timestamp",
+      "type": "03"
+     },
+     "a2": {
+      "name": "set_low_backup_soc",
+      "type": "01",
+      "min": 10,
+      "max": 99
+     },
+     "a3": {
+      "name": "set_circuit_priority",
+      "type": "04",
+      "length": 24
+     },
+     "a4": {
+      "name": "set_high_backup_soc",
+      "type": "01",
+      "min": 11,
+      "max": 100
+     }
+    }
+   }
+  ]
+ }
+}
