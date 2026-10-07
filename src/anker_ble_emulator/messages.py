@@ -86,10 +86,45 @@ def parse_request(msgtype: int, payload: bytes) -> Fields:
 
 
 #: A session frame's ``a1``: where the frame goes (high nibble) and where it came
-#: from (low nibble); a reply goes back by the request's source.
+#: from (low nibble). The module relays an MCU frame by its own route.
 ROUTE_LAYOUT = BitStruct("destination" / Nibble, "source" / Nibble)
-#: The BLE channel, as a route's source or destination nibble.
+#: Route nibbles: the BLE client, the MCU, the app (a reply's destination), and
+#: the HTTPS logging channel.
 ROUTE_BLE = 0x1
+ROUTE_MCU = 0x2
+ROUTE_APP = 0x3
+ROUTE_HTTPS_LOG = 0xA
+#: An MCU frame's route that the module relays to the BLE client.
+BLE_REPLY_ROUTE = ROUTE_APP << 4 | ROUTE_BLE
+#: The same frame routed to MQTT ``param_info`` instead.
+CLOUD_REPLY_ROUTE = 0x34
+#: A payload's leading ``a1`` route field, after a reply's status byte.
+ROUTE_FIELD = Struct("tag" / Const(b"\xa1\x01"), "route" / Int8ub)
+#: Where ``ROUTE_FIELD`` may sit: a push's first field, or after a status byte.
+ROUTE_OFFSETS = (0, 1)
+
+
+def payload_route(payload: bytes) -> int | None:
+    """Return an MCU payload's ``a1`` route byte; None if it leads with none."""
+    for offset in ROUTE_OFFSETS:
+        try:
+            return int(ROUTE_FIELD.parse(payload[offset:]).route)
+        except ConstructError:
+            continue
+    return None
+
+
+def with_route(payload: bytes, route: int) -> bytes:
+    """Return an MCU payload with its ``a1`` route byte set; as is if it has none."""
+    for offset in ROUTE_OFFSETS:
+        try:
+            ROUTE_FIELD.parse(payload[offset:])
+        except ConstructError:
+            continue
+        end = offset + ROUTE_FIELD.sizeof()
+        return payload[:offset] + ROUTE_FIELD.build({"route": route}) + payload[end:]
+    return payload
+
 
 #: A reply with only its status byte.
 STATUS_REPLY = Struct("status" / Int8ub)

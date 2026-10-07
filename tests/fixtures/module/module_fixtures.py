@@ -25,6 +25,7 @@ TEST_SCRIPT = McuScript(
         0x057: (mcu_frame(0x857, ACK_REPLY),),
     },
     pushes={0x421: mcu_frame(0x421, PUSH)},
+    push_route_requests=frozenset({0x100}),
 )
 
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict, dataclass, field
 from enum import IntEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from cryptography.exceptions import InvalidTag
 
@@ -28,21 +28,27 @@ from .frame import (
 from .messages import (
     AUTH_PENDING_REPLY,
     BIND_REPLY,
+    BLE_REPLY_ROUTE,
     CAPABILITY_REPLY,
     CONNECT_REPLY,
     DEVICE_INFO_REPLY,
     PUBLIC_KEY_REPLY,
     ROUTE_BLE,
+    ROUTE_HTTPS_LOG,
     ROUTE_LAYOUT,
+    ROUTE_MCU,
     STATUS_REPLY,
     VERSION_REPLY,
     parse_request,
+    payload_route,
 )
 from .tlv import FieldError, decode_fields
 
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
+
+    from construct import Container
 
     from .clock import Clock
     from .crypto import Cipher
@@ -201,15 +207,15 @@ def _status(status: int, *, disconnect: bool = False) -> _Reply:
     return _Reply(STATUS_REPLY.build({"status": status}), disconnect)
 
 
-def _reply_path(plaintext: bytes) -> int | None:
-    """Return the channel a session request's reply leaves by: its ``a1`` source."""
+def _request_route(plaintext: bytes) -> Container[Any] | None:
+    """Return a session request's ``a1`` route; None if it has none."""
     try:
         route = decode_fields(plaintext).get(0xA1)
     except FieldError:
         return None
     if route is None or len(route) != ROUTE_LAYOUT.sizeof():
         return None
-    return int(ROUTE_LAYOUT.parse(route).source)
+    return ROUTE_LAYOUT.parse(route)
 
 
 class Module:
@@ -235,6 +241,9 @@ class Module:
         self.mcu = mcu
         self.clock = clock
         self.enrolled: set[bytes] = set()
+        #: The MCU sends its pushes and push-rule replies to the cloud
+        #: (``a1 34``), so they don't reach the BLE client.
+        self.cloud_push = False
         self._key_pair_factory = key_pair_factory
         self._link: _Link | None = None
 
@@ -318,7 +327,7 @@ class Module:
         link = self._link
         if link is None or not link.authorized:
             return Output()
-        return self._relay(link, [self.mcu.push(msgtype)])
+        return self._relay(link, [self.mcu.push(msgtype, cloud=self.cloud_push)])
 
     def check_timers(self) -> Output:
         """Run the authorize timer once: drop an unauthorized link past its limit."""
@@ -513,11 +522,9 @@ class Module:
             except (InvalidTag, ValueError):
                 _LOGGER.warning("Dropped undecryptable %03x", frame.cmd.msgtype)
                 return Output()
-        if _reply_path(plaintext) != ROUTE_BLE:
-            return Output()
         msgtype = frame.cmd.msgtype
         if msgtype & ~RESPONSE >= MCU_OPCODE_MIN:
-            return self._relay(link, self.mcu.respond(msgtype))
+            return self._route(link, frame, _request_route(plaintext))
         reply = self.config.session_replies.get(msgtype)
         versions = self.config.versions
         if msgtype == MSGTYPE_VERSIONS and versions is not None:
@@ -526,13 +533,33 @@ class Module:
             return Output()
         return Output(self._encode(reply_frame(frame, session.encrypt(reply))))
 
+    def _route(self, link: _Link, frame: Frame, route: Container[Any] | None) -> Output:
+        """Route a request for the MCU by its ``a1``, as the module's dispatcher does.
+
+        Only a request from BLE to the MCU is relayed; the module answers a
+        logging-channel request itself and drops every other route.
+        """
+        if route is None:
+            return Output()
+        if route.source == ROUTE_HTTPS_LOG and link.session is not None:
+            reply = link.session.encrypt(STATUS_REPLY.build({"status": STATUS_OK}))
+            return Output(self._encode(reply_frame(frame, reply)))
+        if (route.destination, route.source) != (ROUTE_MCU, ROUTE_BLE):
+            return Output()
+        msgtype = frame.cmd.msgtype
+        return self._relay(
+            link, self.mcu.respond(msgtype, route.source, cloud=self.cloud_push)
+        )
+
     def _relay(self, link: _Link, frames: list[Frame]) -> Output:
-        """Encrypt the MCU's cleartext frames for the session and send them."""
+        """Encrypt the MCU frames routed to BLE for the session and send them."""
         session = link.session
         if session is None:
             return Output()
         out: list[bytes] = []
         for mcu_frame in frames:
+            if payload_route(mcu_frame.payload) not in {None, BLE_REPLY_ROUTE}:
+                continue
             relayed = make_frame(
                 mcu_frame.pattern.composer,
                 mcu_frame.pattern.channel,

@@ -34,6 +34,7 @@ PROFILE = Profile(
     pushes=solix_c_gen2.PUSHES,
     device_version=solix_c_gen2.DEVICE_VERSION,
     version_names=solix_c_gen2.version_names("A1763"),
+    push_route_requests=solix_c_gen2.PUSH_ROUTE_REQUESTS,
 )
 register(Product.A1763, PROFILE)
 

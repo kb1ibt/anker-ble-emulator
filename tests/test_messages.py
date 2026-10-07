@@ -16,6 +16,8 @@ from anker_ble_emulator.messages import (
     PUBLIC_KEY_REPLY,
     STATUS_REPLY,
     parse_request,
+    payload_route,
+    with_route,
 )
 
 
@@ -132,3 +134,21 @@ def test_unknown_request_fields_are_ignored() -> None:
     request = parse_request(0x005, bytes.fromhex("a2020102a50144"))
 
     assert request == Container(method=0x44, auth_method=None)
+
+
+@pytest.mark.parametrize(
+    ("payload", "route", "rerouted"),
+    [
+        pytest.param("a10131a20101", 0x31, "a10134a20101", id="push"),
+        pytest.param("00a10131", 0x31, "00a10134", id="reply"),
+        pytest.param("04", None, "04", id="status only"),
+        pytest.param("00a20101", None, "00a20101", id="no route field"),
+    ],
+)
+def test_an_mcu_payload_route_is_read_and_set(
+    payload: str, route: int | None, rerouted: str
+) -> None:
+    data = bytes.fromhex(payload)
+
+    assert payload_route(data) == route
+    assert with_route(data, 0x34).hex() == rerouted

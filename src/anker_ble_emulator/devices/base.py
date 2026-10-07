@@ -131,6 +131,7 @@ class Profile:
         version_names: ``0830`` ``a3``-``a5``: the model and component names.
         module_replies: Msgtypes of recorded module session-op replies, by the
             build they were recorded on.
+        push_route_requests: Requests the MCU answers by its push rule.
 
     """
 
@@ -146,6 +147,7 @@ class Profile:
     device_version: str
     version_names: tuple[str, str, str]
     module_replies: Mapping[ModuleBuild, tuple[int, ...]] = field(default_factory=dict)
+    push_route_requests: frozenset[int] = frozenset()
 
     def frames(self) -> dict[int, bytes]:
         """Return the recorded cleartext payloads by msgtype."""
@@ -188,6 +190,7 @@ class Profile:
             pushes={
                 msgtype: mcu_frame(msgtype, frames[msgtype]) for msgtype in self.pushes
             },
+            push_route_requests=self.push_route_requests,
         )
 
 

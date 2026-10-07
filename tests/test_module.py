@@ -404,21 +404,73 @@ def test_recorded_module_session_reply_comes_back_on_the_request_pattern() -> No
     [
         pytest.param([(0xA1, b"\x22")], id="from MQTT"),
         pytest.param([(0xA1, b"\x24")], id="from MQTT_2"),
+        pytest.param([(0xA1, b"\x31")], id="from BLE to the app"),
+        pytest.param([(0xA1, b"\x2c")], id="unknown source"),
         pytest.param([], id="no route"),
         pytest.param([(0xA1, b"\x21\x00")], id="route too long"),
     ],
 )
-@pytest.mark.parametrize("msgtype", [0x100, 0x030])
-def test_a_request_routed_off_ble_gets_no_ble_reply(
-    fields: list[tuple[int, bytes]], msgtype: int
+def test_an_mcu_request_not_routed_from_ble_to_the_mcu_is_dropped(
+    fields: list[tuple[int, bytes]],
+) -> None:
+    rig = build_module()
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+
+    out = rig.module.write(client.request(0x100, fields, SESSION))
+
+    assert out.frames == []
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param([(0xA1, b"\x21")], id="from BLE"),
+        pytest.param([(0xA1, b"\x22")], id="from MQTT"),
+        pytest.param([], id="no route"),
+    ],
+)
+def test_a_module_op_answers_on_the_arrival_port_whatever_its_route(
+    fields: list[tuple[int, bytes]],
 ) -> None:
     rig = build_module(session_replies={0x030: VERSION_REPLY})
     client = AppClient()
     negotiate(rig.module, client, ENROLLED_TOKEN)
 
-    out = rig.module.write(client.request(msgtype, fields, SESSION))
+    out = rig.module.write(client.request(0x030, fields, SESSION))
 
-    assert out.frames == []
+    reply = client.open(out.frames[0])
+    assert reply is not None
+    assert reply.plaintext == VERSION_REPLY
+
+
+def test_a_logging_channel_request_is_answered_by_the_module() -> None:
+    rig = build_module()
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+
+    out = rig.module.write(client.request(0x100, [(0xA1, b"\x2a")], SESSION))
+
+    reply = client.open(out.frames[0])
+    assert reply is not None
+    assert cmd_hex(reply.frame) == "4900"
+    assert reply.plaintext == b"\x00"
+
+
+def test_cloud_push_keeps_push_routed_frames_off_ble() -> None:
+    rig = build_module()
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+    rig.module.cloud_push = True
+
+    status = rig.module.write(client.request(0x100, BLE_ROUTE, SESSION))
+    ack = rig.module.write(client.request(0x057, BLE_ROUTE, SESSION))
+    push = rig.module.push(0x421)
+
+    replies = [reply for data in ack.frames if (reply := client.open(data))]
+    assert status.frames == []
+    assert push.frames == []
+    assert [cmd_hex(reply.frame) for reply in replies] == ["4857"]
 
 
 def test_a_request_with_malformed_fields_gets_no_reply() -> None:
