@@ -38,6 +38,9 @@ SERVICE_UUID = "0000ff09-0000-1000-8000-00805f9b34fb"
 MAC_LEN = 6
 
 
+#: A MAC split where the Prime name takes its last two bytes.
+MAC_LAYOUT = Struct("head" / Bytes(4), "tail" / Bytes(2))
+
 #: The sku's length by ``version_code``.
 SKU_LENGTHS = {0x01: 3, 0x02: 4}
 
@@ -73,6 +76,8 @@ class Advert:
         product_type: The model key, 2 bytes.
         sku: The serial's sku substring.
         capability: The trailing capability byte; None where the family has none.
+        prime_name: Name the device ``<model>_<last 2 MAC bytes>``, as the
+            Prime line does, instead of ``local_name``.
 
     """
 
@@ -82,6 +87,7 @@ class Advert:
     product_type: bytes
     sku: bytes
     capability: int | None = None
+    prime_name: bool = False
 
     def manufacturer_data(self, mac: bytes) -> bytes:
         """Return the record's bytes for a device with ``mac``."""
@@ -110,6 +116,8 @@ class Profile:
         data: The recorded-frame resource in ``devices/data/``.
         replies: Reply msgtypes by request msgtype, in send order.
         pushes: Msgtypes the MCU can push.
+        enforce: The module build enforces the v0.3.3.0 policy (on the
+            encrypted outer).
 
     """
 
@@ -121,6 +129,7 @@ class Profile:
     data: str
     replies: Mapping[int, tuple[int, ...]]
     pushes: tuple[int, ...]
+    enforce: bool = True
 
     def script(self) -> McuScript:
         """Return the MCU script built from the packaged recorded frames."""
@@ -210,7 +219,7 @@ class EmulatedDevice:
             mac=self.mac,
             serial=None if self.serial is None else self.serial.encode(),
             auth_mode=profile.auth_mode,
-            enforce=self.outer == Outer.ENCRYPTED,
+            enforce=profile.enforce and self.outer == Outer.ENCRYPTED,
         )
         self.module = Module(config, profile.script(), clock or MonotonicClock())
         #: Seconds between runs of the module's authorize timer.
@@ -223,16 +232,24 @@ class EmulatedDevice:
         return ":".join(f"{byte:02X}" for byte in self.mac)
 
     @property
+    def local_name(self) -> str | None:
+        """The advertised name: the profile's, or ``<model>_<last 2 MAC bytes>``."""
+        advert = self.profile.advert
+        if not advert.prime_name:
+            return advert.local_name
+        return f"{self.pn}_{MAC_LAYOUT.parse(self.mac).tail.hex().upper()}"
+
+    @property
     def ble_device(self) -> BLEDevice:
         """A ``BLEDevice`` that carries this device in ``details``."""
-        return BLEDevice(self.address, self.profile.advert.local_name, self)
+        return BLEDevice(self.address, self.local_name, self)
 
     @property
     def advertisement_data(self) -> AdvertisementData:
         """The advertisement a scan would report."""
         advert = self.profile.advert
         return AdvertisementData(
-            local_name=advert.local_name,
+            local_name=self.local_name,
             manufacturer_data={COMPANY_ID: advert.manufacturer_data(self.mac)},
             service_data={},
             service_uuids=[SERVICE_UUID],

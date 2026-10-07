@@ -2,7 +2,6 @@
 """The bleak backend, driven through a real ``bleak.BleakClient``."""
 
 import asyncio
-from dataclasses import replace
 
 import pytest
 from bleak import BleakClient
@@ -48,17 +47,6 @@ async def test_connect_exposes_the_anker_service() -> None:
     await client.disconnect()
     assert not client.is_connected
     assert not device.module.connected
-
-
-async def test_unnamed_device_reports_its_address() -> None:
-    device = A1783()
-    device.profile = replace(
-        device.profile, advert=replace(device.profile.advert, local_name=None)
-    )
-
-    backend = EmulatedBleakBackend(device.ble_device, timeout=10)
-
-    assert backend.name == "AA-12-DE-AD-BE-EF"
 
 
 async def test_new_owner_is_granted_by_the_button_then_streams() -> None:

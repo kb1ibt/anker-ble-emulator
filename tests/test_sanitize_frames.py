@@ -1,6 +1,7 @@
 # Copyright (c) 2026 Shawn Stricker
 """The frame extraction and sanitizing tool."""
 
+import gzip
 import json
 from pathlib import Path
 
@@ -91,6 +92,20 @@ def test_newest_frame_per_msgtype_wins(tmp_path: Path) -> None:
     newer = write_frame_log(tmp_path / "b.log", [("4421", b"\x02")])
 
     assert newest_frames([older, newer], {0x421}) == {0x421: b"\x02"}
+
+
+def test_exact_cmd_keeps_only_that_flag_variant(tmp_path: Path) -> None:
+    log = write_frame_log(tmp_path / "e.log", [("ca00", b"\x01"), ("4a00", b"\x02")])
+
+    assert newest_frames([log], set(), frozenset({0xCA00})) == {0xA00: b"\x01"}
+
+
+def test_gzipped_logs_are_read(tmp_path: Path) -> None:
+    plain = write_frame_log(tmp_path / "f.log", [("4303", b"\x03")])
+    packed = tmp_path / "f.log.gz"
+    packed.write_bytes(gzip.compress(plain.read_bytes()))
+
+    assert newest_frames([packed], {0x303}) == {0x303: b"\x03"}
 
 
 def test_main_writes_sanitized_frames(tmp_path: Path) -> None:

@@ -16,6 +16,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import re
 import sys
@@ -135,23 +136,28 @@ def _fixed_time(tag: int, value: bytes) -> bytes:
     return TRAILER_VALUE.build({"time": FIXED_UNIX_TIME})
 
 
-def newest_frames(paths: list[Path], msgtypes: set[int]) -> dict[int, bytes]:
+def newest_frames(
+    paths: list[Path], msgtypes: set[int], cmds: frozenset[int] = frozenset()
+) -> dict[int, bytes]:
     """Return the last cleartext logged for each wanted msgtype.
 
     Args:
-        paths: Collector logs, oldest first.
-        msgtypes: 12-bit message types to keep.
+        paths: Collector logs (plain or ``.gz``), oldest first.
+        msgtypes: 12-bit message types to keep, whatever their link flags.
+        cmds: Exact logged cmds to keep (``ca00`` but not ``4a00``), by msgtype.
 
     """
     newest: dict[int, bytes] = {}
     for path in paths:
-        with path.open("rb") as handle:
+        opener = gzip.open if path.suffix == ".gz" else open
+        with opener(path, "rb") as handle:
             for raw in handle:
                 match = LINE.search(raw.replace(b"\x00", b""))
                 if match is None:
                     continue
-                msgtype = int(match.group(1), 16) & 0x0FFF
-                if msgtype in msgtypes:
+                cmd = int(match.group(1), 16)
+                msgtype = cmd & 0x0FFF
+                if msgtype in msgtypes or cmd in cmds:
                     newest[msgtype] = bytes.fromhex(match.group(2).decode())
     return newest
 
@@ -174,6 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("logs", nargs="*", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--msgtype", action="append", default=[])
+    parser.add_argument("--cmd", action="append", default=[])
     parser.add_argument("--frame", action="append", default=[], type=_frame)
     parser.add_argument("--replace", action="append", default=[], type=_pair)
     parser.add_argument("--forbid", action="append", default=[], type=bytes.fromhex)
@@ -185,9 +192,10 @@ def main(argv: list[str] | None = None) -> int:
         forbidden=tuple(args.forbid),
         allowed=frozenset(text.encode() for text in args.allow),
     )
-    wanted = {int(text, 16) for text in args.msgtype}
-    frames = newest_frames(args.logs, wanted) | dict(args.frame)
-    missing = wanted - frames.keys()
+    msgtypes = {int(text, 16) for text in args.msgtype}
+    cmds = frozenset(int(text, 16) for text in args.cmd)
+    frames = newest_frames(args.logs, msgtypes, cmds) | dict(args.frame)
+    missing = (msgtypes | {cmd & 0x0FFF for cmd in cmds}) - frames.keys()
     if missing:
         sys.stderr.write(f"no frames for {sorted(f'{m:03x}' for m in missing)}\n")
         return 1

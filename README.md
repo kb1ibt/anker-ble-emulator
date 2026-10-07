@@ -20,7 +20,8 @@ For a client library that connects through bleak-retry-connector, `EmulatedConne
 ```python
 from anker_ble_emulator.testing import EmulatedConnection
 
-async with EmulatedConnection(A1783()) as emulated:  # patches SolixBLE.device.establish_connection
+# Patches SolixBLE.device.establish_connection for the block.
+async with EmulatedConnection(A1783()) as emulated:
     ...  # the library connects, negotiates and polls as against a real device
     emulated.check_assertions()  # if you set expect_ordered(...)
 ```

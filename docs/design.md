@@ -13,7 +13,15 @@ An emulated Anker Solix BLE device (the comms module and the device MCU behind i
 | module | `module.py` | the comms module: negotiation handlers, link state, authorization policy, the authorize timer, the relay to and from the MCU |
 | MCU | `mcu.py` | `McuScript`: recorded cleartext replies by message type, and pushes |
 | products | `products.py` | `Product` part numbers with their SolixBLE class and anker-solix-api category; `Transport`, `Outer`, `Path` |
-| devices | `devices/` | `base.py`: `EmulatedDevice`, `Profile`, `Advert`; one module per product (`a1783.py`) holding its profile and subclass; recorded frames in `devices/data/` |
+| devices | `devices/` | `base.py`: `EmulatedDevice`, `Profile`, `Advert`; one module per product holding its profile and subclass; recorded frames in `devices/data/` |
+
+## Emulated products
+
+| product | outer | auth mode | module build | session | recorded MCU replies |
+|---|---|---|---|---|---|
+| `A1783` SOLIX C2000 Gen 2 | encrypted | 2 (button) | v0.3.3.0, enforcing | GCM | `4100` → `c900` + `c421`; `4057` → `4857`; `4103` → `4903` + `c421`; pushes `c421`, `c490`, `0425` |
+| `A2345` Prime Charger 250W | encrypted (plain also accepted) | 2 (button) | v0.2.9.7 | GCM | `4200` → `ca00` (fragmented); `420a` → `4a0a`; `420b` → `4a0b` + `4303`; push `4303` |
+| `A91B2` Prime Charging Station 240W | plain | 0 | v0.2.9.7 | CBC | `4200` → `4a00` (250 B, whole); `420a` → `4a0a`; `420b` → `4a0b` + `4303`; push `4303` |
 | backend | `backend.py` | `EmulatedBleakBackend(BaseBleakClient)`: GATT services from bleak's own classes, writes into the module, notifications out |
 | testing | `testing.py` | `EmulatedConnection`: patches a client library's `establish_connection` (SolixBLE's by default) to return a real connected `BleakClient` on the emulator; keeps SolixBLE `MockDevice`'s names (`expect_ordered` as an optional write assertion, `refuse_after`, `disconnect`, `send_data`, `new_connection_error`, `allow_connect`, `check_assertions`, `writes`) |
 
@@ -76,7 +84,7 @@ Client libraries (SolixBLE, through its `MockDevice` adapter) test against the e
 
 1. Scaffold, CI, TestPyPI publishing.
 2. Engine: frame codec, fragmenting, ciphers, module state, MCU script, injected clock.
-3. A1783 encrypted ECDH profile with sanitized recorded data.
+3. A1783 encrypted ECDH profile with sanitized recorded data; then the A2345 and A91B2.
 4. bleak backend.
 5. SolixBLE `MockDevice` compatibility.
 6. Plain outer (CBC) and the module refusals.

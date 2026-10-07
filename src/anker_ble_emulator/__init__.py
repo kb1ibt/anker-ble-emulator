@@ -3,7 +3,7 @@
 
 from .backend import COMMAND_UUID, TELEMETRY_UUID, EmulatedBleakBackend
 from .clock import Clock, ManualClock, MonotonicClock
-from .devices import A1783, DEFAULT_MAC, UNSET, EmulatedDevice
+from .devices import A91B2, A1783, A2345, DEFAULT_MAC, UNSET, EmulatedDevice
 from .frame import FrameError, decode, encode, make_frame
 from .mcu import McuScript, mcu_frame
 from .module import AuthMode, Module, ModuleConfig, Output
@@ -11,7 +11,9 @@ from .products import PRODUCTS, Outer, Path, Product, ProductInfo, Transport
 
 
 __all__ = [
+    "A91B2",
     "A1783",
+    "A2345",
     "COMMAND_UUID",
     "DEFAULT_MAC",
     "PRODUCTS",

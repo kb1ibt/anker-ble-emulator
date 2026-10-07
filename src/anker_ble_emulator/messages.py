@@ -54,6 +54,7 @@ REQUEST_FIELDS: dict[int, dict[int, tuple[str, Construct[Any, Any]]]] = {
         0xA3: ("utc_offset", Int32sl),
         0xA5: ("tz", GreedyBytes),
     },
+    0x023: {0xA2: ("account", GreedyBytes)},
     0x027: {0xA2: ("token", GreedyBytes)},
 }
 
@@ -110,6 +111,9 @@ DEVICE_INFO_REPLY = Struct(
 
 #: ``0821``: the device's public point, ``X || Y``.
 PUBLIC_KEY_REPLY = Struct("status" / Int8ub, "point" / field(0xA1, Bytes(64)))
+
+#: ``0823``: the bound serial echoed back.
+BIND_REPLY = Struct("status" / Int8ub, "serial" / Optional(field(0xA1, GreedyBytes)))
 
 #: ``0827 09``: confirmation pending; the window in seconds.
 AUTH_PENDING_REPLY = Struct("status" / Int8ub, "auth_timeout" / field(0xA1, Int16ul))

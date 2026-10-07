@@ -72,7 +72,7 @@ class EmulatedBleakBackend(BaseBleakClient):
     @property
     def name(self) -> str:
         """The advertised local name, else the address with dashes, as bleak's."""
-        return self.device.profile.advert.local_name or self.address.replace(":", "-")
+        return self.device.local_name or self.address.replace(":", "-")
 
     @property
     def mtu_size(self) -> int:

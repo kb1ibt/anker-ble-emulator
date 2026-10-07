@@ -27,6 +27,7 @@ from .frame import (
 )
 from .messages import (
     AUTH_PENDING_REPLY,
+    BIND_REPLY,
     CAPABILITY_REPLY,
     CONNECT_REPLY,
     DEVICE_INFO_REPLY,
@@ -325,6 +326,7 @@ class Module:
             0x005: self._set_capabilities,
             0x021: self._public_key,
             0x022: self._clock,
+            0x023: self._bind,
             0x027: self._authenticate,
         }
         handler = handlers.get(request.frame.cmd.msgtype)
@@ -428,6 +430,13 @@ class Module:
         if request.fields.time is None or request.fields.utc_offset is None:
             return _status(STATUS_PARAMETER)
         return _status(STATUS_OK)
+
+    def _bind(self, request: _Request) -> _Reply:
+        if request.fields.account is None:
+            return _status(STATUS_PARAMETER)
+        return _Reply(
+            BIND_REPLY.build({"status": STATUS_OK, "serial": self.config.serial})
+        )
 
     def _authenticate(self, request: _Request) -> _Reply:
         link = request.link
