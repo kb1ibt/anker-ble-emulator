@@ -6,8 +6,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from anker_ble_emulator.module import AuthMode
-from anker_ble_emulator.products import Outer, Path, Product, Transport
+from anker_ble_emulator.products import ModuleBuild, Outer, Path, Product, Transport
 
+from . import solix_c_gen2
 from .base import DEFAULT_MAC, UNSET, Advert, EmulatedDevice, Profile, Unset, register
 
 
@@ -18,6 +19,7 @@ PROFILE = Profile(
     serial="APCDKKE0000000001",
     outer=Outer.ENCRYPTED,
     path=Path.ECDH,
+    module_build=ModuleBuild.V0_3_3_0,
     auth_mode=AuthMode.CONFIRM,
     advert=Advert(
         local_name="SOLIX C2000 Gen 2",
@@ -27,13 +29,14 @@ PROFILE = Profile(
         sku=b"DKKE",
         capability=0x04,
     ),
-    data="a1783.json",
-    replies={
-        0x100: (0x900, 0x421),
-        0x057: (0x857,),
-        0x103: (0x903, 0x421),
+    data=("a1783.json", solix_c_gen2.DATA),
+    replies=solix_c_gen2.REPLIES,
+    pushes=(*solix_c_gen2.PUSHES, 0x490, 0x425),
+    device_version=solix_c_gen2.DEVICE_VERSION,
+    version_names=solix_c_gen2.version_names("A1783"),
+    module_replies={
+        ModuleBuild.V0_3_3_0: (0x820, 0x828, 0x82E, 0x82F, 0x836, 0x838),
     },
-    pushes=(0x421, 0x490, 0x425),
 )
 register(Product.A1783, PROFILE)
 
@@ -41,7 +44,7 @@ register(Product.A1783, PROFILE)
 class A1783(EmulatedDevice):
     """SOLIX C2000 Gen 2: encrypted outer, ECDH, owner confirmation by button."""
 
-    def __init__(  # noqa: PLR0913  # the identity plus the three protocol choices
+    def __init__(  # noqa: PLR0913  # the identity plus the four protocol choices
         self,
         serial: str | Unset | None = UNSET,
         mac: str = DEFAULT_MAC,
@@ -49,6 +52,7 @@ class A1783(EmulatedDevice):
         *,
         outer: Outer | None = None,
         path: Path | None = None,
+        module: ModuleBuild | None = None,
         clock: Clock | None = None,
     ) -> None:
         """Build a C2000 Gen 2; see ``EmulatedDevice``."""
@@ -59,5 +63,6 @@ class A1783(EmulatedDevice):
             transport,
             outer=outer,
             path=path,
+            module=module,
             clock=clock,
         )

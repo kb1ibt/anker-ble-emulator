@@ -1,10 +1,13 @@
 # Copyright (c) 2026 Shawn Stricker
-"""Extract recorded cleartext frames from collector logs and sanitize them.
+"""Extract recorded cleartext frames from logs and sanitize them.
 
-Reads ``ble frame: cmd=<cmd> len=<n> clear=<hex>`` lines, keeps the newest
-frame of each requested msgtype, replaces identifiers with synthetic values of
-the same length, and writes ``{"<msgtype hex>": "<cleartext hex>"}`` as JSON.
-The real identifiers come from the command line and are never stored.
+Reads collector ``ble frame: cmd=<cmd> len=<n> clear=<hex>`` lines and MQTT
+records (anker-solix-api ``.ndjson`` examples and ``mqtt_monitor`` dumps, which
+carry the whole frame as base64 under ``data``), keeps the newest frame of each
+requested msgtype, replaces identifiers with synthetic values of the same
+length, and writes ``{"<msgtype hex>": "<cleartext hex>"}`` as JSON. MQTT
+payloads get the BLE routing marker. The real identifiers come from the command
+line and are never stored.
 
 Usage::
 
@@ -16,6 +19,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import base64
 import gzip
 import json
 import re
@@ -34,10 +38,22 @@ from construct import (
     Struct,
 )
 
+from anker_ble_emulator.frame import COMMAND_LAYOUT, checksum, decode
 from anker_ble_emulator.tlv import FIELD_HEADER_LEN, FIELDS_LAYOUT, encode_fields
 
 
 LINE = re.compile(rb"ble frame: cmd=([0-9a-f]{4}) len=\d+ clear=([0-9a-f]+)")
+#: A base64 ``ff09`` frame under an MQTT ``data`` key, JSON-escaped or not.
+MQTT_DATA = re.compile(rb'data\\?"\s*:\s*\\?"(/w[k-n][A-Za-z0-9+/]+=*)')
+#: The leading ``a1`` routing marker: low nibble source, high nibble destination.
+ROUTE_LAYOUT = Struct(
+    "tag" / Const(b"\xa1"),
+    "length" / Const(b"\x01"),
+    "marker" / Int8ub,
+    "rest" / GreedyBytes,
+)
+#: MCU to BLE client.
+BLE_ROUTE = 0x31
 #: Millisecond epoch timestamps written as ASCII digits.
 EPOCH_MS = re.compile(rb"(?<![0-9])1[6-9][0-9]{11}(?![0-9])")
 FIXED_EPOCH_MS = b"1790812800000"
@@ -112,10 +128,7 @@ def fix_trailer(data: bytes) -> bytes:
 
     Only a payload that walks cleanly as fields to its end is changed.
     """
-    first = Peek(Int8ub).parse(data)
-    layout = STATUS_AND_BODY if first is not None and first < FIRST_TAG else BODY_ONLY
-    parsed = layout.parse(data)
-    status, body = bytes(parsed.status), bytes(parsed.body)
+    status, body = split_status(data)
     fields = list(FIELDS_LAYOUT.parse(body))
     walked = sum(FIELD_HEADER_LEN + len(item.value) for item in fields)
     if walked != len(body) or any(item.tag < FIRST_TAG for item in fields):
@@ -124,6 +137,27 @@ def fix_trailer(data: bytes) -> bytes:
         (int(item.tag), _fixed_time(int(item.tag), bytes(item.value)))
         for item in fields
     )
+
+
+def split_status(data: bytes) -> tuple[bytes, bytes]:
+    """Return a payload's status byte (empty for a push) and its fields."""
+    first = Peek(Int8ub).parse(data)
+    layout = STATUS_AND_BODY if first is not None and first < FIRST_TAG else BODY_ONLY
+    parsed = layout.parse(data)
+    return bytes(parsed.status), bytes(parsed.body)
+
+
+def ble_routed(data: bytes) -> bytes:
+    """Return the payload with its ``a1`` routing marker set to MCU-to-BLE.
+
+    The MCU sends the same frame to MQTT with another marker (``34``, ``32``).
+    """
+    status, body = split_status(data)
+    try:
+        route = ROUTE_LAYOUT.parse(body)
+    except ConstructError:
+        return data
+    return status + ROUTE_LAYOUT.build({"marker": BLE_ROUTE, "rest": route.rest})
 
 
 def _fixed_time(tag: int, value: bytes) -> bytes:
@@ -137,14 +171,23 @@ def _fixed_time(tag: int, value: bytes) -> bytes:
 
 
 def newest_frames(
-    paths: list[Path], msgtypes: set[int], cmds: frozenset[int] = frozenset()
+    paths: list[Path],
+    msgtypes: set[int],
+    cmds: frozenset[int] = frozenset(),
+    *,
+    fix_checksum: bool = False,
 ) -> dict[int, bytes]:
     """Return the last cleartext logged for each wanted msgtype.
 
     Args:
-        paths: Collector logs (plain or ``.gz``), oldest first.
+        paths: Collector logs or MQTT records (plain or ``.gz``), oldest first.
         msgtypes: 12-bit message types to keep, whatever their link flags.
         cmds: Exact logged cmds to keep (``ca00`` but not ``4a00``), by msgtype.
+        fix_checksum: Recompute MQTT frames' checksums, for records whose
+            identifiers were anonymized after capture.
+
+    Raises:
+        FrameError: If an MQTT record's frame is malformed.
 
     """
     newest: dict[int, bytes] = {}
@@ -152,14 +195,26 @@ def newest_frames(
         opener = gzip.open if path.suffix == ".gz" else open
         with opener(path, "rb") as handle:
             for raw in handle:
-                match = LINE.search(raw.replace(b"\x00", b""))
-                if match is None:
-                    continue
-                cmd = int(match.group(1), 16)
-                msgtype = cmd & 0x0FFF
-                if msgtype in msgtypes or cmd in cmds:
-                    newest[msgtype] = bytes.fromhex(match.group(2).decode())
+                line = raw.replace(b"\x00", b"")
+                for cmd, clear in _line_frames(line, fix_checksum=fix_checksum):
+                    msgtype = cmd & 0x0FFF
+                    if msgtype in msgtypes or cmd in cmds:
+                        newest[msgtype] = clear
     return newest
+
+
+def _line_frames(line: bytes, *, fix_checksum: bool) -> list[tuple[int, bytes]]:
+    match = LINE.search(line)
+    if match is not None:
+        return [(int(match.group(1), 16), bytes.fromhex(match.group(2).decode()))]
+    wire = [base64.b64decode(data) for data in MQTT_DATA.findall(line)]
+    if fix_checksum:
+        wire = [data[:-1] + bytes([checksum(data[:-1])]) for data in wire]
+    frames = [decode(data) for data in wire]
+    return [
+        (int.from_bytes(COMMAND_LAYOUT.build(frame.cmd)), ble_routed(frame.payload))
+        for frame in frames
+    ]
 
 
 def _pair(text: str) -> tuple[bytes, bytes]:
@@ -175,7 +230,7 @@ def _frame(text: str) -> tuple[int, bytes]:
 def main(argv: list[str] | None = None) -> int:
     """Run the extraction; return the exit status."""
     parser = argparse.ArgumentParser(
-        description="Extract and sanitize recorded frames from collector logs."
+        description="Extract and sanitize recorded frames from logs and MQTT records."
     )
     parser.add_argument("logs", nargs="*", type=Path)
     parser.add_argument("--output", required=True, type=Path)
@@ -185,6 +240,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--replace", action="append", default=[], type=_pair)
     parser.add_argument("--forbid", action="append", default=[], type=bytes.fromhex)
     parser.add_argument("--allow", action="append", default=[])
+    parser.add_argument("--fix-checksum", action="store_true")
     args = parser.parse_args(argv)
 
     sanitizer = Sanitizer(
@@ -194,7 +250,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     msgtypes = {int(text, 16) for text in args.msgtype}
     cmds = frozenset(int(text, 16) for text in args.cmd)
-    frames = newest_frames(args.logs, msgtypes, cmds) | dict(args.frame)
+    recorded = newest_frames(args.logs, msgtypes, cmds, fix_checksum=args.fix_checksum)
+    frames = recorded | dict(args.frame)
     missing = (msgtypes | {cmd & 0x0FFF for cmd in cmds}) - frames.keys()
     if missing:
         sys.stderr.write(f"no frames for {sorted(f'{m:03x}' for m in missing)}\n")

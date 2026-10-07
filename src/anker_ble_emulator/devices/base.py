@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from importlib import resources
 from typing import TYPE_CHECKING
@@ -14,6 +14,7 @@ from bleak.backends.scanner import AdvertisementData
 from construct import Bytes, Int8ub, Optional, Struct
 
 from anker_ble_emulator.clock import MonotonicClock
+from anker_ble_emulator.frame import RESPONSE
 from anker_ble_emulator.mcu import McuScript, mcu_frame
 from anker_ble_emulator.module import (
     TIMER_PERIOD,
@@ -21,8 +22,16 @@ from anker_ble_emulator.module import (
     Module,
     ModuleConfig,
     Output,
+    Versions,
 )
-from anker_ble_emulator.products import PRODUCTS, Outer, Path, Product, Transport
+from anker_ble_emulator.products import (
+    PRODUCTS,
+    ModuleBuild,
+    Outer,
+    Path,
+    Product,
+    Transport,
+)
 
 
 if TYPE_CHECKING:
@@ -111,33 +120,66 @@ class Profile:
         serial: The default synthetic serial.
         outer: The default outer.
         path: The default path.
+        module_build: The default module firmware build.
         auth_mode: The provisioned policy byte.
         advert: The advertisement.
-        data: The recorded-frame resource in ``devices/data/``.
+        data: Recorded-frame resources in ``devices/data/``; the first that
+            holds a msgtype supplies it.
         replies: Reply msgtypes by request msgtype, in send order.
         pushes: Msgtypes the MCU can push.
-        enforce: The module build enforces the v0.3.3.0 policy (on the
-            encrypted outer).
+        device_version: The device MCU firmware ``0830`` reports.
+        version_names: ``0830`` ``a3``-``a5``: the model and component names.
+        module_replies: Msgtypes of recorded module session-op replies, by the
+            build they were recorded on.
 
     """
 
     serial: str
     outer: Outer
     path: Path
+    module_build: ModuleBuild
     auth_mode: AuthMode
     advert: Advert
-    data: str
+    data: tuple[str, ...]
     replies: Mapping[int, tuple[int, ...]]
     pushes: tuple[int, ...]
-    enforce: bool = True
+    device_version: str
+    version_names: tuple[str, str, str]
+    module_replies: Mapping[ModuleBuild, tuple[int, ...]] = field(default_factory=dict)
+
+    def frames(self) -> dict[int, bytes]:
+        """Return the recorded cleartext payloads by msgtype."""
+        frames: dict[int, bytes] = {}
+        for name in reversed(self.data):
+            text = resources.files(__package__).joinpath("data", name).read_text()
+            frames |= {
+                int(key, 16): bytes.fromhex(value)
+                for key, value in json.loads(text).items()
+            }
+        return frames
+
+    def session_replies(self, build: ModuleBuild) -> dict[int, bytes]:
+        """Return ``build``'s recorded session-op replies by request msgtype."""
+        frames = self.frames()
+        return {
+            reply & ~RESPONSE: frames[reply]
+            for reply in self.module_replies.get(build, ())
+        }
+
+    def versions(self, build: ModuleBuild) -> Versions:
+        """Return what ``0830`` reports on ``build``."""
+        model, mcu, esp32 = (name.encode() for name in self.version_names)
+        return Versions(
+            module=build.value.encode(),
+            device=self.device_version.encode(),
+            model=model,
+            mcu=mcu,
+            esp32=esp32,
+        )
 
     def script(self) -> McuScript:
         """Return the MCU script built from the packaged recorded frames."""
-        text = resources.files(__package__).joinpath("data", self.data).read_text()
-        frames = {
-            int(key, 16): bytes.fromhex(value)
-            for key, value in json.loads(text).items()
-        }
+        frames = self.frames()
         return McuScript(
             replies={
                 request: tuple(mcu_frame(reply, frames[reply]) for reply in replies)
@@ -184,6 +226,7 @@ class EmulatedDevice:
         *,
         outer: Outer | None = None,
         path: Path | None = None,
+        module: ModuleBuild | None = None,
         clock: Clock | None = None,
     ) -> None:
         """Build the device from its product's profile.
@@ -195,6 +238,7 @@ class EmulatedDevice:
             transport: The GATT transport; None for the product's.
             outer: The negotiation outer; None for the profile's.
             path: The key establishment path; None for the profile's.
+            module: The module firmware build; None for the profile's.
             clock: Time for the module's timers; the monotonic clock if None.
 
         Raises:
@@ -212,6 +256,7 @@ class EmulatedDevice:
         self.transport = transport or PRODUCTS[pn].transport
         self.outer = outer or profile.outer
         self.path = path or profile.path
+        self.module_build = module or profile.module_build
         if self.transport != Transport.NEGOTIATED or self.path != Path.ECDH:
             msg = f"{self.transport} transport, {self.path} path: not emulated yet"
             raise NotImplementedError(msg)
@@ -219,7 +264,9 @@ class EmulatedDevice:
             mac=self.mac,
             serial=None if self.serial is None else self.serial.encode(),
             auth_mode=profile.auth_mode,
-            enforce=profile.enforce and self.outer == Outer.ENCRYPTED,
+            enforce=self.module_build.enforces and self.outer == Outer.ENCRYPTED,
+            session_replies=profile.session_replies(self.module_build),
+            versions=profile.versions(self.module_build),
         )
         self.module = Module(config, profile.script(), clock or MonotonicClock())
         #: Seconds between runs of the module's authorize timer.

@@ -7,7 +7,12 @@ import pytest
 from construct import ConstructError
 
 from anker_ble_emulator import (
+    A91B2,
+    A1763,
+    A1765,
     A1783,
+    A1785,
+    A2345,
     PRODUCTS,
     EmulatedDevice,
     Outer,
@@ -39,12 +44,17 @@ def test_product_constructor_builds_the_same_device() -> None:
     assert device.outer == Outer.ENCRYPTED
 
 
-@pytest.mark.parametrize("device_class", [EmulatedDevice, A1783])
-def test_outer_and_path_are_keyword_only(device_class: type[EmulatedDevice]) -> None:
+@pytest.mark.parametrize(
+    "device_class", [EmulatedDevice, A1763, A1765, A1783, A1785, A2345, A91B2]
+)
+def test_outer_path_and_module_are_keyword_only(
+    device_class: type[EmulatedDevice],
+) -> None:
     parameters = inspect.signature(device_class).parameters
 
     assert parameters["outer"].kind is inspect.Parameter.KEYWORD_ONLY
     assert parameters["path"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameters["module"].kind is inspect.Parameter.KEYWORD_ONLY
     assert parameters["transport"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
 
 

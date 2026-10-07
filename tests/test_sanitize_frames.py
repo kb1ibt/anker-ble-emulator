@@ -7,12 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from tests.fixtures.logs import write_frame_log
+from anker_ble_emulator.frame import FrameError
+from tests.fixtures.logs import mqtt_frame, write_frame_log, write_mqtt_records
 from tools.sanitize_frames import (
     FIXED_EPOCH_MS,
     FIXED_UNIX_TIME,
     SanitizeError,
     Sanitizer,
+    ble_routed,
     fix_trailer,
     main,
     newest_frames,
@@ -131,6 +133,62 @@ def test_main_writes_sanitized_frames(tmp_path: Path) -> None:
         "900": (b"\x00\xa2\x11" + FAKE).hex(),
         "903": "00a10131",
     }
+
+
+@pytest.mark.parametrize(
+    ("data", "routed"),
+    [
+        pytest.param("a10134a20101", "a10131a20101", id="param_info push"),
+        pytest.param("00a10132", "00a10131", id="state_info ack"),
+        pytest.param("00a10131a20101", "00a10131a20101", id="already BLE"),
+        pytest.param("04", "04", id="status only"),
+        pytest.param("00a20101", "00a20101", id="no routing marker"),
+    ],
+)
+def test_mqtt_payloads_get_the_ble_routing_marker(data: str, routed: str) -> None:
+    assert ble_routed(bytes.fromhex(data)).hex() == routed
+
+
+def test_mqtt_records_of_both_shapes_are_read(tmp_path: Path) -> None:
+    records = write_mqtt_records(
+        tmp_path / "m.ndjson",
+        [mqtt_frame(0x421, "a10134a20101"), mqtt_frame(0x903, "00a10132")],
+    )
+
+    assert newest_frames([records], {0x421, 0x903}) == {
+        0x421: bytes.fromhex("a10131a20101"),
+        0x903: bytes.fromhex("00a10131"),
+    }
+
+
+def test_mqtt_frame_with_a_stale_checksum_is_refused(tmp_path: Path) -> None:
+    stale = mqtt_frame(0x900, "00a10134a20101")[:-1] + b"\x00"
+    records = write_mqtt_records(tmp_path / "s.ndjson", [stale])
+
+    with pytest.raises(FrameError, match="checksum"):
+        newest_frames([records], {0x900})
+
+
+def test_main_fixes_stale_checksums_when_asked(tmp_path: Path) -> None:
+    stale = mqtt_frame(0x900, "00a10134a211" + REAL.hex())[:-1] + b"\x00"
+    records = write_mqtt_records(tmp_path / "t.ndjson", [stale])
+    output = tmp_path / "fixed.json"
+
+    status = main(
+        [
+            str(records),
+            "--output",
+            str(output),
+            "--msgtype",
+            "900",
+            "--fix-checksum",
+            "--replace",
+            f"{REAL.decode()}={FAKE.decode()}",
+        ]
+    )
+
+    assert status == 0
+    assert json.loads(output.read_text()) == {"900": "00a10131a211" + FAKE.hex()}
 
 
 def test_main_fails_when_a_msgtype_is_missing(tmp_path: Path) -> None:

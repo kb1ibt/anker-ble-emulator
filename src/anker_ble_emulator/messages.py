@@ -117,3 +117,13 @@ BIND_REPLY = Struct("status" / Int8ub, "serial" / Optional(field(0xA1, GreedyByt
 
 #: ``0827 09``: confirmation pending; the window in seconds.
 AUTH_PENDING_REPLY = Struct("status" / Int8ub, "auth_timeout" / field(0xA1, Int16ul))
+
+#: ``0830``: module firmware, device firmware, then the three component names.
+VERSION_REPLY = Struct(
+    "status" / Int8ub,
+    "module" / field(0xA1, GreedyBytes),
+    "device" / field(0xA2, GreedyBytes),
+    "model" / field(0xA3, GreedyBytes),
+    "mcu" / field(0xA4, GreedyBytes),
+    "esp32" / field(0xA5, GreedyBytes),
+)

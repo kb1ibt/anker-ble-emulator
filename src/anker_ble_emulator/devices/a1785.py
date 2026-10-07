@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Shawn Stricker
-"""Prime Charger 250W (A2345)."""
+"""SOLIX C2000X Gen 2 (A1785)."""
 
 from __future__ import annotations
 
@@ -8,45 +8,39 @@ from typing import TYPE_CHECKING
 from anker_ble_emulator.module import AuthMode
 from anker_ble_emulator.products import ModuleBuild, Outer, Path, Product, Transport
 
+from . import solix_c_gen2
 from .base import DEFAULT_MAC, UNSET, Advert, EmulatedDevice, Profile, Unset, register
 
 
 if TYPE_CHECKING:
     from anker_ble_emulator.clock import Clock
 
+#: Its frames report ``A1783``, so its version names do too.
 PROFILE = Profile(
-    serial="AQLQJB0000000001",
+    serial="AXDDKVP0000000001",
     outer=Outer.ENCRYPTED,
     path=Path.ECDH,
-    module_build=ModuleBuild.V0_2_9_7,
+    module_build=ModuleBuild.V0_3_3_0,
     auth_mode=AuthMode.CONFIRM,
     advert=Advert(
-        local_name=None,
-        version_code=0x01,
-        bind_type=0x00,
-        product_type=bytes.fromhex("b402"),
-        sku=b"QJB",
+        local_name="SOLIX C2000X Gen 2",
+        version_code=0x02,
+        bind_type=0x01,
+        product_type=bytes.fromhex("b11b"),
+        sku=b"DKVP",
         capability=0x04,
-        prime_name=True,
     ),
-    data=("a2345.json",),
-    replies={
-        0x200: (0xA00,),
-        0x20A: (0xA0A,),
-        0x20B: (0xA0B, 0x303),
-    },
-    pushes=(0x303,),
-    device_version="v2.1.1.6",
-    version_names=("A2345", "A2345_mcu", "A2345_esp32"),
+    data=("a1785.json", solix_c_gen2.DATA),
+    replies=solix_c_gen2.REPLIES,
+    pushes=(*solix_c_gen2.PUSHES, 0x425),
+    device_version=solix_c_gen2.DEVICE_VERSION,
+    version_names=solix_c_gen2.version_names("A1783"),
 )
-register(Product.A2345, PROFILE)
+register(Product.A1785, PROFILE)
 
 
-class A2345(EmulatedDevice):
-    """Prime Charger 250W: encrypted outer, ECDH, owner confirmation by button.
-
-    Its module build (v0.2.9.7) also accepts the plain outer.
-    """
+class A1785(EmulatedDevice):
+    """SOLIX C2000X Gen 2: encrypted outer, ECDH, owner confirmation by button."""
 
     def __init__(  # noqa: PLR0913  # the identity plus the four protocol choices
         self,
@@ -59,9 +53,9 @@ class A2345(EmulatedDevice):
         module: ModuleBuild | None = None,
         clock: Clock | None = None,
     ) -> None:
-        """Build a Prime Charger 250W; see ``EmulatedDevice``."""
+        """Build a C2000X Gen 2; see ``EmulatedDevice``."""
         super().__init__(
-            Product.A2345,
+            Product.A1785,
             serial,
             mac,
             transport,

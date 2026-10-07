@@ -13,17 +13,24 @@ An emulated Anker Solix BLE device (the comms module and the device MCU behind i
 | module | `module.py` | the comms module: negotiation handlers, link state, authorization policy, the authorize timer, the relay to and from the MCU |
 | MCU | `mcu.py` | `McuScript`: recorded cleartext replies by message type, and pushes |
 | products | `products.py` | `Product` part numbers with their SolixBLE class and anker-solix-api category; `Transport`, `Outer`, `Path` |
-| devices | `devices/` | `base.py`: `EmulatedDevice`, `Profile`, `Advert`; one module per product holding its profile and subclass; recorded frames in `devices/data/` |
+| devices | `devices/` | `base.py`: `EmulatedDevice`, `Profile`, `Advert`; one module per product holding its profile and subclass; `solix_c_gen2.py`: the C Gen 2 line's shared command set; recorded frames in `devices/data/` |
+| backend | `backend.py` | `EmulatedBleakBackend(BaseBleakClient)`: GATT services from bleak's own classes, writes into the module, notifications out |
+| testing | `testing.py` | `EmulatedConnection`: patches a client library's `establish_connection` (SolixBLE's by default) to return a real connected `BleakClient` on the emulator; keeps SolixBLE `MockDevice`'s names (`expect_ordered` as an optional write assertion, `refuse_after`, `disconnect`, `send_data`, `new_connection_error`, `allow_connect`, `check_assertions`, `writes`) |
 
 ## Emulated products
 
-| product | outer | auth mode | module build | session | recorded MCU replies |
-|---|---|---|---|---|---|
-| `A1783` SOLIX C2000 Gen 2 | encrypted | 2 (button) | v0.3.3.0, enforcing | GCM | `4100` → `c900` + `c421`; `4057` → `4857`; `4103` → `4903` + `c421`; pushes `c421`, `c490`, `0425` |
-| `A2345` Prime Charger 250W | encrypted (plain also accepted) | 2 (button) | v0.2.9.7 | GCM | `4200` → `ca00` (fragmented); `420a` → `4a0a`; `420b` → `4a0b` + `4303`; push `4303` |
-| `A91B2` Prime Charging Station 240W | plain | 0 | v0.2.9.7 | CBC | `4200` → `4a00` (250 B, whole); `420a` → `4a0a`; `420b` → `4a0b` + `4303`; push `4303` |
-| backend | `backend.py` | `EmulatedBleakBackend(BaseBleakClient)`: GATT services from bleak's own classes, writes into the module, notifications out |
-| testing | `testing.py` | `EmulatedConnection`: patches a client library's `establish_connection` (SolixBLE's by default) to return a real connected `BleakClient` on the emulator; keeps SolixBLE `MockDevice`'s names (`expect_ordered` as an optional write assertion, `refuse_after`, `disconnect`, `send_data`, `new_connection_error`, `allow_connect`, `check_assertions`, `writes`) |
+| product | advert (name, productType, sku) | outer | auth mode | default module build | device fw | session | recorded MCU replies |
+|---|---|---|---|---|---|---|---|
+| `A1763` SOLIX C1000 Gen 2 | `SOLIX C1000 Gen 2`, `b118`, `DK96` | encrypted | 2 (button) | v0.3.3.0 | v1.2.1.6 | GCM | the C Gen 2 set; pushes `c421`, `4489` |
+| `A1765` SOLIX C1000X Gen 2 | `SOLIX C1000X Gen 2`, `b119`, `DK96` | encrypted | 2 (button) | v0.3.3.0 | v1.2.1.6 | GCM | the A1763's |
+| `A1783` SOLIX C2000 Gen 2 | `SOLIX C2000 Gen 2`, `b11a`, `DKKE` | encrypted | 2 (button) | v0.3.3.0 | v1.2.1.6 | GCM | the C Gen 2 set; pushes `c421`, `4489`, `c490`, `4425` |
+| `A1785` SOLIX C2000X Gen 2 | `SOLIX C2000X Gen 2`, `b11b`, `DKVP` | encrypted | 2 (button) | v0.3.3.0 | v1.2.1.6 | GCM | the C Gen 2 set; pushes `c421`, `4489`, `4425` |
+| `A2345` Prime Charger 250W | `A2345_<MAC tail>`, `b402`, `QJB` | encrypted | 2 (button) | v0.2.9.7 | v2.1.1.6 | GCM | `4200` → `ca00` (fragmented); `420a` → `4a0a`; `420b` → `4a0b` + `4303`; push `4303` |
+| `A91B2` Prime Charging Station 240W | none, `b401`, `JTB` | plain | 0 | v0.2.9.7 | v1.1.2.4 | CBC | `4200` → `4a00` (250 B, whole); `420a` → `4a0a`; `420b` → `4a0b` + `4303`; push `4303` |
+
+The C Gen 2 models run one display-board build, which picks the model from its factory record, so the MCU answers the same commands on all four: `4100` → `c900` + `c421`; `4057` → `4857`; `405e` → `485e` + `c421`; `4063` → `4863`; `4089` → `4889`; `4090`/`4091`/`4092` → `4890`/`4891`/`4892` + `c421`; `4101`–`4104` → `4901`–`4904` + `c421`. Frames that name the unit (`0421`, `0900`, `0490`, `0425`) come from each model's own recording, and the X models report their base model's PN in them (the A1785's say `A1783`). The identity-free replies are shared (`solix_c_gen2.json`).
+
+Module session ops below `0x40` are the ESP32's own, answered on `03 00 0f` once the link is authorized. `0030` → `0830` is built on every build from the module build, the device firmware and the product's names (C Gen 2: `<pn>_low`, `<pn>_mcu_low`, `<pn>_esp32_low`; Prime: `<pn>`, `<pn>_mcu`, `<pn>_esp32`). The A1783's recorded `0020`, `0028`, `002e`, `002f`, `0036` and `0038` replies come only with v0.3.3.0, the build they were recorded on.
 
 Every wire parse and build is a [construct](https://construct.readthedocs.io) layout: the frame (`PATTERN_LAYOUT`, `COMMAND_LAYOUT` with the link flags and 12-bit msgtype, `FRAME_LAYOUT`, `FRAGMENT_LAYOUT`), the fields and messages, the key material (`GCM_KEYS_LAYOUT`, `CBC_KEYS_LAYOUT` over the shared secret), the P-256 point (`POINT_LAYOUT`) and the advert record (`ADVERT_LAYOUT`). Frames and parsed messages are construct `Container`s; plain classes hold only settings and link state, which have no wire form.
 
@@ -40,6 +47,7 @@ EmulatedDevice(
     *,
     outer: Outer | None = <product default>,
     path: Path | None = <product default>,
+    module: ModuleBuild | None = <product default>,
 )
 class A1783(EmulatedDevice): ...
 ```
@@ -52,6 +60,7 @@ class A1783(EmulatedDevice): ...
 | `transport` | `Transport.NEGOTIATED` (service `ff09`), `T2215`, `LEGACY` (service `1780`) | the GATT transport |
 | `outer` | `Outer.ENCRYPTED`, `Outer.PLAIN`, keyword-only | the negotiation outer the module expects: `4xxx` under the static GCM key, or `0xxx` in clear. `None` on a transport that doesn't negotiate |
 | `path` | `Path.ECDH`, `Path.LEGACY`, keyword-only | key establishment: P-256 ECDH, or the legacy account-key AES. `None` on a transport that doesn't negotiate |
+| `module` | `ModuleBuild.V0_2_9_7`, `V0_3_0_6`, `V0_3_3_0`, keyword-only | the comms module's firmware: what `0830` reports, which recorded module replies load, and whether the module enforces the auth mode (v0.3.3.0 only) |
 
 Defaults are synthetic: serials have the product's length (17 bytes on the A1783, 16 on the A2345), and the MAC is a locally administered unicast address.
 
@@ -63,13 +72,13 @@ Defaults are synthetic: serials have the product's length (17 bytes on the A1783
 - Encrypted outer: `4001 4003 4029 4005 4021` under the static AES-128-GCM key, nonce and AAD; `4021` answers the device's fresh P-256 point; the shared secret is the raw X coordinate; the session runs AES-128-GCM with key `ss[:16]`, nonce `ss[16:28]`, the static AAD and a 16-byte tag.
 - Plain outer: `0001 0003 0029 0005 0021` in clear, then AES-128-CBC with key `ss[:16]`, IV `ss[16:32]`, PKCS7.
 - Authorization: `0027` with an enrolled token authorizes at once; a new token gets `09` with the confirmation window and is granted by a simulated button press (`4827 00` on `030101`). Opcodes `>= 0x40` reach the MCU only once authorized.
-- Module policy: per auth mode and module build, including refusing a cleartext connect and a non-ECDH method choice.
+- Module policy: v0.3.3.0 enforces the auth mode on the encrypted outer: it drops a cleartext `0001`, refuses a non-ECDH `0005` method, and answers `0027` only after an encrypted ECDH. Earlier builds (v0.2.9.7, v0.3.0.6) accept either connect frame.
 - The authorize timer: an unauthorized link drops 30 s after connect, or `auth_timeout + 5` s after a confirmation window opens, checked every 10 s.
 - Relay: post-authorization requests go to the MCU script; its cleartext replies and pushes are encrypted for the session and sent on `03010f`.
 
 ## Recorded data
 
-MCU replies and pushes are recorded cleartext from real units, packaged as `devices/data/<pn>.json` (msgtype → cleartext hex) by `tools/sanitize_frames.py`. The tool takes the real identifiers on its command line, never stores them, and fails on any printable run it wasn't told is safe. The frames are sanitized before they enter the package: the serial, MAC, expansion serials, account tokens and device clocks are replaced with synthetic values of the same length, and the frames are re-encoded. The fixed handshake frames (`4801`, `4803`) are reproduced byte for byte; frames that carry the serial or MAC match a real capture everywhere except those fields.
+MCU replies and pushes are recorded cleartext from real units, packaged as `devices/data/<pn>.json` (msgtype → cleartext hex) by `tools/sanitize_frames.py`; a profile lists its files, and the first that holds a msgtype supplies it. The tool reads collector logs and MQTT records (anker-solix-api `.ndjson` examples, `mqtt_monitor` dumps). An MQTT frame is the same frame the MCU sends to BLE with another routing marker in its leading `a1` (`34` or `32` for `31`), which the tool sets back to `31`; `--fix-checksum` recomputes the checksum of records whose serial was anonymized after capture. Sources are listed in [device-sources.md](device-sources.md). The tool takes the real identifiers on its command line, never stores them, and fails on any printable run it wasn't told is safe. The frames are sanitized before they enter the package: the serial, MAC, expansion serials, account tokens and device clocks are replaced with synthetic values of the same length, and the frames are re-encoded. The fixed handshake frames (`4801`, `4803`) are reproduced byte for byte; frames that carry the serial or MAC match a real capture everywhere except those fields.
 
 ## Testing
 

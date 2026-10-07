@@ -34,6 +34,21 @@ class Path(StrEnum):
     LEGACY = "legacy"
 
 
+class ModuleBuild(StrEnum):
+    """The comms module's firmware build."""
+
+    #: The Prime line's module.
+    V0_2_9_7 = "v0.2.9.7"
+    V0_3_0_6 = "v0.3.0.6"
+    #: Refuses a cleartext connect and a non-ECDH method, and gates ``0027``.
+    V0_3_3_0 = "v0.3.3.0"
+
+    @property
+    def enforces(self) -> bool:
+        """Whether the build enforces the auth mode against the client."""
+        return self is ModuleBuild.V0_3_3_0
+
+
 class Product(StrEnum):
     """Anker part numbers with a known BLE client class."""
 
@@ -48,6 +63,7 @@ class Product(StrEnum):
     A1780 = "A1780"
     A1781 = "A1781"
     A1783 = "A1783"
+    A1785 = "A1785"
     A1790 = "A1790"
     A1790P = "A1790P"
     A17C1 = "A17C1"
@@ -87,6 +103,7 @@ PRODUCTS: dict[Product, ProductInfo] = {
     Product.A1780: ProductInfo("SOLIX F2000", "F2000", "pps", Transport.LEGACY),
     Product.A1781: ProductInfo("SOLIX F2600", "F2600", "pps", Transport.LEGACY),
     Product.A1783: ProductInfo("SOLIX C2000 Gen 2", "C2000G2", "pps"),
+    Product.A1785: ProductInfo("SOLIX C2000X Gen 2", "C2000G2", "pps"),
     Product.A1790: ProductInfo("SOLIX F3800", "F3800", "pps"),
     Product.A1790P: ProductInfo("SOLIX F3800 Plus", "F3800", "pps"),
     Product.A17C1: ProductInfo("Solarbank 2 E1600 Pro", "Solarbank2", "solarbank_2"),

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import IntEnum
 from typing import TYPE_CHECKING
 
@@ -33,13 +33,14 @@ from .messages import (
     DEVICE_INFO_REPLY,
     PUBLIC_KEY_REPLY,
     STATUS_REPLY,
+    VERSION_REPLY,
     parse_request,
 )
 from .tlv import FieldError
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from .clock import Clock
     from .crypto import Cipher
@@ -53,6 +54,8 @@ _LOGGER = logging.getLogger(__name__)
 MCU_OPCODE_MIN = 0x40
 #: The arm-grant ``4827``.
 MSGTYPE_GRANT = RESPONSE | 0x027
+#: ``0030``: the module's version read.
+MSGTYPE_VERSIONS = 0x030
 
 STATUS_OK = 0x00
 STATUS_FAIL = 0x01
@@ -97,6 +100,26 @@ class CapabilityMode(IntEnum):
 
 
 @dataclass(frozen=True)
+class Versions:
+    """What ``0830`` reports, ``a1`` to ``a5``.
+
+    Attributes:
+        module: The module firmware (``v0.3.3.0``).
+        device: The device MCU firmware.
+        model: The model, or its OTA type on the C Gen 2 line (``A1783_low``).
+        mcu: The MCU component name.
+        esp32: The module component name.
+
+    """
+
+    module: bytes
+    device: bytes
+    model: bytes
+    mcu: bytes
+    esp32: bytes
+
+
+@dataclass(frozen=True)
 class ModuleConfig:
     """What the module reports and enforces.
 
@@ -112,6 +135,9 @@ class ModuleConfig:
         fragment_cap: The largest frame the link carries (ATT MTU - 3).
         chip: ``0829 a2``.
         lib_version: ``0829 a3``.
+        session_replies: Recorded cleartext replies to the module's own session
+            ops (opcodes below ``0x40``), by request msgtype.
+        versions: What ``0830`` reports; None leaves ``0030`` unanswered.
 
     """
 
@@ -125,6 +151,8 @@ class ModuleConfig:
     fragment_cap: int = 253
     chip: bytes = b"ESP32"
     lib_version: bytes = b"0.0.0.3"
+    session_replies: Mapping[int, bytes] = field(default_factory=dict)
+    versions: Versions | None = None
 
 
 @dataclass
@@ -462,17 +490,25 @@ class Module:
         )
 
     def _session(self, link: _Link, frame: Frame) -> Output:
-        if frame.cmd.msgtype & ~RESPONSE < MCU_OPCODE_MIN:
-            return Output()
-        if not link.authorized or link.session is None:
+        session = link.session
+        if not link.authorized or session is None:
             return Output()
         if frame.cmd.encrypted:
             try:
-                link.session.decrypt(frame.payload)
+                session.decrypt(frame.payload)
             except (InvalidTag, ValueError):
                 _LOGGER.warning("Dropped undecryptable %03x", frame.cmd.msgtype)
                 return Output()
-        return self._relay(link, self.mcu.respond(frame.cmd.msgtype))
+        msgtype = frame.cmd.msgtype
+        if msgtype & ~RESPONSE >= MCU_OPCODE_MIN:
+            return self._relay(link, self.mcu.respond(msgtype))
+        reply = self.config.session_replies.get(msgtype)
+        versions = self.config.versions
+        if msgtype == MSGTYPE_VERSIONS and versions is not None:
+            reply = VERSION_REPLY.build({"status": STATUS_OK, **asdict(versions)})
+        if reply is None:
+            return Output()
+        return Output(self._encode(reply_frame(frame, session.encrypt(reply))))
 
     def _relay(self, link: _Link, frames: list[Frame]) -> Output:
         """Encrypt the MCU's cleartext frames for the session and send them."""

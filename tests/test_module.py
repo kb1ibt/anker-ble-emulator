@@ -31,6 +31,8 @@ FRAME_4801 = bytes.fromhex(
 FRAME_4803 = bytes.fromhex(
     "ff092b000300014803ab273ed04438d4b25db54c6d4a6ec3d481f5ad58ff7cc2be8bc8369fd98c0b914e03"
 )
+#: ``0830 a1``: the module firmware version.
+VERSION_REPLY = bytes.fromhex("00a10876302e332e332e30")
 
 
 def test_stage_one_and_two_replies_match_the_recorded_frames() -> None:
@@ -369,7 +371,7 @@ def test_unknown_negotiation_opcode_gets_no_reply() -> None:
     assert exchange(rig.module, AppClient(), 0x00B, []) == []
 
 
-def test_module_local_session_opcode_gets_no_reply() -> None:
+def test_unrecorded_module_session_opcode_gets_no_reply() -> None:
     rig = build_module()
     client = AppClient()
     negotiate(rig.module, client, ENROLLED_TOKEN)
@@ -377,6 +379,22 @@ def test_module_local_session_opcode_gets_no_reply() -> None:
     out = rig.module.write(client.request(0x030, [], SESSION))
 
     assert out.frames == []
+
+
+def test_recorded_module_session_reply_comes_back_on_the_request_pattern() -> None:
+    rig = build_module(session_replies={0x030: VERSION_REPLY})
+    client = AppClient()
+    before = rig.module.write(client.request(0x030, [], SESSION))
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+
+    out = rig.module.write(client.request(0x030, [], SESSION))
+
+    reply = client.open(out.frames[0])
+    assert before.frames == []
+    assert reply is not None
+    assert pattern_hex(reply.frame) == "03000f"
+    assert cmd_hex(reply.frame) == "4830"
+    assert reply.plaintext == VERSION_REPLY
 
 
 @pytest.mark.parametrize(

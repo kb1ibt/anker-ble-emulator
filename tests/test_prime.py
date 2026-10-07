@@ -17,6 +17,11 @@ from tests.fixtures.client import (
 
 TOKEN = b"owner-token"
 ACCOUNT = b"a" * 40
+#: An A2345's ``0830``: v0.2.9.7, v2.1.1.6, ``A2345``, ``A2345_mcu``, ``A2345_esp32``.
+A2345_VERSIONS = bytes.fromhex(
+    "00a10876302e322e392e37a20876322e312e312e36a3054132333435"
+    "a40941323334355f6d6375a50b41323334355f6573703332"
+)
 
 
 async def test_a91b2_negotiates_in_clear_and_authorizes_at_the_key_exchange() -> None:
@@ -115,6 +120,20 @@ def test_a91b2_advertises_no_name_and_capability_zero() -> None:
     assert device.advertisement_data.manufacturer_data[COMPANY_ID].hex() == (
         "01aa12deadbeef00b4014a544200"
     )
+
+
+async def test_a2345_version_read_matches_the_recorded_reply() -> None:
+    device = A2345()
+    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
+        link = BleakLink(client, AppClient())
+        await link.start()
+        await link.negotiate(TOKEN)
+        device.press_button()
+        await settle()
+        version = await link.send(0x030, [(0xA1, b"\x21")], SESSION)
+
+    assert [cmd_hex(reply.frame) for reply in version] == ["4830"]
+    assert version[0].plaintext == A2345_VERSIONS
 
 
 async def test_an_unnamed_device_reports_its_address_as_its_name() -> None:
