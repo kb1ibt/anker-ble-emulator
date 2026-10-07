@@ -22,6 +22,10 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from construct import Const, ConstructError, Int32ul, Struct
+
+from anker_ble_emulator.tlv import FIELD_HEADER_LEN, FIELDS_LAYOUT, encode_fields
+
 
 LINE = re.compile(rb"ble frame: cmd=([0-9a-f]{4}) len=\d+ clear=([0-9a-f]+)")
 #: Millisecond epoch timestamps written as ASCII digits.
@@ -29,8 +33,8 @@ EPOCH_MS = re.compile(rb"(?<![0-9])1[6-9][0-9]{11}(?![0-9])")
 FIXED_EPOCH_MS = b"1790812800000"
 #: The typed trailer ``fe 05 03 <u32 LE unix time>``.
 TRAILER_TAG = 0xFE
-TRAILER_TYPE = 0x03
-FIXED_UNIX_TIME = (1_790_812_800).to_bytes(4, "little")
+TRAILER_VALUE = Struct("type" / Const(b"\x03"), "time" / Int32ul)
+FIXED_UNIX_TIME = 1_790_812_800
 #: Printable runs this long are checked against the allowlist.
 SUSPECT_RUN = re.compile(rb"[A-Za-z0-9_]{6,}")
 FIRST_TAG = 0xA1
@@ -91,24 +95,30 @@ class Sanitizer:
 
 
 def fix_trailer(data: bytes) -> bytes:
-    """Replace the time in a trailing ``fe 05 03 <u32>`` field.
+    """Replace the time in each ``fe 05 03 <u32>`` trailer field.
 
-    Only a payload that walks cleanly as typed fields to its end is changed.
+    Only a payload that walks cleanly as fields to its end is changed.
     """
-    offset = 1 if data and data[0] < FIRST_TAG else 0
-    trailer = -1
-    while offset < len(data):
-        if offset + 2 > len(data):
-            return data
-        tag, length = data[offset], data[offset + 1]
-        if tag < FIRST_TAG or offset + 2 + length > len(data):
-            return data
-        if tag == TRAILER_TAG and length == 5 and data[offset + 2] == TRAILER_TYPE:  # noqa: PLR2004  # type byte + u32
-            trailer = offset + 3
-        offset += 2 + length
-    if trailer < 0:
+    status = data[:1] if data and data[0] < FIRST_TAG else b""
+    body = data[len(status) :]
+    fields = list(FIELDS_LAYOUT.parse(body))
+    walked = sum(FIELD_HEADER_LEN + len(item.value) for item in fields)
+    if walked != len(body) or any(item.tag < FIRST_TAG for item in fields):
         return data
-    return data[:trailer] + FIXED_UNIX_TIME + data[trailer + 4 :]
+    return status + encode_fields(
+        (int(item.tag), _fixed_time(int(item.tag), bytes(item.value)))
+        for item in fields
+    )
+
+
+def _fixed_time(tag: int, value: bytes) -> bytes:
+    if tag != TRAILER_TAG or len(value) != TRAILER_VALUE.sizeof():
+        return value
+    try:
+        TRAILER_VALUE.parse(value)
+    except ConstructError:
+        return value
+    return TRAILER_VALUE.build({"time": FIXED_UNIX_TIME})
 
 
 def newest_frames(paths: list[Path], msgtypes: set[int]) -> dict[int, bytes]:

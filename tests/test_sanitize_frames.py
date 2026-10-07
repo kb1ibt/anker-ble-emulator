@@ -44,7 +44,15 @@ def test_millisecond_epochs_are_fixed() -> None:
 def test_trailer_time_is_fixed() -> None:
     data = bytes.fromhex("00a10131fe05031a69a76a")
 
-    assert fix_trailer(data) == bytes.fromhex("00a10131fe0503") + FIXED_UNIX_TIME
+    assert fix_trailer(data) == bytes.fromhex(
+        "00a10131fe0503"
+    ) + FIXED_UNIX_TIME.to_bytes(4, "little")
+
+
+def test_a_fe_field_that_isnt_a_time_is_left_alone() -> None:
+    data = bytes.fromhex("a10131fe050401020304")
+
+    assert fix_trailer(data) == data
 
 
 @pytest.mark.parametrize(

@@ -12,8 +12,10 @@ An emulated Anker Solix BLE device (the comms module and the device MCU behind i
 | module | `module.py` | the comms module: negotiation handlers, link state, authorization policy, the authorize timer, the relay to and from the MCU |
 | MCU | `mcu.py` | `McuScript`: recorded cleartext replies by message type, and pushes |
 | products | `products.py` | `Product` part numbers with their SolixBLE class and anker-solix-api category; `Transport`, `Outer`, `Path` |
-| device | `device.py` | `EmulatedDevice` and its per-product subclasses: identity, profile, the module and the MCU script |
+| devices | `devices/` | `base.py`: `EmulatedDevice`, `Profile`, `Advert`; one module per product (`a1783.py`) holding its profile and subclass; recorded frames in `devices/data/` |
 | backend | `backend.py` | `EmulatedBleakBackend(BaseBleakClient)`: GATT services from bleak's own classes, writes into the module, notifications out |
+
+Byte layouts are [construct](https://construct.readthedocs.io) definitions, one per wire structure (`FRAME_LAYOUT`, `FRAGMENT_LAYOUT`, `FIELDS_LAYOUT`, `RESPONSE_LAYOUT`, `ADVERT_LAYOUT`), so each parses and builds from one declaration; dataclasses hold values and per-product settings.
 
 The module and MCU layers are synchronous and transport-free: a write in, a list of frames out, each with a delay. Time is injected, so timers are testable without sleeping.
 
@@ -57,7 +59,7 @@ Defaults are synthetic: serials have the product's length (17 bytes on the A1783
 
 ## Recorded data
 
-MCU replies and pushes are recorded cleartext from real units, packaged as `data/<pn>.json` (msgtype → cleartext hex) by `tools/sanitize_frames.py`. The tool takes the real identifiers on its command line, never stores them, and fails on any printable run it wasn't told is safe. The frames are sanitized before they enter the package: the serial, MAC, expansion serials, account tokens and device clocks are replaced with synthetic values of the same length, and the frames are re-encoded. The fixed handshake frames (`4801`, `4803`) are reproduced byte for byte; frames that carry the serial or MAC match a real capture everywhere except those fields.
+MCU replies and pushes are recorded cleartext from real units, packaged as `devices/data/<pn>.json` (msgtype → cleartext hex) by `tools/sanitize_frames.py`. The tool takes the real identifiers on its command line, never stores them, and fails on any printable run it wasn't told is safe. The frames are sanitized before they enter the package: the serial, MAC, expansion serials, account tokens and device clocks are replaced with synthetic values of the same length, and the frames are re-encoded. The fixed handshake frames (`4801`, `4803`) are reproduced byte for byte; frames that carry the serial or MAC match a real capture everywhere except those fields.
 
 ## Testing
 

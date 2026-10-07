@@ -11,7 +11,7 @@ from bleak.backends.client import BaseBleakClient
 from bleak.backends.service import BleakGATTService, BleakGATTServiceCollection
 from bleak.exc import BleakError
 
-from .device import SERVICE_UUID, EmulatedDevice
+from .devices import SERVICE_UUID, EmulatedDevice
 
 
 if TYPE_CHECKING:
@@ -71,8 +71,8 @@ class EmulatedBleakBackend(BaseBleakClient):
 
     @property
     def name(self) -> str:
-        """The advertised local name."""
-        return self.device.profile.advert.local_name
+        """The advertised local name, else the address with dashes, as bleak's."""
+        return self.device.profile.advert.local_name or self.address.replace(":", "-")
 
     @property
     def mtu_size(self) -> int:

@@ -24,6 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "bleak>=3.0",
+    "construct>=2.10",
     "cryptography>=43",
 ]
 
@@ -33,6 +34,7 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
+    "construct-typing>=0.8.1",
     "mypy>=2.4.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",

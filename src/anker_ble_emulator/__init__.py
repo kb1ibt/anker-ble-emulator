@@ -3,7 +3,7 @@
 
 from .backend import COMMAND_UUID, TELEMETRY_UUID, EmulatedBleakBackend
 from .clock import Clock, ManualClock, MonotonicClock
-from .device import A1783, DEFAULT_MAC, UNSET, EmulatedDevice
+from .devices import A1783, DEFAULT_MAC, UNSET, EmulatedDevice
 from .frame import Frame, FrameError
 from .mcu import McuFrame, McuScript
 from .module import AuthMode, Module, ModuleConfig, Output

@@ -11,17 +11,24 @@ from typing import TYPE_CHECKING
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
+from construct import Bytes, Int8ub, Optional, Struct
 
-from .clock import MonotonicClock
-from .mcu import McuFrame, McuScript
-from .module import TIMER_PERIOD, AuthMode, Module, ModuleConfig, Output
-from .products import PRODUCTS, Outer, Path, Product, Transport
+from anker_ble_emulator.clock import MonotonicClock
+from anker_ble_emulator.mcu import McuFrame, McuScript
+from anker_ble_emulator.module import (
+    TIMER_PERIOD,
+    AuthMode,
+    Module,
+    ModuleConfig,
+    Output,
+)
+from anker_ble_emulator.products import PRODUCTS, Outer, Path, Product, Transport
 
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
-    from .clock import Clock
+    from anker_ble_emulator.clock import Clock
 
 #: A locally administered unicast MAC.
 DEFAULT_MAC = "AA:12:DE:AD:BE:EF"
@@ -29,6 +36,21 @@ DEFAULT_MAC = "AA:12:DE:AD:BE:EF"
 COMPANY_ID = 0xFFFF
 SERVICE_UUID = "0000ff09-0000-1000-8000-00805f9b34fb"
 MAC_LEN = 6
+
+
+#: The sku's length by ``version_code``.
+SKU_LENGTHS = {0x01: 3, 0x02: 4}
+
+#: The manufacturer record: versionCode, MAC, bindType, productType, sku, and
+#: the capability byte where the family has one.
+ADVERT_LAYOUT = Struct(
+    "version_code" / Int8ub,
+    "mac" / Bytes(MAC_LEN),
+    "bind_type" / Int8ub,
+    "product_type" / Bytes(2),
+    "sku" / Bytes(lambda this: SKU_LENGTHS[this.version_code]),
+    "capability" / Optional(Int8ub),
+)
 
 
 class Unset(Enum):
@@ -42,24 +64,36 @@ UNSET = Unset.UNSET
 
 @dataclass(frozen=True)
 class Advert:
-    """The manufacturer record under company id ``0xffff``."""
+    """The manufacturer record under company id ``0xffff``.
 
-    local_name: str
+    Attributes:
+        local_name: The advertised name, or None while the device has none.
+        version_code: ``01`` with a 3-byte sku, ``02`` with a 4-byte one.
+        bind_type: The device's binding state.
+        product_type: The model key, 2 bytes.
+        sku: The serial's sku substring.
+        capability: The trailing capability byte; None where the family has none.
+
+    """
+
+    local_name: str | None
     version_code: int
     bind_type: int
     product_type: bytes
     sku: bytes
-    capability: int
+    capability: int | None = None
 
     def manufacturer_data(self, mac: bytes) -> bytes:
         """Return the record's bytes for a device with ``mac``."""
-        return (
-            bytes([self.version_code])
-            + mac
-            + bytes([self.bind_type])
-            + self.product_type
-            + self.sku
-            + bytes([self.capability])
+        return ADVERT_LAYOUT.build(
+            {
+                "version_code": self.version_code,
+                "mac": mac,
+                "bind_type": self.bind_type,
+                "product_type": self.product_type,
+                "sku": self.sku,
+                "capability": self.capability,
+            },
         )
 
 
@@ -73,7 +107,7 @@ class Profile:
         path: The default path.
         auth_mode: The provisioned policy byte.
         advert: The advertisement.
-        data: The packaged recorded-frame resource.
+        data: The recorded-frame resource in ``devices/data/``.
         replies: Reply msgtypes by request msgtype, in send order.
         pushes: Msgtypes the MCU can push.
 
@@ -104,29 +138,13 @@ class Profile:
         )
 
 
-PROFILES: dict[Product, Profile] = {
-    Product.A1783: Profile(
-        serial="APCDKKE0000000001",
-        outer=Outer.ENCRYPTED,
-        path=Path.ECDH,
-        auth_mode=AuthMode.CONFIRM,
-        advert=Advert(
-            local_name="SOLIX C2000 Gen 2",
-            version_code=0x02,
-            bind_type=0x01,
-            product_type=bytes.fromhex("b11a"),
-            sku=b"DKKE",
-            capability=0x04,
-        ),
-        data="a1783.json",
-        replies={
-            0x100: (0x900, 0x421),
-            0x057: (0x857,),
-            0x103: (0x903, 0x421),
-        },
-        pushes=(0x421, 0x490, 0x425),
-    ),
-}
+#: Emulation profiles by product; each product module registers its own.
+PROFILES: dict[Product, Profile] = {}
+
+
+def register(pn: Product, profile: Profile) -> None:
+    """Make ``pn`` emulatable with ``profile``."""
+    PROFILES[pn] = profile
 
 
 def parse_mac(mac: str) -> bytes:
@@ -236,28 +254,3 @@ class EmulatedDevice:
     def _emit(self, output: Output) -> None:
         if self._listener is not None:
             self._listener(output)
-
-
-class A1783(EmulatedDevice):
-    """SOLIX C2000 Gen 2: encrypted outer, ECDH, owner confirmation by button."""
-
-    def __init__(  # noqa: PLR0913  # the identity plus the three protocol choices
-        self,
-        serial: str | Unset | None = UNSET,
-        mac: str = DEFAULT_MAC,
-        transport: Transport | None = None,
-        *,
-        outer: Outer | None = None,
-        path: Path | None = None,
-        clock: Clock | None = None,
-    ) -> None:
-        """Build a C2000 Gen 2; see ``EmulatedDevice``."""
-        super().__init__(
-            Product.A1783,
-            serial,
-            mac,
-            transport,
-            outer=outer,
-            path=path,
-            clock=clock,
-        )

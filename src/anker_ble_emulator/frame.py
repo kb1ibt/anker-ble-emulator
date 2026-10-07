@@ -7,6 +7,23 @@ from dataclasses import dataclass
 from functools import reduce
 from operator import xor
 
+from construct import (
+    BitStruct,
+    Bytes,
+    Checksum,
+    ChecksumError,
+    Const,
+    GreedyBytes,
+    Int8ub,
+    Int16ub,
+    Int16ul,
+    Nibble,
+    RawCopy,
+    Rebuild,
+    Struct,
+    this,
+)
+
 
 MAGIC = b"\xff\x09"
 #: Magic (2) + length (2) + pattern (3) + cmd (2).
@@ -29,6 +46,29 @@ class FrameError(ValueError):
 def checksum(data: bytes) -> int:
     """Return the XOR of every byte."""
     return reduce(xor, data, 0)
+
+
+#: ``ff09 | len (u16 LE, whole frame) | pattern | cmd (u16 BE) | payload | xor``.
+FRAME_LAYOUT = Struct(
+    "body"
+    / RawCopy(
+        Struct(
+            "magic" / Const(MAGIC),
+            "length"
+            / Rebuild(Int16ul, lambda this: FRAME_OVERHEAD + len(this.payload)),
+            "pattern" / Bytes(3),
+            "cmd" / Int16ub,
+            "payload" / Bytes(lambda this: this.length - FRAME_OVERHEAD),
+        ),
+    ),
+    "checksum" / Checksum(Int8ub, checksum, this.body.data),
+)
+
+#: A fragment's payload: ``index << 4 | total`` (index from 1), then its chunk.
+FRAGMENT_LAYOUT = Struct(
+    "info" / BitStruct("index" / Nibble, "total" / Nibble),
+    "chunk" / GreedyBytes,
+)
 
 
 @dataclass(frozen=True)
@@ -61,15 +101,18 @@ class Frame:
 
     def encode(self) -> bytes:
         """Return the frame as wire bytes, length and checksum included."""
-        length = FRAME_OVERHEAD + len(self.payload)
-        body = (
-            MAGIC
-            + length.to_bytes(2, "little")
-            + self.pattern
-            + self.cmd.to_bytes(2, "big")
-            + self.payload
+        return FRAME_LAYOUT.build(
+            {
+                "body": {
+                    "value": {
+                        "pattern": self.pattern,
+                        "cmd": self.cmd,
+                        "payload": self.payload,
+                    },
+                },
+                "checksum": None,
+            },
         )
-        return body + bytes([checksum(body)])
 
     @classmethod
     def decode(cls, data: bytes) -> Frame:
@@ -88,17 +131,19 @@ class Frame:
         if len(data) < FRAME_OVERHEAD or data[:2] != MAGIC:
             msg = f"not an ff09 frame: {data.hex()}"
             raise FrameError(msg)
-        length = int.from_bytes(data[2:4], "little")
+        length = Int16ul.parse(data[2:4])
         if length != len(data):
             msg = f"length field {length} != {len(data)} bytes: {data.hex()}"
             raise FrameError(msg)
-        if checksum(data[:-1]) != data[-1]:
+        try:
+            body = FRAME_LAYOUT.parse(data).body.value
+        except ChecksumError as error:
             msg = f"bad checksum: {data.hex()}"
-            raise FrameError(msg)
+            raise FrameError(msg) from error
         return cls(
-            pattern=bytes(data[4:7]),
-            cmd=int.from_bytes(data[7:9], "big"),
-            payload=bytes(data[HEADER_LEN:-1]),
+            pattern=bytes(body.pattern),
+            cmd=int(body.cmd),
+            payload=bytes(body.payload),
         )
 
 
@@ -129,7 +174,13 @@ def fragment(frame: Frame, cap: int) -> list[Frame]:
         raise FrameError(msg)
     cmd = frame.cmd | FLAG_FRAGMENT
     return [
-        Frame(frame.pattern, cmd, bytes([(index << 4) | total]) + chunk)
+        Frame(
+            frame.pattern,
+            cmd,
+            FRAGMENT_LAYOUT.build(
+                {"info": {"index": index, "total": total}, "chunk": chunk}
+            ),
+        )
         for index, chunk in enumerate(chunks, start=1)
     ]
 
@@ -161,7 +212,8 @@ class Reassembler:
         if not frame.payload:
             msg = "fragment without an index byte"
             raise FrameError(msg)
-        index, total = frame.payload[0] >> 4, frame.payload[0] & 0x0F
+        part = FRAGMENT_LAYOUT.parse(frame.payload)
+        index, total = int(part.info.index), int(part.info.total)
         if index == 1:
             self._head, self._parts = frame, []
         head = self._head
@@ -169,7 +221,7 @@ class Reassembler:
             self._head, self._parts = None, []
             msg = f"fragment {index}/{total} out of sequence"
             raise FrameError(msg)
-        self._parts.append(frame.payload[1:])
+        self._parts.append(bytes(part.chunk))
         if index < total:
             return None
         whole = Frame(head.pattern, head.cmd & ~FLAG_FRAGMENT, b"".join(self._parts))

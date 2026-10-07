@@ -5,9 +5,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from construct import GreedyBytes, GreedyRange, Int8ub, Prefixed, Struct
+
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+#: One field: tag, then a 1-byte length and the value.
+FIELD_LAYOUT = Struct("tag" / Int8ub, "value" / Prefixed(Int8ub, GreedyBytes))
+#: Fields back to back, as many as fit.
+FIELDS_LAYOUT = GreedyRange(FIELD_LAYOUT)
+#: A response payload: the status byte, then the fields.
+RESPONSE_LAYOUT = Struct("status" / Int8ub, "fields" / FIELDS_LAYOUT)
+FIELD_HEADER_LEN = 2
 
 
 class FieldError(ValueError):
@@ -21,7 +31,7 @@ def encode_fields(fields: Iterable[tuple[int, bytes]]) -> bytes:
         fields: ``(tag, value)`` pairs.
 
     """
-    return b"".join(bytes([tag, len(value)]) + value for tag, value in fields)
+    return FIELDS_LAYOUT.build([{"tag": tag, "value": value} for tag, value in fields])
 
 
 def decode_fields(data: bytes) -> dict[int, bytes]:
@@ -37,20 +47,15 @@ def decode_fields(data: bytes) -> dict[int, bytes]:
         FieldError: If a field's length runs past the end.
 
     """
-    fields: dict[int, bytes] = {}
-    offset = 0
-    while offset < len(data):
-        if offset + 2 > len(data):
-            msg = f"truncated field header at {offset}: {data.hex()}"
-            raise FieldError(msg)
-        tag, length = data[offset], data[offset + 1]
-        end = offset + 2 + length
-        if end > len(data):
-            msg = f"field {tag:02x} runs past the end: {data.hex()}"
-            raise FieldError(msg)
-        fields[tag] = data[offset + 2 : end]
-        offset = end
-    return fields
+    parsed = FIELDS_LAYOUT.parse(data)
+    consumed = sum(FIELD_HEADER_LEN + len(field.value) for field in parsed)
+    if consumed == len(data):
+        return {int(field.tag): bytes(field.value) for field in parsed}
+    if len(data) - consumed < FIELD_HEADER_LEN:
+        msg = f"truncated field header at {consumed}: {data.hex()}"
+        raise FieldError(msg)
+    msg = f"field {data[consumed]:02x} runs past the end: {data.hex()}"
+    raise FieldError(msg)
 
 
 def response(status: int, fields: Iterable[tuple[int, bytes]] = ()) -> bytes:
@@ -61,4 +66,9 @@ def response(status: int, fields: Iterable[tuple[int, bytes]] = ()) -> bytes:
         fields: ``(tag, value)`` pairs.
 
     """
-    return bytes([status]) + encode_fields(fields)
+    return RESPONSE_LAYOUT.build(
+        {
+            "status": status,
+            "fields": [{"tag": tag, "value": value} for tag, value in fields],
+        },
+    )

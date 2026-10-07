@@ -4,6 +4,7 @@
 import inspect
 
 import pytest
+from construct import ConstructError
 
 from anker_ble_emulator import (
     A1783,
@@ -14,7 +15,7 @@ from anker_ble_emulator import (
     Product,
     Transport,
 )
-from anker_ble_emulator.device import COMPANY_ID, SERVICE_UUID
+from anker_ble_emulator.devices import COMPANY_ID, SERVICE_UUID, Advert
 
 
 def test_a1783_defaults() -> None:
@@ -99,6 +100,34 @@ def test_advertisement_matches_the_manufacturer_record() -> None:
     assert advert.manufacturer_data[COMPANY_ID] == bytes.fromhex(
         "02aa12deadbeef01b11a444b4b4504"
     )
+
+
+def test_advert_without_a_capability_ends_at_the_sku() -> None:
+    advert = Advert(
+        local_name="Anker SOLIX F3800",
+        version_code=0x01,
+        bind_type=0x02,
+        product_type=bytes.fromhex("b106"),
+        sku=b"744",
+    )
+
+    record = advert.manufacturer_data(bytes.fromhex("aa12deadbeef"))
+
+    assert record.hex() == "01aa12deadbeef02b106373434"
+    assert len(record) == 13
+
+
+def test_sku_length_follows_the_version_code() -> None:
+    advert = Advert(
+        local_name=None,
+        version_code=0x01,
+        bind_type=0x00,
+        product_type=bytes.fromhex("b401"),
+        sku=b"DKKE",
+    )
+
+    with pytest.raises(ConstructError):
+        advert.manufacturer_data(bytes(6))
 
 
 def test_ble_device_carries_the_device() -> None:
