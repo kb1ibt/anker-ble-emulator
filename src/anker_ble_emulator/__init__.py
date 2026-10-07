@@ -4,8 +4,8 @@
 from .backend import COMMAND_UUID, TELEMETRY_UUID, EmulatedBleakBackend
 from .clock import Clock, ManualClock, MonotonicClock
 from .devices import A1783, DEFAULT_MAC, UNSET, EmulatedDevice
-from .frame import Frame, FrameError
-from .mcu import McuFrame, McuScript
+from .frame import FrameError, decode, encode, make_frame
+from .mcu import McuScript, mcu_frame
 from .module import AuthMode, Module, ModuleConfig, Output
 from .products import PRODUCTS, Outer, Path, Product, ProductInfo, Transport
 
@@ -21,10 +21,8 @@ __all__ = [
     "Clock",
     "EmulatedBleakBackend",
     "EmulatedDevice",
-    "Frame",
     "FrameError",
     "ManualClock",
-    "McuFrame",
     "McuScript",
     "Module",
     "ModuleConfig",
@@ -35,4 +33,8 @@ __all__ = [
     "Product",
     "ProductInfo",
     "Transport",
+    "decode",
+    "encode",
+    "make_frame",
+    "mcu_frame",
 ]

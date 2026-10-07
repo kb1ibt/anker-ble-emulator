@@ -12,7 +12,7 @@ from anker_ble_emulator.crypto import (
     session_cbc,
     session_gcm,
 )
-from anker_ble_emulator.frame import Frame
+from anker_ble_emulator.frame import decode
 from tests.fixtures.client import AppClient
 
 
@@ -34,7 +34,7 @@ FRAME_4803 = bytes.fromhex(
 def test_static_gcm_matches_the_recorded_handshake(
     frame: bytes, plaintext: str
 ) -> None:
-    payload = Frame.decode(frame).payload
+    payload = decode(frame).payload
 
     assert STATIC_GCM.decrypt(payload).hex() == plaintext
     assert STATIC_GCM.encrypt(bytes.fromhex(plaintext)) == payload

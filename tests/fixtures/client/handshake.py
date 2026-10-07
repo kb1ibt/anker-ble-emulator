@@ -54,7 +54,7 @@ def negotiate(module: Module, client: AppClient, token: bytes) -> dict[int, Repl
     replies: dict[int, Reply] = {}
     for msgtype, fields in negotiation_steps(client, token):
         for reply in exchange(module, client, msgtype, fields):
-            replies[reply.frame.msgtype] = reply
+            replies[reply.frame.cmd.msgtype] = reply
         if msgtype == 0x021:
             client.install(replies[0x821].fields[0xA1])
     return replies

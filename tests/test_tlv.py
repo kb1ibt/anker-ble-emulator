@@ -3,7 +3,7 @@
 
 import pytest
 
-from anker_ble_emulator.tlv import FieldError, decode_fields, encode_fields, response
+from anker_ble_emulator.tlv import FieldError, decode_fields, encode_fields
 
 
 def test_fields_round_trip() -> None:
@@ -16,10 +16,6 @@ def test_a_repeated_tag_keeps_the_last_value() -> None:
     data = bytes.fromhex("a10101a10102a20103")
 
     assert decode_fields(data) == {0xA1: b"\x02", 0xA2: b"\x03"}
-
-
-def test_response_leads_with_the_status() -> None:
-    assert response(0x09, [(0xA1, bytes.fromhex("1e00"))]).hex() == "09a1021e00"
 
 
 @pytest.mark.parametrize(

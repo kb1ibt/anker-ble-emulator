@@ -7,7 +7,8 @@ An emulated Anker Solix BLE device (the comms module and the device MCU behind i
 | layer | module | role |
 |---|---|---|
 | frame | `frame.py` | `ff09` frame codec: length, pattern, cmd, payload, XOR checksum; fragmenting and reassembly at the fragment cap |
-| fields | `tlv.py` | negotiation TLVs (`tag len value`, tags from `a1`), status byte on responses |
+| fields | `tlv.py` | negotiation TLVs (`tag len value`, tags from `a1`) |
+| messages | `messages.py` | one typed layout per negotiation reply (`0801`, `0803`, `0829`, `0821`, `0827 09`, status-only); request fields typed per msgtype (`0003` MTU u16, `0005` method, `0022` time u32 / offset int32 / TZ, `0027` token) |
 | crypto | `crypto.py` | static GCM, session GCM, session CBC, P-256 device key pair |
 | module | `module.py` | the comms module: negotiation handlers, link state, authorization policy, the authorize timer, the relay to and from the MCU |
 | MCU | `mcu.py` | `McuScript`: recorded cleartext replies by message type, and pushes |
@@ -15,7 +16,7 @@ An emulated Anker Solix BLE device (the comms module and the device MCU behind i
 | devices | `devices/` | `base.py`: `EmulatedDevice`, `Profile`, `Advert`; one module per product (`a1783.py`) holding its profile and subclass; recorded frames in `devices/data/` |
 | backend | `backend.py` | `EmulatedBleakBackend(BaseBleakClient)`: GATT services from bleak's own classes, writes into the module, notifications out |
 
-Byte layouts are [construct](https://construct.readthedocs.io) definitions, one per wire structure (`FRAME_LAYOUT`, `FRAGMENT_LAYOUT`, `FIELDS_LAYOUT`, `RESPONSE_LAYOUT`, `ADVERT_LAYOUT`), so each parses and builds from one declaration; dataclasses hold values and per-product settings.
+Every wire parse and build is a [construct](https://construct.readthedocs.io) layout: the frame (`PATTERN_LAYOUT`, `COMMAND_LAYOUT` with the link flags and 12-bit msgtype, `FRAME_LAYOUT`, `FRAGMENT_LAYOUT`), the fields and messages, the key material (`GCM_KEYS_LAYOUT`, `CBC_KEYS_LAYOUT` over the shared secret), the P-256 point (`POINT_LAYOUT`) and the advert record (`ADVERT_LAYOUT`). Frames and parsed messages are construct `Container`s; plain classes hold only settings and link state, which have no wire form.
 
 The module and MCU layers are synchronous and transport-free: a write in, a list of frames out, each with a delay. Time is injected, so timers are testable without sleeping.
 

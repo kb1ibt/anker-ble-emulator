@@ -1,7 +1,15 @@
 # Copyright (c) 2026 Shawn Stricker
 """The app's side of the link, for driving the emulator in tests."""
 
-from .app_client import NEGOTIATION, SESSION, TIMESTAMP, AppClient, Reply
+from .app_client import (
+    NEGOTIATION,
+    SESSION,
+    TIMESTAMP,
+    AppClient,
+    Reply,
+    cmd_hex,
+    pattern_hex,
+)
 from .bleak_link import BleakLink, settle
 from .handshake import TZ, UTC_OFFSET, exchange, negotiate, negotiation_steps
 
@@ -15,8 +23,10 @@ __all__ = [
     "AppClient",
     "BleakLink",
     "Reply",
+    "cmd_hex",
     "exchange",
     "negotiate",
     "negotiation_steps",
+    "pattern_hex",
     "settle",
 ]

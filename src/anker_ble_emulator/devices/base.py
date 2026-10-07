@@ -14,7 +14,7 @@ from bleak.backends.scanner import AdvertisementData
 from construct import Bytes, Int8ub, Optional, Struct
 
 from anker_ble_emulator.clock import MonotonicClock
-from anker_ble_emulator.mcu import McuFrame, McuScript
+from anker_ble_emulator.mcu import McuScript, mcu_frame
 from anker_ble_emulator.module import (
     TIMER_PERIOD,
     AuthMode,
@@ -131,10 +131,12 @@ class Profile:
         }
         return McuScript(
             replies={
-                request: tuple(McuFrame(reply, frames[reply]) for reply in replies)
+                request: tuple(mcu_frame(reply, frames[reply]) for reply in replies)
                 for request, replies in self.replies.items()
             },
-            pushes={msgtype: frames[msgtype] for msgtype in self.pushes},
+            pushes={
+                msgtype: mcu_frame(msgtype, frames[msgtype]) for msgtype in self.pushes
+            },
         )
 
 

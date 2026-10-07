@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from anker_ble_emulator.clock import ManualClock
-from anker_ble_emulator.mcu import McuFrame, McuScript
+from anker_ble_emulator.mcu import McuScript, mcu_frame
 from anker_ble_emulator.module import Module, ModuleConfig
 
 
@@ -21,10 +21,10 @@ PUSH = bytes.fromhex("a10131a20101")
 
 TEST_SCRIPT = McuScript(
     replies={
-        0x100: (McuFrame(0x900, LONG_REPLY),),
-        0x057: (McuFrame(0x857, ACK_REPLY),),
+        0x100: (mcu_frame(0x900, LONG_REPLY),),
+        0x057: (mcu_frame(0x857, ACK_REPLY),),
     },
-    pushes={0x421: PUSH},
+    pushes={0x421: mcu_frame(0x421, PUSH)},
 )
 
 

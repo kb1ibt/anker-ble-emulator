@@ -15,8 +15,6 @@ if TYPE_CHECKING:
 FIELD_LAYOUT = Struct("tag" / Int8ub, "value" / Prefixed(Int8ub, GreedyBytes))
 #: Fields back to back, as many as fit.
 FIELDS_LAYOUT = GreedyRange(FIELD_LAYOUT)
-#: A response payload: the status byte, then the fields.
-RESPONSE_LAYOUT = Struct("status" / Int8ub, "fields" / FIELDS_LAYOUT)
 FIELD_HEADER_LEN = 2
 
 
@@ -54,21 +52,5 @@ def decode_fields(data: bytes) -> dict[int, bytes]:
     if len(data) - consumed < FIELD_HEADER_LEN:
         msg = f"truncated field header at {consumed}: {data.hex()}"
         raise FieldError(msg)
-    msg = f"field {data[consumed]:02x} runs past the end: {data.hex()}"
+    msg = f"the field at {consumed} runs past the end: {data.hex()}"
     raise FieldError(msg)
-
-
-def response(status: int, fields: Iterable[tuple[int, bytes]] = ()) -> bytes:
-    """Return a response payload: the status byte, then the fields.
-
-    Args:
-        status: The status byte (``00`` success).
-        fields: ``(tag, value)`` pairs.
-
-    """
-    return RESPONSE_LAYOUT.build(
-        {
-            "status": status,
-            "fields": [{"tag": tag, "value": value} for tag, value in fields],
-        },
-    )

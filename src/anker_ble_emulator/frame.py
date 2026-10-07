@@ -1,21 +1,29 @@
 # Copyright (c) 2026 Shawn Stricker
-"""The ``ff09`` frame: codec, fragmenting and reassembly."""
+"""The ``ff09`` frame: layouts, codec, fragmenting and reassembly.
+
+A frame is a construct ``Container``: ``pattern`` (``family``, ``composer``,
+``channel``), ``cmd`` (``fragmented``, ``encrypted``, ``reserved``,
+``msgtype``) and ``payload``.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from functools import reduce
 from operator import xor
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from construct import (
+    BitsInteger,
     BitStruct,
     Bytes,
     Checksum,
     ChecksumError,
     Const,
+    ConstError,
+    Container,
+    Flag,
     GreedyBytes,
     Int8ub,
-    Int16ub,
     Int16ul,
     Nibble,
     RawCopy,
@@ -25,18 +33,27 @@ from construct import (
 )
 
 
-MAGIC = b"\xff\x09"
-#: Magic (2) + length (2) + pattern (3) + cmd (2).
-HEADER_LEN = 9
-#: Header plus the trailing checksum byte.
-FRAME_OVERHEAD = HEADER_LEN + 1
+if TYPE_CHECKING:
+    #: A frame ``Container`` (see the module docstring).
+    Frame: TypeAlias = Container[Any]
 
-FLAG_FRAGMENT = 0x8000
-FLAG_ENCRYPTED = 0x4000
-RESPONSE = 0x0800
-MSGTYPE_MASK = 0x0FFF
+
+MAGIC = b"\xff\x09"
+#: Magic (2) + length (2) + pattern (3) + cmd (2) + checksum (1).
+FRAME_OVERHEAD = 10
+#: The msgtype bit that marks a response.
+RESPONSE = 0x800
 #: Fragment index and total are nibbles.
 MAX_FRAGMENTS = 0x0F
+PATTERN_FAMILY = 0x03
+#: ``pattern.composer``: the reply composer echoes the client's ``00``; frames
+#: the module composes on its own carry ``01``.
+COMPOSER_REPLY = 0x00
+COMPOSER_SEND = 0x01
+#: ``pattern.channel``: the module's dispatch key.
+CHANNEL_NEGOTIATION = 0x01
+CHANNEL_SESSION = 0x0F
+CHANNEL_APP = 0x11
 
 
 class FrameError(ValueError):
@@ -48,7 +65,22 @@ def checksum(data: bytes) -> int:
     return reduce(xor, data, 0)
 
 
-#: ``ff09 | len (u16 LE, whole frame) | pattern | cmd (u16 BE) | payload | xor``.
+#: ``03 <composer> <channel>``.
+PATTERN_LAYOUT = Struct(
+    "family" / Const(PATTERN_FAMILY, Int8ub),
+    "composer" / Int8ub,
+    "channel" / Int8ub,
+)
+
+#: Link flags in the high bits, then the 12-bit message type (``0x800`` = response).
+COMMAND_LAYOUT = BitStruct(
+    "fragmented" / Flag,
+    "encrypted" / Flag,
+    "reserved" / BitsInteger(2),
+    "msgtype" / BitsInteger(12),
+)
+
+#: ``ff09 | len (u16 LE, whole frame) | pattern | cmd | payload | xor``.
 FRAME_LAYOUT = Struct(
     "body"
     / RawCopy(
@@ -56,13 +88,16 @@ FRAME_LAYOUT = Struct(
             "magic" / Const(MAGIC),
             "length"
             / Rebuild(Int16ul, lambda this: FRAME_OVERHEAD + len(this.payload)),
-            "pattern" / Bytes(3),
-            "cmd" / Int16ub,
+            "pattern" / PATTERN_LAYOUT,
+            "cmd" / COMMAND_LAYOUT,
             "payload" / Bytes(lambda this: this.length - FRAME_OVERHEAD),
         ),
     ),
     "checksum" / Checksum(Int8ub, checksum, this.body.data),
 )
+
+#: The magic and length that open every frame.
+HEADER_LAYOUT = Struct("magic" / Const(MAGIC), "length" / Int16ul)
 
 #: A fragment's payload: ``index << 4 | total`` (index from 1), then its chunk.
 FRAGMENT_LAYOUT = Struct(
@@ -71,87 +106,94 @@ FRAGMENT_LAYOUT = Struct(
 )
 
 
-@dataclass(frozen=True)
-class Frame:
-    """One frame: pattern ``03 <composer> <channel>``, 16-bit cmd, payload."""
+def make_frame(  # noqa: PLR0913  # pattern, cmd and payload fields
+    composer: int,
+    channel: int,
+    msgtype: int,
+    payload: bytes = b"",
+    *,
+    encrypted: bool = False,
+    fragmented: bool = False,
+) -> Frame:
+    """Return a frame ``Container``.
 
-    pattern: bytes
-    cmd: int
-    payload: bytes = b""
+    Args:
+        composer: ``pattern.composer``.
+        channel: ``pattern.channel``.
+        msgtype: The 12-bit message type.
+        payload: The payload as sent (ciphertext if ``encrypted``).
+        encrypted: The ``0x40`` link flag.
+        fragmented: The ``0x80`` fragment flag.
 
-    @property
-    def msgtype(self) -> int:
-        """The 12-bit message type, link flags removed."""
-        return self.cmd & MSGTYPE_MASK
+    """
+    return Container(
+        pattern=Container(family=PATTERN_FAMILY, composer=composer, channel=channel),
+        cmd=Container(
+            fragmented=fragmented,
+            encrypted=encrypted,
+            reserved=0,
+            msgtype=msgtype,
+        ),
+        payload=payload,
+    )
 
-    @property
-    def encrypted(self) -> bool:
-        """Whether the ``0x40`` link flag is set."""
-        return bool(self.cmd & FLAG_ENCRYPTED)
 
-    @property
-    def fragmented(self) -> bool:
-        """Whether the ``0x80`` fragment flag is set."""
-        return bool(self.cmd & FLAG_FRAGMENT)
+def reply_frame(request: Frame, payload: bytes) -> Frame:
+    """Return the reply to ``request``: its pattern and flags, msgtype ``| 0x800``."""
+    return make_frame(
+        request.pattern.composer,
+        request.pattern.channel,
+        request.cmd.msgtype | RESPONSE,
+        payload,
+        encrypted=request.cmd.encrypted,
+    )
 
-    @property
-    def channel(self) -> int:
-        """The module's dispatch channel, the pattern's last byte."""
-        return self.pattern[2]
 
-    def encode(self) -> bytes:
-        """Return the frame as wire bytes, length and checksum included."""
-        return FRAME_LAYOUT.build(
-            {
-                "body": {
-                    "value": {
-                        "pattern": self.pattern,
-                        "cmd": self.cmd,
-                        "payload": self.payload,
-                    },
-                },
-                "checksum": None,
-            },
-        )
+def encode(frame: Frame) -> bytes:
+    """Return the frame as wire bytes, length and checksum included."""
+    return FRAME_LAYOUT.build({"body": {"value": frame}, "checksum": None})
 
-    @classmethod
-    def decode(cls, data: bytes) -> Frame:
-        """Parse wire bytes into a frame.
 
-        Args:
-            data: One whole frame.
+def decode(data: bytes) -> Frame:
+    """Parse wire bytes into a frame ``Container``.
 
-        Returns:
-            The parsed ``Frame``.
+    Raises:
+        FrameError: If the magic, length or checksum is wrong.
 
-        Raises:
-            FrameError: If the magic, length or checksum is wrong.
-
-        """
-        if len(data) < FRAME_OVERHEAD or data[:2] != MAGIC:
-            msg = f"not an ff09 frame: {data.hex()}"
-            raise FrameError(msg)
-        length = Int16ul.parse(data[2:4])
-        if length != len(data):
-            msg = f"length field {length} != {len(data)} bytes: {data.hex()}"
-            raise FrameError(msg)
-        try:
-            body = FRAME_LAYOUT.parse(data).body.value
-        except ChecksumError as error:
-            msg = f"bad checksum: {data.hex()}"
-            raise FrameError(msg) from error
-        return cls(
-            pattern=bytes(body.pattern),
-            cmd=int(body.cmd),
-            payload=bytes(body.payload),
-        )
+    """
+    if len(data) < FRAME_OVERHEAD:
+        msg = f"not an ff09 frame: {data.hex()}"
+        raise FrameError(msg)
+    try:
+        header = HEADER_LAYOUT.parse(data)
+    except ConstError as error:
+        msg = f"not an ff09 frame: {data.hex()}"
+        raise FrameError(msg) from error
+    if header.length != len(data):
+        msg = f"length field {header.length} != {len(data)} bytes: {data.hex()}"
+        raise FrameError(msg)
+    try:
+        body = FRAME_LAYOUT.parse(data).body.value
+    except ChecksumError as error:
+        msg = f"bad checksum: {data.hex()}"
+        raise FrameError(msg) from error
+    except ConstError as error:
+        msg = f"not an ff09 frame: {data.hex()}"
+        raise FrameError(msg) from error
+    return make_frame(
+        body.pattern.composer,
+        body.pattern.channel,
+        body.cmd.msgtype,
+        body.payload,
+        encrypted=body.cmd.encrypted,
+        fragmented=body.cmd.fragmented,
+    )
 
 
 def fragment(frame: Frame, cap: int) -> list[Frame]:
     """Split a frame longer than ``cap`` bytes into fragment frames.
 
-    Every fragment but the last fills ``cap``; each payload starts with
-    ``index << 4 | total``, index counting from 1.
+    Every fragment but the last fills ``cap``.
 
     Args:
         frame: The whole frame.
@@ -164,22 +206,25 @@ def fragment(frame: Frame, cap: int) -> list[Frame]:
         FrameError: If the frame needs more than 15 fragments.
 
     """
-    if FRAME_OVERHEAD + len(frame.payload) <= cap:
+    payload = frame.payload
+    if FRAME_OVERHEAD + len(payload) <= cap:
         return [frame]
     room = cap - FRAME_OVERHEAD - 1
-    chunks = [frame.payload[i : i + room] for i in range(0, len(frame.payload), room)]
+    chunks = [payload[i : i + room] for i in range(0, len(payload), room)]
     total = len(chunks)
     if total > MAX_FRAGMENTS:
-        msg = f"{len(frame.payload)} B needs {total} fragments at cap {cap}"
+        msg = f"{len(payload)} B needs {total} fragments at cap {cap}"
         raise FrameError(msg)
-    cmd = frame.cmd | FLAG_FRAGMENT
     return [
-        Frame(
-            frame.pattern,
-            cmd,
+        make_frame(
+            frame.pattern.composer,
+            frame.pattern.channel,
+            frame.cmd.msgtype,
             FRAGMENT_LAYOUT.build(
                 {"info": {"index": index, "total": total}, "chunk": chunk}
             ),
+            encrypted=frame.cmd.encrypted,
+            fragmented=True,
         )
         for index, chunk in enumerate(chunks, start=1)
     ]
@@ -207,13 +252,13 @@ class Reassembler:
             FrameError: If a fragment arrives out of order or from another run.
 
         """
-        if not frame.fragmented:
+        if not frame.cmd.fragmented:
             return frame
         if not frame.payload:
             msg = "fragment without an index byte"
             raise FrameError(msg)
         part = FRAGMENT_LAYOUT.parse(frame.payload)
-        index, total = int(part.info.index), int(part.info.total)
+        index, total = part.info.index, part.info.total
         if index == 1:
             self._head, self._parts = frame, []
         head = self._head
@@ -221,9 +266,15 @@ class Reassembler:
             self._head, self._parts = None, []
             msg = f"fragment {index}/{total} out of sequence"
             raise FrameError(msg)
-        self._parts.append(bytes(part.chunk))
+        self._parts.append(part.chunk)
         if index < total:
             return None
-        whole = Frame(head.pattern, head.cmd & ~FLAG_FRAGMENT, b"".join(self._parts))
+        payload = b"".join(self._parts)
         self._head, self._parts = None, []
-        return whole
+        return make_frame(
+            head.pattern.composer,
+            head.pattern.channel,
+            head.cmd.msgtype,
+            payload,
+            encrypted=head.cmd.encrypted,
+        )

@@ -22,7 +22,16 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from construct import Const, ConstructError, Int32ul, Struct
+from construct import (
+    Bytes,
+    Const,
+    ConstructError,
+    GreedyBytes,
+    Int8ub,
+    Int32ul,
+    Peek,
+    Struct,
+)
 
 from anker_ble_emulator.tlv import FIELD_HEADER_LEN, FIELDS_LAYOUT, encode_fields
 
@@ -34,6 +43,9 @@ FIXED_EPOCH_MS = b"1790812800000"
 #: The typed trailer ``fe 05 03 <u32 LE unix time>``.
 TRAILER_TAG = 0xFE
 TRAILER_VALUE = Struct("type" / Const(b"\x03"), "time" / Int32ul)
+#: A reply payload (status byte, then fields) and a push payload (fields only).
+STATUS_AND_BODY = Struct("status" / Bytes(1), "body" / GreedyBytes)
+BODY_ONLY = Struct("status" / Bytes(0), "body" / GreedyBytes)
 FIXED_UNIX_TIME = 1_790_812_800
 #: Printable runs this long are checked against the allowlist.
 SUSPECT_RUN = re.compile(rb"[A-Za-z0-9_]{6,}")
@@ -99,8 +111,10 @@ def fix_trailer(data: bytes) -> bytes:
 
     Only a payload that walks cleanly as fields to its end is changed.
     """
-    status = data[:1] if data and data[0] < FIRST_TAG else b""
-    body = data[len(status) :]
+    first = Peek(Int8ub).parse(data)
+    layout = STATUS_AND_BODY if first is not None and first < FIRST_TAG else BODY_ONLY
+    parsed = layout.parse(data)
+    status, body = bytes(parsed.status), bytes(parsed.body)
     fields = list(FIELDS_LAYOUT.parse(body))
     walked = sum(FIELD_HEADER_LEN + len(item.value) for item in fields)
     if walked != len(body) or any(item.tag < FIRST_TAG for item in fields):

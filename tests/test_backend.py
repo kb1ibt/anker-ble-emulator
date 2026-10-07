@@ -17,7 +17,14 @@ from anker_ble_emulator import (
     EmulatedBleakBackend,
     ManualClock,
 )
-from tests.fixtures.client import SESSION, AppClient, BleakLink, settle
+from tests.fixtures.client import (
+    SESSION,
+    AppClient,
+    BleakLink,
+    cmd_hex,
+    pattern_hex,
+    settle,
+)
 
 
 TOKEN = b"owner-token"
@@ -65,7 +72,7 @@ async def test_new_owner_is_granted_by_the_button_then_streams() -> None:
         await settle()
 
         assert replies[0x827].status == 0x09
-        assert link.replies[-1].frame.pattern.hex() == "030101"
+        assert pattern_hex(link.replies[-1].frame) == "030101"
         assert link.replies[-1].status == 0
         assert device.module.authorized
 
@@ -82,10 +89,10 @@ async def test_status_request_draws_the_recorded_status_and_telemetry() -> None:
 
     status, telemetry = replies
     script = device.module.mcu
-    assert status.frame.cmd == 0x4900
-    assert status.plaintext == script.respond(0x100)[0].cleartext
-    assert telemetry.frame.cmd == 0x4421
-    assert telemetry.plaintext == script.respond(0x100)[1].cleartext
+    assert cmd_hex(status.frame) == "4900"
+    assert status.plaintext == script.respond(0x100)[0].payload
+    assert cmd_hex(telemetry.frame) == "4421"
+    assert telemetry.plaintext == script.respond(0x100)[1].payload
     assert len(link.raw[-4:]) == 4
     assert all(len(data) <= 253 for data in link.raw)
 
@@ -93,11 +100,11 @@ async def test_status_request_draws_the_recorded_status_and_telemetry() -> None:
 @pytest.mark.parametrize(
     ("request_type", "reply_types"),
     [
-        pytest.param(0x057, [0x4857], id="realtime"),
-        pytest.param(0x103, [0x4903, 0x4421], id="system setter"),
+        pytest.param(0x057, ["4857"], id="realtime"),
+        pytest.param(0x103, ["4903", "4421"], id="system setter"),
     ],
 )
-async def test_recorded_acks(request_type: int, reply_types: list[int]) -> None:
+async def test_recorded_acks(request_type: int, reply_types: list[str]) -> None:
     device = A1783()
     device.module.enrolled.add(TOKEN)
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
@@ -107,7 +114,7 @@ async def test_recorded_acks(request_type: int, reply_types: list[int]) -> None:
 
         replies = await link.send(request_type, [(0xA1, b"\x21")], SESSION)
 
-    assert [reply.frame.cmd for reply in replies] == reply_types
+    assert [cmd_hex(reply.frame) for reply in replies] == reply_types
     assert replies[0].plaintext.hex() == "00a10131"
 
 
@@ -122,8 +129,8 @@ async def test_device_push_reaches_the_client() -> None:
         device.push(0x490)
         await settle()
 
-    assert link.replies[-1].frame.cmd == 0x4490
-    assert link.replies[-1].plaintext == device.module.mcu.push(0x490).cleartext
+    assert cmd_hex(link.replies[-1].frame) == "4490"
+    assert link.replies[-1].plaintext == device.module.mcu.push(0x490).payload
 
 
 async def test_reconnect_with_an_enrolled_token_needs_no_button() -> None:

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from anker_ble_emulator.backend import COMMAND_UUID, TELEMETRY_UUID
 
+from .app_client import NEGOTIATION
 from .handshake import negotiation_steps
 
 
@@ -36,15 +37,11 @@ class BleakLink:
         self,
         msgtype: int,
         fields: list[tuple[int, bytes]],
-        pattern: bytes | None = None,
+        channel: int = NEGOTIATION,
     ) -> list[Reply]:
         """Write one request; return the replies it drew."""
         before = len(self.replies)
-        request = (
-            self.app.request(msgtype, fields)
-            if pattern is None
-            else self.app.request(msgtype, fields, pattern)
-        )
+        request = self.app.request(msgtype, fields, channel)
         await self.client.write_gatt_char(COMMAND_UUID, request, response=False)
         await settle()
         return self.replies[before:]
@@ -54,7 +51,7 @@ class BleakLink:
         replies: dict[int, Reply] = {}
         for msgtype, fields in negotiation_steps(self.app, token):
             for reply in await self.send(msgtype, fields):
-                replies[reply.frame.msgtype] = reply
+                replies[reply.frame.cmd.msgtype] = reply
             if msgtype == 0x021:
                 self.app.install(replies[0x821].fields[0xA1])
         return replies

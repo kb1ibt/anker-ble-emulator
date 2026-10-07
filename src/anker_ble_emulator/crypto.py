@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from construct import Bytes, BytesInteger, Const, ConstructError, Struct
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers import Cipher as _AesCipher
@@ -18,8 +19,19 @@ STATIC_NONCE = bytes.fromhex("6ba3e3f2f3a60f2971ce5d1f")
 #: The session GCM uses the same AAD.
 AAD = bytes.fromhex("3322110077665544bbaa9988ffeeddcc")
 
-POINT_LEN = 64
 COORDINATE_LEN = 32
+
+#: A P-256 public point as the link carries it: ``X || Y``, big-endian, no ``04``.
+POINT_LAYOUT = Struct(
+    "x" / BytesInteger(COORDINATE_LEN),
+    "y" / BytesInteger(COORDINATE_LEN),
+)
+#: The same point in SEC1 uncompressed form.
+UNCOMPRESSED_POINT_LAYOUT = Struct("prefix" / Const(b"\x04"), "point" / Bytes(64))
+#: The session's GCM key material in the 32-byte shared secret.
+GCM_KEYS_LAYOUT = Struct("key" / Bytes(16), "nonce" / Bytes(12), Bytes(4))
+#: The session's CBC key material in the 32-byte shared secret.
+CBC_KEYS_LAYOUT = Struct("key" / Bytes(16), "iv" / Bytes(16))
 
 
 class Cipher(Protocol):
@@ -88,12 +100,14 @@ STATIC_GCM = GcmCipher(STATIC_KEY, STATIC_NONCE)
 
 def session_gcm(shared_secret: bytes) -> GcmCipher:
     """Return the session GCM: key ``ss[:16]``, nonce ``ss[16:28]``."""
-    return GcmCipher(shared_secret[:16], shared_secret[16:28])
+    keys = GCM_KEYS_LAYOUT.parse(shared_secret)
+    return GcmCipher(keys.key, keys.nonce)
 
 
 def session_cbc(shared_secret: bytes) -> CbcCipher:
     """Return the session CBC: key ``ss[:16]``, IV ``ss[16:32]``."""
-    return CbcCipher(shared_secret[:16], shared_secret[16:32])
+    keys = CBC_KEYS_LAYOUT.parse(shared_secret)
+    return CbcCipher(keys.key, keys.iv)
 
 
 class DeviceKeyPair:
@@ -107,9 +121,7 @@ class DeviceKeyPair:
     def public_point(self) -> bytes:
         """The public point as ``X || Y``, 64 bytes, no ``04`` prefix."""
         numbers = self._private.public_key().public_numbers()
-        return numbers.x.to_bytes(COORDINATE_LEN, "big") + numbers.y.to_bytes(
-            COORDINATE_LEN, "big"
-        )
+        return POINT_LAYOUT.build({"x": numbers.x, "y": numbers.y})
 
     def shared_secret(self, client_point: bytes) -> bytes:
         """Return the raw ECDH X coordinate with the client's ``X || Y`` point.
@@ -121,10 +133,10 @@ class DeviceKeyPair:
             ValueError: If the point isn't 64 bytes or isn't on the curve.
 
         """
-        if len(client_point) != POINT_LEN:
-            msg = f"client point is {len(client_point)} bytes, not {POINT_LEN}"
-            raise ValueError(msg)
-        peer = ec.EllipticCurvePublicKey.from_encoded_point(
-            ec.SECP256R1(), b"\x04" + client_point
-        )
+        try:
+            encoded = UNCOMPRESSED_POINT_LAYOUT.build({"point": client_point})
+        except ConstructError as error:
+            msg = f"client point is {len(client_point)} bytes, not 64"
+            raise ValueError(msg) from error
+        peer = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), encoded)
         return self._private.exchange(ec.ECDH(), peer)

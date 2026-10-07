@@ -143,16 +143,20 @@ def test_ble_device_carries_the_device() -> None:
 def test_recorded_replies_and_pushes_are_scripted() -> None:
     script = A1783().module.mcu
 
-    assert [frame.msgtype for frame in script.respond(0x100)] == [0x900, 0x421]
-    assert [frame.msgtype for frame in script.respond(0x057)] == [0x857]
-    assert [frame.msgtype for frame in script.respond(0x103)] == [0x903, 0x421]
-    assert script.respond(0x057)[0].cleartext.hex() == "00a10131"
-    assert script.push(0x490).cleartext.endswith(b"charging_pps_series_c_0009\x00")
+    assert [frame.cmd.msgtype for frame in script.respond(0x100)] == [0x900, 0x421]
+    assert [frame.cmd.msgtype for frame in script.respond(0x057)] == [0x857]
+    assert [frame.cmd.msgtype for frame in script.respond(0x103)] == [0x903, 0x421]
+    assert script.respond(0x057)[0].payload.hex() == "00a10131"
+    assert script.push(0x490).payload.endswith(b"charging_pps_series_c_0009\x00")
+    assert all(
+        frame.pattern.channel == 0x0F and not frame.cmd.encrypted
+        for frame in script.respond(0x100)
+    )
 
 
 def test_recorded_identity_fields_are_the_synthetic_ones() -> None:
     script = A1783().module.mcu
-    status = script.respond(0x100)[0].cleartext
+    status = script.respond(0x100)[0].payload
 
     assert b"APCDKKE0000000001" in status
     assert b"APCDKJM0000000002" in status

@@ -3,14 +3,16 @@
 
 import pytest
 
-from anker_ble_emulator.frame import Frame, fragment
+from anker_ble_emulator.frame import decode, encode, fragment, make_frame
 from anker_ble_emulator.module import AuthMode
 from tests.fixtures.client import (
     SESSION,
     TIMESTAMP,
     AppClient,
+    cmd_hex,
     exchange,
     negotiate,
+    pattern_hex,
 )
 from tests.fixtures.module import (
     ACK_REPLY,
@@ -76,7 +78,7 @@ def test_encrypted_outer_authorizes_an_enrolled_token() -> None:
 
     assert [replies[op].status for op in (0x801, 0x803, 0x829, 0x805, 0x821)] == [0] * 5
     assert [replies[op].status for op in (0x822, 0x827)] == [0, 0]
-    assert all(reply.frame.encrypted for reply in replies.values())
+    assert all(reply.frame.cmd.encrypted for reply in replies.values())
     assert rig.module.authorized
 
 
@@ -96,7 +98,7 @@ def test_key_exchange_reply_is_under_the_static_key() -> None:
     replies = exchange(rig.module, client, 0x021, [(0xA1, client.public_point)])
 
     assert client.session is None
-    assert replies[0].frame.cmd == 0x4821
+    assert cmd_hex(replies[0].frame) == "4821"
     assert len(replies[0].fields[0xA1]) == 64
 
 
@@ -106,14 +108,14 @@ def test_mcu_replies_are_relayed_encrypted_and_fragmented() -> None:
     negotiate(rig.module, client, ENROLLED_TOKEN)
 
     out = rig.module.write(client.request(0x100, [(0xA1, b"\x21")], SESSION))
-    frames = [Frame.decode(data) for data in out.frames]
+    frames = [decode(data) for data in out.frames]
     replies = [reply for data in out.frames if (reply := client.open(data))]
 
-    assert {frame.pattern.hex() for frame in frames} == {"03010f"}
+    assert {pattern_hex(frame) for frame in frames} == {"03010f"}
     assert len(frames) > 1
-    assert all(frame.cmd == 0xC900 for frame in frames)
+    assert all(cmd_hex(frame) == "c900" for frame in frames)
     assert len(replies) == 1
-    assert replies[0].frame.cmd == 0x4900
+    assert cmd_hex(replies[0].frame) == "4900"
     assert replies[0].plaintext == LONG_REPLY
 
 
@@ -126,7 +128,7 @@ def test_unfragmented_mcu_reply() -> None:
 
     reply = client.open(out.frames[0])
     assert reply is not None
-    assert reply.frame.cmd == 0x4857
+    assert cmd_hex(reply.frame) == "4857"
     assert reply.plaintext == ACK_REPLY
 
 
@@ -151,7 +153,7 @@ def test_push_goes_out_once_authorized() -> None:
     assert before.frames == []
     reply = client.open(after.frames[0])
     assert reply is not None
-    assert reply.frame.cmd == 0x4421
+    assert cmd_hex(reply.frame) == "4421"
     assert reply.plaintext == PUSH
 
 
@@ -186,8 +188,8 @@ def test_button_press_grants_and_enrolls_the_token() -> None:
 
     grant = client.open(out.frames[0])
     assert grant is not None
-    assert grant.frame.pattern.hex() == "030101"
-    assert grant.frame.cmd == 0x4827
+    assert pattern_hex(grant.frame) == "030101"
+    assert cmd_hex(grant.frame) == "4827"
     assert grant.status == 0
     assert rig.module.authorized
     assert b"new-token" in rig.module.enrolled
@@ -291,9 +293,9 @@ def test_plain_outer_authorizes_at_the_key_exchange() -> None:
 
     replies = negotiate(rig.module, client, ENROLLED_TOKEN)
 
-    assert not replies[0x801].frame.encrypted
-    assert not replies[0x821].frame.encrypted
-    assert replies[0x822].frame.encrypted
+    assert not replies[0x801].frame.cmd.encrypted
+    assert not replies[0x821].frame.cmd.encrypted
+    assert replies[0x822].frame.cmd.encrypted
     assert len(replies[0x822].frame.payload) % 16 == 0
     assert rig.module.authorized
 
@@ -382,15 +384,13 @@ def test_module_local_session_opcode_gets_no_reply() -> None:
     [
         pytest.param(b"\x00\x01", id="not a frame"),
         pytest.param(
-            Frame(bytes.fromhex("030001"), 0x4001, bytes(20)).encode(), id="bad tag"
+            encode(make_frame(0x00, 0x01, 0x001, bytes(20), encrypted=True)),
+            id="bad tag",
         ),
         pytest.param(
-            Frame(bytes.fromhex("030001"), 0x0001, b"\xa1\x09").encode(),
-            id="bad fields",
+            encode(make_frame(0x00, 0x01, 0x001, b"\xa1\x09")), id="bad fields"
         ),
-        pytest.param(
-            Frame(bytes.fromhex("030013"), 0x0022, b"").encode(), id="other channel"
-        ),
+        pytest.param(encode(make_frame(0x00, 0x13, 0x022)), id="other channel"),
     ],
 )
 def test_bad_writes_are_dropped(data: bytes) -> None:
@@ -406,7 +406,9 @@ def test_undecryptable_session_request_is_dropped() -> None:
     rig = build_module()
     negotiate(rig.module, AppClient(), ENROLLED_TOKEN)
 
-    out = rig.module.write(Frame(SESSION, 0x4100, bytes(20)).encode())
+    out = rig.module.write(
+        encode(make_frame(0x00, SESSION, 0x100, bytes(20), encrypted=True))
+    )
 
     assert out.frames == []
 
@@ -467,16 +469,16 @@ def test_fragmented_request_is_answered_once_complete() -> None:
     rig = build_module()
     client = AppClient()
     exchange(rig.module, client, 0x005, [(0xA5, b"\x44")])
-    whole = Frame.decode(client.request(0x021, [(0xA1, client.public_point)]))
+    whole = decode(client.request(0x021, [(0xA1, client.public_point)]))
     first, second = fragment(whole, 60)
 
-    pending = rig.module.write(first.encode())
-    done = rig.module.write(second.encode())
+    pending = rig.module.write(encode(first))
+    done = rig.module.write(encode(second))
 
     assert pending.frames == []
     reply = client.open(done.frames[0])
     assert reply is not None
-    assert reply.frame.cmd == 0x4821
+    assert cmd_hex(reply.frame) == "4821"
 
 
 def test_cleartext_clock_on_the_ecdh_path_fails() -> None:
@@ -494,7 +496,7 @@ def test_cleartext_session_request_is_relayed() -> None:
     client = AppClient()
     negotiate(rig.module, client, ENROLLED_TOKEN)
 
-    out = rig.module.write(Frame(SESSION, 0x0057, b"\xa1\x01\x21").encode())
+    out = rig.module.write(encode(make_frame(0x00, SESSION, 0x057, b"\xa1\x01\x21")))
 
     reply = client.open(out.frames[0])
     assert reply is not None

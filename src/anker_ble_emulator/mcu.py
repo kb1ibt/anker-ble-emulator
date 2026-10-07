@@ -6,17 +6,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from .frame import CHANNEL_SESSION, COMPOSER_SEND, make_frame
+
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from .frame import Frame
 
-@dataclass(frozen=True)
-class McuFrame:
-    """One frame the MCU sends: its msgtype and cleartext payload."""
 
-    msgtype: int
-    cleartext: bytes
+def mcu_frame(msgtype: int, cleartext: bytes) -> Frame:
+    """Return a frame as the MCU hands it to the module: cleartext, on ``03010f``."""
+    return make_frame(COMPOSER_SEND, CHANNEL_SESSION, msgtype, cleartext)
 
 
 @dataclass(frozen=True)
@@ -24,15 +25,15 @@ class McuScript:
     """What the MCU answers, by request msgtype, and what it can push.
 
     Attributes:
-        replies: Frames sent in order for a request msgtype (flags removed).
-        pushes: Cleartext by push msgtype, sent on demand.
+        replies: Cleartext frames sent in order for a request msgtype.
+        pushes: Cleartext frames by push msgtype, sent on demand.
 
     """
 
-    replies: Mapping[int, Sequence[McuFrame]] = field(default_factory=dict)
-    pushes: Mapping[int, bytes] = field(default_factory=dict)
+    replies: Mapping[int, Sequence[Frame]] = field(default_factory=dict)
+    pushes: Mapping[int, Frame] = field(default_factory=dict)
 
-    def respond(self, msgtype: int) -> list[McuFrame]:
+    def respond(self, msgtype: int) -> list[Frame]:
         """Return the frames answering a request; none for an unscripted one.
 
         Args:
@@ -41,11 +42,11 @@ class McuScript:
         """
         return list(self.replies.get(msgtype, ()))
 
-    def push(self, msgtype: int) -> McuFrame:
+    def push(self, msgtype: int) -> Frame:
         """Return the scripted push of ``msgtype``.
 
         Raises:
             KeyError: If the script has no such push.
 
         """
-        return McuFrame(msgtype, self.pushes[msgtype])
+        return self.pushes[msgtype]

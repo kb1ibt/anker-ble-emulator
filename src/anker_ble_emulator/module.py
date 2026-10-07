@@ -11,8 +11,30 @@ from typing import TYPE_CHECKING
 from cryptography.exceptions import InvalidTag
 
 from .crypto import STATIC_GCM, DeviceKeyPair, session_cbc, session_gcm
-from .frame import FLAG_ENCRYPTED, RESPONSE, Frame, FrameError, Reassembler, fragment
-from .tlv import FieldError, decode_fields, response
+from .frame import (
+    CHANNEL_APP,
+    CHANNEL_NEGOTIATION,
+    CHANNEL_SESSION,
+    COMPOSER_SEND,
+    RESPONSE,
+    FrameError,
+    Reassembler,
+    decode,
+    encode,
+    fragment,
+    make_frame,
+    reply_frame,
+)
+from .messages import (
+    AUTH_PENDING_REPLY,
+    CAPABILITY_REPLY,
+    CONNECT_REPLY,
+    DEVICE_INFO_REPLY,
+    PUBLIC_KEY_REPLY,
+    STATUS_REPLY,
+    parse_request,
+)
+from .tlv import FieldError
 
 
 if TYPE_CHECKING:
@@ -20,18 +42,16 @@ if TYPE_CHECKING:
 
     from .clock import Clock
     from .crypto import Cipher
-    from .mcu import McuFrame, McuScript
+    from .frame import Frame
+    from .mcu import McuScript
+    from .messages import Fields
 
 _LOGGER = logging.getLogger(__name__)
 
-CHANNEL_NEGOTIATION = 0x01
-CHANNEL_SESSION = 0x0F
-CHANNEL_APP = 0x11
-#: Pattern of frames the module composes on its own: the grant, MCU relays.
-PATTERN_GRANT = bytes.fromhex("030101")
-PATTERN_RELAY = bytes.fromhex("03010f")
 #: App-channel opcodes below this are the module's own; the rest go to the MCU.
 MCU_OPCODE_MIN = 0x40
+#: The arm-grant ``4827``.
+MSGTYPE_GRANT = RESPONSE | 0x027
 
 STATUS_OK = 0x00
 STATUS_FAIL = 0x01
@@ -57,8 +77,6 @@ UNAUTHORIZED_LIMIT = 30.0
 CONFIRMATION_GRACE = 5.0
 #: The authorize timer's period; drops fire on its ticks.
 TIMER_PERIOD = 10.0
-
-TAG_A1, TAG_A2, TAG_A3, TAG_A4, TAG_A5 = 0xA1, 0xA2, 0xA3, 0xA4, 0xA5
 
 
 class AuthMode(IntEnum):
@@ -133,18 +151,23 @@ class _Link:
 
 @dataclass(frozen=True)
 class _Request:
-    """One opened negotiation request on a link."""
+    """One opened negotiation request on a link: its frame and typed fields."""
 
     link: _Link
     frame: Frame
-    fields: dict[int, bytes]
+    fields: Fields
 
 
 @dataclass(frozen=True)
 class _Reply:
-    status: int
-    fields: tuple[tuple[int, bytes], ...] = ()
+    """A reply payload built from its message layout."""
+
+    payload: bytes
     disconnect: bool = False
+
+
+def _status(status: int, *, disconnect: bool = False) -> _Reply:
+    return _Reply(STATUS_REPLY.build({"status": status}), disconnect)
 
 
 class Module:
@@ -209,15 +232,15 @@ class Module:
             raise RuntimeError(msg)
         link = self._link
         try:
-            whole = link.reassembler.feed(Frame.decode(data))
+            whole = link.reassembler.feed(decode(data))
         except FrameError:
             _LOGGER.warning("Dropped malformed write %s", data.hex())
             return Output()
         if whole is None:
             return Output()
-        if whole.channel == CHANNEL_NEGOTIATION:
+        if whole.pattern.channel == CHANNEL_NEGOTIATION:
             return self._negotiate(link, whole)
-        if whole.channel in {CHANNEL_SESSION, CHANNEL_APP}:
+        if whole.pattern.channel in {CHANNEL_SESSION, CHANNEL_APP}:
             return self._session(link, whole)
         return Output()
 
@@ -234,10 +257,12 @@ class Module:
         self.enrolled.add(link.pending_token)
         link.pending_token = None
         link.authorized = True
-        grant = Frame(
-            PATTERN_GRANT,
-            FLAG_ENCRYPTED | RESPONSE | 0x027,
-            link.session.encrypt(response(STATUS_OK)),
+        grant = make_frame(
+            COMPOSER_SEND,
+            CHANNEL_NEGOTIATION,
+            MSGTYPE_GRANT,
+            link.session.encrypt(STATUS_REPLY.build({"status": STATUS_OK})),
+            encrypted=True,
         )
         return Output(self._encode(grant))
 
@@ -265,33 +290,31 @@ class Module:
         return Output(disconnect=self.clock.now() >= limit)
 
     def _encode(self, frame: Frame) -> list[bytes]:
-        return [part.encode() for part in fragment(frame, self.config.fragment_cap)]
+        return [encode(part) for part in fragment(frame, self.config.fragment_cap)]
 
     def _negotiate(self, link: _Link, frame: Frame) -> Output:
         cipher: Cipher | None = None
         plaintext = frame.payload
-        if frame.encrypted:
+        if frame.cmd.encrypted:
             cipher = link.session or STATIC_GCM
             try:
                 plaintext = cipher.decrypt(frame.payload)
             except (InvalidTag, ValueError):
-                _LOGGER.warning("Dropped undecryptable %04x", frame.cmd)
+                _LOGGER.warning("Dropped undecryptable %03x", frame.cmd.msgtype)
                 return Output()
         try:
-            request = _Request(link, frame, decode_fields(plaintext))
+            fields = parse_request(frame.cmd.msgtype, plaintext)
         except FieldError:
-            _LOGGER.warning("Dropped %04x with malformed fields", frame.cmd)
+            _LOGGER.warning("Dropped %03x with malformed fields", frame.cmd.msgtype)
             return Output()
-        result = self._dispatch(request)
+        result = self._dispatch(_Request(link, frame, fields))
         if isinstance(result, Output):
             return result
-        payload = response(result.status, result.fields)
-        reply = Frame(
-            frame.pattern,
-            frame.cmd | RESPONSE,
-            cipher.encrypt(payload) if cipher is not None else payload,
+        payload = cipher.encrypt(result.payload) if cipher else result.payload
+        return Output(
+            self._encode(reply_frame(frame, payload)),
+            disconnect=result.disconnect,
         )
-        return Output(self._encode(reply), disconnect=result.disconnect)
 
     def _dispatch(self, request: _Request) -> _Reply | Output:
         """Run the module's handler for a negotiation opcode; none for others."""
@@ -304,11 +327,11 @@ class Module:
             0x022: self._clock,
             0x027: self._authenticate,
         }
-        handler = handlers.get(request.frame.msgtype)
+        handler = handlers.get(request.frame.cmd.msgtype)
         return Output() if handler is None else handler(request)
 
     def _connect(self, request: _Request) -> _Reply | Output:
-        encrypted = request.frame.encrypted
+        encrypted = request.frame.cmd.encrypted
         if (
             not encrypted
             and self.config.enforce
@@ -317,123 +340,144 @@ class Module:
             return Output(disconnect=True)
         request.link.gcm_connect = encrypted
         request.link.capability_mode = CapabilityMode.NONE
-        return _Reply(STATUS_OK, ((TAG_A1, bytes([CONNECT_TYPE])),))
+        return _Reply(
+            CONNECT_REPLY.build({"status": STATUS_OK, "connect_type": CONNECT_TYPE})
+        )
 
     def _capabilities(self, request: _Request) -> _Reply:
         fields = request.fields
-        if TAG_A3 not in fields or TAG_A4 not in fields:
-            return _Reply(STATUS_PARAMETER)
-        mtu = min(int.from_bytes(fields[TAG_A4], "little"), self.config.fragment_cap)
-        reply = [
-            (TAG_A1, bytes([BASE_CAPABILITY])),
-            (TAG_A2, mtu.to_bytes(2, "little")),
-            (TAG_A3, bytes([self.config.advanced_capability])),
-            (TAG_A4, bytes([STAGE2_A4])),
-        ]
-        if self.config.reports_auth_method:
-            reply.append((TAG_A5, bytes([self.config.auth_mode])))
+        if fields.app_encrypt is None or fields.mtu is None:
+            return _status(STATUS_PARAMETER)
         request.link.capability_mode = CapabilityMode.LEGACY
-        return _Reply(STATUS_OK, tuple(reply))
+        return _Reply(
+            CAPABILITY_REPLY.build(
+                {
+                    "status": STATUS_OK,
+                    "base_capability": BASE_CAPABILITY,
+                    "mtu": min(fields.mtu, self.config.fragment_cap),
+                    "advanced_capability": self.config.advanced_capability,
+                    "stage2_a4": STAGE2_A4,
+                    "auth_method": (
+                        self.config.auth_mode
+                        if self.config.reports_auth_method
+                        else None
+                    ),
+                },
+            ),
+        )
 
     def _device_info(self) -> _Reply:
-        reply = [
-            (TAG_A1, bytes([DEVICE_INFO_TYPE])),
-            (TAG_A2, self.config.chip),
-            (TAG_A3, self.config.lib_version),
-        ]
-        if self.config.serial is not None:
-            reply.append((TAG_A4, self.config.serial))
-        reply.append((TAG_A5, self.config.mac))
-        return _Reply(STATUS_OK, tuple(reply))
+        return _Reply(
+            DEVICE_INFO_REPLY.build(
+                {
+                    "status": STATUS_OK,
+                    "info_type": DEVICE_INFO_TYPE,
+                    "chip": self.config.chip,
+                    "lib_version": self.config.lib_version,
+                    "serial": self.config.serial,
+                    "mac": self.config.mac,
+                },
+            ),
+        )
 
     def _set_capabilities(self, request: _Request) -> _Reply:
         link = request.link
-        method = request.fields.get(TAG_A5, b"\x00")[0]
+        method = request.fields.method or 0
         if method == 0:
             link.capability_mode = CapabilityMode.NONE
-            return _Reply(STATUS_OK)
+            return _status(STATUS_OK)
         if not method & METHOD_ANY:
-            return _Reply(STATUS_FAIL)
+            return _status(STATUS_FAIL)
         if (
             self.config.enforce
             and self.config.auth_mode != AuthMode.OPEN
             and not method & METHOD_ECDH
         ):
-            return _Reply(STATUS_FAIL)
+            return _status(STATUS_FAIL)
         link.capability_mode = (
             CapabilityMode.ECDH if method & METHOD_ECDH else CapabilityMode.LEGACY
         )
-        return _Reply(STATUS_OK)
+        return _status(STATUS_OK)
 
     def _public_key(self, request: _Request) -> _Reply:
         link = request.link
         if link.capability_mode != CapabilityMode.ECDH:
-            return _Reply(STATUS_OK)
-        if TAG_A1 not in request.fields:
-            return _Reply(STATUS_PARAMETER)
+            return _status(STATUS_OK)
+        if request.fields.point is None:
+            return _status(STATUS_PARAMETER)
         key_pair = self._key_pair_factory()
         try:
-            secret = key_pair.shared_secret(request.fields[TAG_A1])
+            secret = key_pair.shared_secret(request.fields.point)
         except ValueError:
-            return _Reply(STATUS_FAIL)
+            return _status(STATUS_FAIL)
         link.session = session_gcm(secret) if link.gcm_connect else session_cbc(secret)
         link.ecdh_done = True
         if not link.gcm_connect:
             link.authorized = True
-        return _Reply(STATUS_OK, ((TAG_A1, key_pair.public_point),))
+        return _Reply(
+            PUBLIC_KEY_REPLY.build(
+                {"status": STATUS_OK, "point": key_pair.public_point}
+            ),
+        )
 
     def _clock(self, request: _Request) -> _Reply | Output:
         if request.link.capability_mode != CapabilityMode.ECDH:
             return Output()
-        if not request.frame.encrypted:
-            return _Reply(STATUS_FAIL)
-        if TAG_A1 not in request.fields or TAG_A3 not in request.fields:
-            return _Reply(STATUS_PARAMETER)
-        return _Reply(STATUS_OK)
+        if not request.frame.cmd.encrypted:
+            return _status(STATUS_FAIL)
+        if request.fields.time is None or request.fields.utc_offset is None:
+            return _status(STATUS_PARAMETER)
+        return _status(STATUS_OK)
 
     def _authenticate(self, request: _Request) -> _Reply:
         link = request.link
-        if self.config.enforce and not (link.ecdh_done and request.frame.encrypted):
-            return _Reply(STATUS_FAIL)
-        token = request.fields.get(TAG_A2)
+        if self.config.enforce and not (link.ecdh_done and request.frame.cmd.encrypted):
+            return _status(STATUS_FAIL)
+        token = request.fields.token
         if token is None or len(token) > MAX_TOKEN_LEN:
-            return _Reply(STATUS_FAIL)
+            return _status(STATUS_FAIL)
         if self.config.auth_mode == AuthMode.OPEN:
-            return _Reply(STATUS_OK, disconnect=True)
+            return _status(STATUS_OK, disconnect=True)
         if self.config.auth_mode == AuthMode.TIME_LIMITED or token in self.enrolled:
             link.authorized = True
-            return _Reply(STATUS_OK)
+            return _status(STATUS_OK)
         link.pending_token = token
         link.auth_started_at = self.clock.now()
         return _Reply(
-            STATUS_NEED_AUTHENTICATION,
-            ((TAG_A1, self.config.auth_timeout.to_bytes(2, "little")),),
+            AUTH_PENDING_REPLY.build(
+                {
+                    "status": STATUS_NEED_AUTHENTICATION,
+                    "auth_timeout": self.config.auth_timeout,
+                },
+            ),
         )
 
     def _session(self, link: _Link, frame: Frame) -> Output:
-        if frame.msgtype & ~RESPONSE < MCU_OPCODE_MIN:
+        if frame.cmd.msgtype & ~RESPONSE < MCU_OPCODE_MIN:
             return Output()
         if not link.authorized or link.session is None:
             return Output()
-        if frame.encrypted:
+        if frame.cmd.encrypted:
             try:
                 link.session.decrypt(frame.payload)
             except (InvalidTag, ValueError):
-                _LOGGER.warning("Dropped undecryptable %04x", frame.cmd)
+                _LOGGER.warning("Dropped undecryptable %03x", frame.cmd.msgtype)
                 return Output()
-        return self._relay(link, self.mcu.respond(frame.msgtype))
+        return self._relay(link, self.mcu.respond(frame.cmd.msgtype))
 
-    def _relay(self, link: _Link, frames: list[McuFrame]) -> Output:
-        """Encrypt MCU frames for the session and send them on ``03010f``."""
+    def _relay(self, link: _Link, frames: list[Frame]) -> Output:
+        """Encrypt the MCU's cleartext frames for the session and send them."""
         session = link.session
         if session is None:
             return Output()
         out: list[bytes] = []
         for mcu_frame in frames:
-            relayed = Frame(
-                PATTERN_RELAY,
-                FLAG_ENCRYPTED | mcu_frame.msgtype,
-                session.encrypt(mcu_frame.cleartext),
+            relayed = make_frame(
+                mcu_frame.pattern.composer,
+                mcu_frame.pattern.channel,
+                mcu_frame.cmd.msgtype,
+                session.encrypt(mcu_frame.payload),
+                encrypted=True,
             )
             out.extend(self._encode(relayed))
         return Output(out)
