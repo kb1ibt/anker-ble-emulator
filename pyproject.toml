@@ -1,0 +1,156 @@
+[project]
+name = "anker-ble-emulator"
+version = "0.1.0"
+description = "Emulated Anker Solix BLE devices for testing BLE clients through bleak"
+authors = [
+    { name = "Shawn Stricker", email = "github@kb1ibt.com" }
+]
+requires-python = ">=3.11"
+readme = "README.md"
+license = "MIT"
+keywords = ["Anker", "Solix", "BLE", "bleak", "emulator", "testing"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Framework :: AsyncIO",
+    "Framework :: Pytest",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
+]
+dependencies = [
+    "bleak>=3.0",
+    "cryptography>=43",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "pytest-timeout>=2.4.0",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.16.10",
+]
+
+[project.urls]
+Repository = "https://github.com/kb1ibt/anker-ble-emulator"
+Issues = "https://github.com/kb1ibt/anker-ble-emulator/issues"
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = ["COM812", "D203", "D213"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",    # assert is fine in tests
+    "PLR2004", # magic values in assertions
+    "ANN",     # type annotations not required in tests
+    "ARG",     # unused arguments (pytest fixtures inject via name)
+    "PLC0415", # imports inside test functions (isolation pattern)
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.ruff.lint.isort]
+known-first-party = ["anker_ble_emulator"]
+force-single-line = false
+lines-after-imports = 2
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--tb=short",
+    "--cov",
+    "--cov-report=term-missing",
+    "--cov-report=html:htmlcov",
+    "--cov-report=xml:coverage.xml",
+    "--cov-config=pyproject.toml",
+    "--cov-context=test",
+]
+timeout = 60
+timeout_method = "thread"
+timeout_func_only = true
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+xfail_strict = true
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+log_level = "WARNING"
+
+[tool.coverage.run]
+source = ["src"]
+data_file = ".coverage"
+omit = [
+    "tests/*",
+    "conftest.py",
+    "*/__pycache__/*",
+    "*/site-packages/*",
+]
+command_line = "-m pytest discover -s tests/"
+parallel = true
+concurrency = ["multiprocessing"]
+branch = true
+sigterm = true
+
+[tool.coverage.report]
+exclude_also = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+    "pass",
+    "\\.\\.\\.$",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if False:",
+    "if TESTING:"
+]
+ignore_errors = true
+skip_empty = true
+precision = 2
+show_missing = true
+skip_covered = true
+fail_under = 70
+
+[tool.coverage.html]
+directory = "htmlcov"
+title = "Coverage Report"
+show_contexts = true
+
+[tool.coverage.xml]
+output = "coverage.xml"
+package_depth = 2
