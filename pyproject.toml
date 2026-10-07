@@ -1,6 +1,6 @@
 [project]
 name = "anker-ble-emulator"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Emulated Anker Solix BLE devices for testing BLE clients through bleak"
 authors = [
     { name = "Shawn Stricker", email = "github@kb1ibt.com" }
@@ -29,8 +29,12 @@ dependencies = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+# The release tag (v0.2.0) is the version.
+source = "vcs"
 
 [dependency-groups]
 dev = [

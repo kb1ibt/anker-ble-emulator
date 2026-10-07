@@ -8,7 +8,6 @@ resolution-markers = [
 
 [[package]]
 name = "anker-ble-emulator"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "bleak" },
