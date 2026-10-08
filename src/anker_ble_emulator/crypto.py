@@ -15,9 +15,15 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 #: Static AES-128-GCM key, nonce and AAD of the encrypted outer before ECDH.
 STATIC_KEY = bytes.fromhex("b8ff7422955d4eb6d554a2c470280559")
-STATIC_NONCE = bytes.fromhex("6ba3e3f2f3a60f2971ce5d1f")
+#: The full static IV; the encrypted outer's legacy CBC confer uses all 16
+#: bytes, its GCM frames only the first 12 as the nonce.
+STATIC_IV = bytes.fromhex("6ba3e3f2f3a60f2971ce5d1fd821cfa3")
+STATIC_NONCE = STATIC_IV[:12]
 #: The session GCM uses the same AAD.
 AAD = bytes.fromhex("3322110077665544bbaa9988ffeeddcc")
+#: The legacy-mode handshake key when the plain outer's ``0001`` carries no
+#: account (``a2``).
+DEFAULT_ACCOUNT = b"ANKER_DEFAULT_ACCOUNT_1"
 
 COORDINATE_LEN = 32
 

@@ -130,6 +130,9 @@ DEVICE_INFO_REPLY = Struct(
 #: ``0821``: the device's public point, ``X || Y``.
 PUBLIC_KEY_REPLY = Struct("status" / Int8ub, "point" / field(0xA1, Bytes(64)))
 
+#: ``0822``: the legacy confer's derived session key, 16 bytes.
+CONFER_KEY_REPLY = Struct("status" / Int8ub, "key" / field(0xA1, Bytes(16)))
+
 #: ``0823``: the bound serial echoed back.
 BIND_REPLY = Struct("status" / Int8ub, "serial" / Optional(field(0xA1, GreedyBytes)))
 

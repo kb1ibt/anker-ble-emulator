@@ -3,15 +3,29 @@
 
 import pytest
 
+from anker_ble_emulator.crypto import (
+    DEFAULT_ACCOUNT,
+    STATIC_GCM,
+    STATIC_IV,
+    STATIC_KEY,
+    STATIC_NONCE,
+    CbcCipher,
+    GcmCipher,
+)
 from anker_ble_emulator.frame import CHANNEL_APP, decode, encode, fragment, make_frame
 from anker_ble_emulator.module import AuthMode
+from anker_ble_emulator.tlv import encode_fields
 from tests.fixtures.client import (
+    NEGOTIATION,
     SESSION,
     TIMESTAMP,
+    UTC_OFFSET,
     AppClient,
     cmd_hex,
+    confer_request,
     exchange,
     negotiate,
+    open_confer_reply,
     pattern_hex,
 )
 from tests.fixtures.module import (
@@ -612,4 +626,139 @@ def test_push_without_a_session_sends_nothing() -> None:
     out = rig.module.push(0x421)
 
     assert rig.module.authorized
+    assert out.frames == []
+
+
+def test_legacy_confer_on_the_plain_outer_delivers_a_cbc_session_key() -> None:
+    rig = build_module(auth_mode=AuthMode.OPEN)
+    client = AppClient(encrypted_outer=False)
+    exchange(rig.module, client, 0x001, [])
+    exchange(rig.module, client, 0x005, [(0xA5, b"\x02")])
+    handshake = CbcCipher(DEFAULT_ACCOUNT[:16], TEST_SERIAL[:16])
+
+    out = rig.module.write(
+        confer_request(handshake, [(0xA1, TIMESTAMP), (0xA3, UTC_OFFSET)])
+    )
+
+    status, key = open_confer_reply(handshake, out.frames[0])
+    assert status == 0
+    assert len(key) == 16
+    assert rig.module.authorized
+
+    session = CbcCipher(key, TEST_SERIAL[:16])
+    probe = rig.module.write(
+        encode(
+            make_frame(
+                0x00, SESSION, 0x057, session.encrypt(b"\xa1\x01\x21"), encrypted=True
+            )
+        )
+    )
+    assert session.decrypt(decode(probe.frames[0]).payload) == ACK_REPLY
+
+
+def test_legacy_confer_uses_the_connect_account_as_the_handshake_key() -> None:
+    rig = build_module(auth_mode=AuthMode.OPEN)
+    client = AppClient(encrypted_outer=False)
+    account = b"an-account-id-40-bytes-long-------------"
+    exchange(rig.module, client, 0x001, [(0xA2, account)])
+    exchange(rig.module, client, 0x005, [(0xA5, b"\x02")])
+    handshake = CbcCipher(account[:16], TEST_SERIAL[:16])
+
+    out = rig.module.write(
+        confer_request(handshake, [(0xA1, TIMESTAMP), (0xA3, UTC_OFFSET)])
+    )
+
+    status, key = open_confer_reply(handshake, out.frames[0])
+    assert status == 0
+    assert len(key) == 16
+
+
+def test_legacy_confer_on_the_encrypted_outer_delivers_a_gcm_session_key() -> None:
+    rig = build_module(auth_mode=AuthMode.OPEN)
+    client = AppClient()
+    exchange(rig.module, client, 0x001, [])
+    exchange(rig.module, client, 0x005, [(0xA5, b"\x02")])
+    handshake = CbcCipher(STATIC_KEY, STATIC_IV)
+
+    out = rig.module.write(
+        confer_request(handshake, [(0xA1, TIMESTAMP), (0xA3, UTC_OFFSET)])
+    )
+
+    status, key = open_confer_reply(STATIC_GCM, out.frames[0])
+    assert status == 0
+    assert len(key) == 16
+    assert rig.module.authorized
+
+    session = GcmCipher(key, STATIC_NONCE)
+    probe = rig.module.write(
+        encode(
+            make_frame(
+                0x00, SESSION, 0x057, session.encrypt(b"\xa1\x01\x21"), encrypted=True
+            )
+        )
+    )
+    assert session.decrypt(decode(probe.frames[0]).payload) == ACK_REPLY
+
+
+def test_legacy_confer_without_the_encrypted_flag_gets_no_reply() -> None:
+    rig = build_module(auth_mode=AuthMode.OPEN)
+    client = AppClient(encrypted_outer=False)
+    exchange(rig.module, client, 0x001, [])
+    exchange(rig.module, client, 0x005, [(0xA5, b"\x02")])
+
+    out = rig.module.write(
+        encode(
+            make_frame(
+                0x00,
+                NEGOTIATION,
+                0x022,
+                encode_fields([(0xA1, TIMESTAMP), (0xA3, UTC_OFFSET)]),
+            )
+        )
+    )
+
+    assert out.frames == []
+    assert not rig.module.authorized
+
+
+def test_legacy_confer_with_a_missing_field_gets_no_reply() -> None:
+    rig = build_module(auth_mode=AuthMode.OPEN)
+    client = AppClient(encrypted_outer=False)
+    exchange(rig.module, client, 0x001, [])
+    exchange(rig.module, client, 0x005, [(0xA5, b"\x02")])
+    handshake = CbcCipher(DEFAULT_ACCOUNT[:16], TEST_SERIAL[:16])
+
+    out = rig.module.write(confer_request(handshake, [(0xA1, TIMESTAMP)]))
+
+    assert out.frames == []
+
+
+def test_legacy_confer_with_malformed_fields_gets_no_reply() -> None:
+    rig = build_module(auth_mode=AuthMode.OPEN)
+    client = AppClient(encrypted_outer=False)
+    exchange(rig.module, client, 0x001, [])
+    exchange(rig.module, client, 0x005, [(0xA5, b"\x02")])
+    handshake = CbcCipher(DEFAULT_ACCOUNT[:16], TEST_SERIAL[:16])
+
+    out = rig.module.write(
+        encode(
+            make_frame(
+                0x00, NEGOTIATION, 0x022, handshake.encrypt(b"\xa1\x09"), encrypted=True
+            )
+        )
+    )
+
+    assert out.frames == []
+
+
+def test_legacy_confer_with_undecryptable_ciphertext_gets_no_reply() -> None:
+    rig = build_module(auth_mode=AuthMode.OPEN)
+    client = AppClient(encrypted_outer=False)
+    exchange(rig.module, client, 0x001, [])
+    exchange(rig.module, client, 0x005, [(0xA5, b"\x02")])
+
+    out = rig.module.write(
+        encode(make_frame(0x00, NEGOTIATION, 0x022, bytes(16), encrypted=True))
+    )
+
     assert out.frames == []

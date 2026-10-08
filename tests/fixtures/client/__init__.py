@@ -12,6 +12,7 @@ from .app_client import (
 )
 from .bleak_link import BleakLink, settle
 from .handshake import TZ, UTC_OFFSET, exchange, negotiate, negotiation_steps
+from .legacy_confer import confer_request, open_confer_reply
 
 
 __all__ = [
@@ -24,9 +25,11 @@ __all__ = [
     "BleakLink",
     "Reply",
     "cmd_hex",
+    "confer_request",
     "exchange",
     "negotiate",
     "negotiation_steps",
+    "open_confer_reply",
     "pattern_hex",
     "settle",
 ]

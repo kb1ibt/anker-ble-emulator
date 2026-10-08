@@ -4,13 +4,25 @@
 from __future__ import annotations
 
 import logging
+import secrets
 from dataclasses import asdict, dataclass, field
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any
 
 from cryptography.exceptions import InvalidTag
 
-from .crypto import STATIC_GCM, DeviceKeyPair, session_cbc, session_gcm
+from .crypto import (
+    DEFAULT_ACCOUNT,
+    STATIC_GCM,
+    STATIC_IV,
+    STATIC_KEY,
+    STATIC_NONCE,
+    CbcCipher,
+    DeviceKeyPair,
+    GcmCipher,
+    session_cbc,
+    session_gcm,
+)
 from .frame import (
     CHANNEL_APP,
     CHANNEL_NEGOTIATION,
@@ -29,6 +41,7 @@ from .messages import (
     AUTH_PENDING_REPLY,
     BIND_REPLY,
     CAPABILITY_REPLY,
+    CONFER_KEY_REPLY,
     CONNECT_REPLY,
     DEVICE_INFO_REPLY,
     PUBLIC_KEY_REPLY,
@@ -63,6 +76,8 @@ MCU_OPCODE_MIN = 0x40
 MSGTYPE_GRANT = RESPONSE | 0x027
 #: ``0030``: the module's version read.
 MSGTYPE_VERSIONS = 0x030
+#: ``0022``: the clock set in ECDH mode, the legacy getAesKey confer in modes 1/2.
+MSGTYPE_CONFER = 0x022
 
 STATUS_OK = 0x00
 STATUS_FAIL = 0x01
@@ -187,6 +202,9 @@ class _Link:
     authorized: bool = False
     auth_started_at: float | None = None
     pending_token: bytes | None = None
+    #: The CBC key/IV ``_connect`` installed; the legacy confer's request cipher.
+    handshake_key: bytes | None = None
+    handshake_iv: bytes | None = None
 
 
 @dataclass(frozen=True)
@@ -346,6 +364,11 @@ class Module:
         return [encode(part) for part in fragment(frame, self.config.fragment_cap)]
 
     def _negotiate(self, link: _Link, frame: Frame) -> Output:
+        if (
+            frame.cmd.msgtype == MSGTYPE_CONFER
+            and link.capability_mode == CapabilityMode.LEGACY
+        ):
+            return self._legacy_confer(link, frame)
         cipher: Cipher | None = None
         plaintext = frame.payload
         if frame.cmd.encrypted:
@@ -369,6 +392,43 @@ class Module:
             disconnect=result.disconnect,
         )
 
+    def _legacy_confer(self, link: _Link, frame: Frame) -> Output:
+        """Handle the legacy getAesKey exchange (``0022``, capability mode 1).
+
+        Decrypts under the handshake context ``_connect`` installed, never
+        the session or static-GCM cipher, and authorizes the link without a
+        ``0027``.
+        """
+        if (
+            not frame.cmd.encrypted
+            or link.handshake_key is None
+            or link.handshake_iv is None
+        ):
+            return Output()
+        request_cipher = CbcCipher(link.handshake_key, link.handshake_iv)
+        try:
+            plaintext = request_cipher.decrypt(frame.payload)
+        except ValueError:
+            _LOGGER.warning("Dropped undecryptable legacy confer")
+            return Output()
+        try:
+            fields = parse_request(frame.cmd.msgtype, plaintext)
+        except FieldError:
+            _LOGGER.warning("Dropped legacy confer with malformed fields")
+            return Output()
+        if fields.time is None or fields.utc_offset is None:
+            return Output()
+        key = secrets.token_bytes(16)
+        payload = CONFER_KEY_REPLY.build({"status": STATUS_OK, "key": key})
+        if link.gcm_connect:
+            link.session = GcmCipher(key, STATIC_NONCE)
+            reply_payload = STATIC_GCM.encrypt(payload)
+        else:
+            link.session = CbcCipher(key, link.handshake_iv)
+            reply_payload = request_cipher.encrypt(payload)
+        link.authorized = True
+        return Output(self._encode(reply_frame(frame, reply_payload)))
+
     def _dispatch(self, request: _Request) -> _Reply | Output:
         """Run the module's handler for a negotiation opcode; none for others."""
         handlers: dict[int, Callable[[_Request], _Reply | Output]] = {
@@ -385,6 +445,7 @@ class Module:
         return Output() if handler is None else handler(request)
 
     def _connect(self, request: _Request) -> _Reply | Output:
+        link = request.link
         encrypted = request.frame.cmd.encrypted
         if (
             not encrypted
@@ -392,8 +453,14 @@ class Module:
             and self.config.auth_mode != AuthMode.OPEN
         ):
             return Output(disconnect=True)
-        request.link.gcm_connect = encrypted
-        request.link.capability_mode = CapabilityMode.NONE
+        link.gcm_connect = encrypted
+        link.capability_mode = CapabilityMode.NONE
+        if encrypted:
+            link.handshake_key, link.handshake_iv = STATIC_KEY, STATIC_IV
+        else:
+            account = request.fields.account or DEFAULT_ACCOUNT
+            link.handshake_key = account[:16]
+            link.handshake_iv = (self.config.serial or b"")[:16]
         return _Reply(
             CONNECT_REPLY.build({"status": STATUS_OK, "connect_type": CONNECT_TYPE})
         )
