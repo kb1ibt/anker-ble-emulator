@@ -157,6 +157,7 @@ A1781 SOLIX F2600 (``F2600``)
 
 16 positions agree; 27 read a field the map doesn't type.
 
+- Typed from SolixBLE: ``a2`` ``ac_output_timeout_seconds`` (4 B), ``a3`` ``dc_output_timeout_seconds`` (4 B), ``a4`` ``remaining_time_hours`` (4 B), ``a5`` ``ac_input_power`` (4 B), ``a6`` ``ac_output_power`` (4 B), ``a7`` ``usbc_1_power`` (4 B), ``a8`` ``usbc_2_power`` (4 B), ``a9`` ``usbc_3_power`` (4 B), ``aa`` ``usba_1_power`` (4 B), ``ab`` ``usba_2_power`` (4 B), ``ac`` ``dc_12v_1_power`` (4 B), ``ad`` ``dc_12v_2_power`` (4 B), ``af`` ``photovoltaic_power`` (4 B), ``b0`` ``output_power_total`` (4 B), ``b3`` ``sw_version`` (4 B), ``b9`` ``sw_expansion`` (4 B), ``bb`` ``ac_output`` (4 B), ``bd`` ``temperature`` (2 B), ``bf`` ``battery_status`` (4 B), ``c1`` ``main_battery_soc`` (4 B), ``c3`` ``battery_soh`` (4 B), ``c5`` ``expansion_packs`` (4 B), ``cf`` ``light`` (4 B), ``d0`` ``device_sn`` (16 B), ``db`` ``energy_saving_switch`` (4 B)
 - ``get_status_update`` ``0040``: unlinked
 - ``set_ac_charging_power`` ``0044``: ``ac_input_limit``, verified by ``ac_charging_power``
 - ``set_ac_timer`` ``0042``: ``ac_output_timeout_seconds``

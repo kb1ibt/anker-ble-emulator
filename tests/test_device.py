@@ -82,9 +82,6 @@ def test_outer_and_module_are_exclusive() -> None:
     ("pn", "transport", "path", "reason"),
     [
         pytest.param(
-            Product.A1781, None, None, "no legacy emulation profile", id="no profile"
-        ),
-        pytest.param(
             Product.A1783,
             Transport.LEGACY,
             None,

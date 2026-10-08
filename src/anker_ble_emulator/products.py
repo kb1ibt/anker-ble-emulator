@@ -180,7 +180,9 @@ PRODUCTS: dict[Product, ProductInfo] = {
     Product.A1763: ProductInfo("SOLIX C1000 Gen 2", "C1000G2", "pps"),
     Product.A1765: ProductInfo("SOLIX C1000X Gen 2", "C1000G2", "pps"),
     Product.A1780: ProductInfo("SOLIX F2000", "F2000", "pps", Transport.LEGACY),
-    Product.A1781: ProductInfo("SOLIX F2600", "F2600", "pps", Transport.LEGACY),
+    #: T6's F2600 SolixBLE class is ff09-shaped (plain outer, TLV commands,
+    #: status 040 -> 840), not the fixed-offset legacy transport.
+    Product.A1781: ProductInfo("SOLIX F2600", "F2600", "pps"),
     Product.A1783: ProductInfo("SOLIX C2000 Gen 2", "C2000G2", "pps"),
     Product.A1785: ProductInfo("SOLIX C2000X Gen 2", "C2000G2", "pps"),
     Product.A1790: ProductInfo("SOLIX F3800", "F3800", "pps"),

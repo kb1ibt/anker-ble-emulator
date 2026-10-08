@@ -56,6 +56,8 @@ KIND_NAMES = {
 }
 #: A filled string's size where no read bounds it.
 STRING_SIZE = 16
+#: The project's ruff line length, to match its wrapping of a long literal.
+LINE_LENGTH = 88
 
 
 @dataclass(frozen=True)
@@ -175,8 +177,14 @@ def _hex(msgtype: int) -> str:
 
 
 def _set(msgtypes: frozenset[int]) -> str:
+    """Return a ``frozenset`` literal, wrapped as ruff would past the line length."""
+    if not msgtypes:
+        return "frozenset()"
     items = ", ".join(_hex(m) for m in sorted(msgtypes))
-    return f"frozenset({{{items}}})" if msgtypes else "frozenset()"
+    inline = f"frozenset({{{items}}})"
+    if len(f"    known_commands={inline},") <= LINE_LENGTH:
+        return inline
+    return f"frozenset(\n        {{{items}}}\n    )"
 
 
 def _tuple(msgtypes: tuple[int, ...]) -> str:

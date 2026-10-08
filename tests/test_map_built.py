@@ -21,6 +21,7 @@ EXPECTED = {
     Product.A1753,
     Product.A1754,
     Product.A1755,
+    Product.A1781,
     Product.A1790,
     Product.A1790P,
     Product.A17C5,

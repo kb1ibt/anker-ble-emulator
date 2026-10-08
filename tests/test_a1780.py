@@ -108,8 +108,3 @@ def test_negotiated_module_raises_for_a_legacy_device() -> None:
 def test_negotiated_only_options_are_refused(kwargs: dict[str, Any]) -> None:
     with pytest.raises(TypeError):
         EmulatedDevice(Product.A1780, **kwargs)
-
-
-def test_an_unregistered_legacy_product_is_refused() -> None:
-    with pytest.raises(NotImplementedError, match="no legacy emulation profile"):
-        EmulatedDevice(Product.A1781)

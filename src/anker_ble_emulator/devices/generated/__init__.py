@@ -12,6 +12,7 @@ from .a1728 import PROFILE as A1728
 from .a1753 import PROFILE as A1753
 from .a1754 import PROFILE as A1754
 from .a1755 import PROFILE as A1755
+from .a1781 import PROFILE as A1781
 from .a1790 import PROFILE as A1790
 from .a1790p import PROFILE as A1790P
 
@@ -22,6 +23,7 @@ MAP_BUILT = {
     Product.A1753: A1753,
     Product.A1754: A1754,
     Product.A1755: A1755,
+    Product.A1781: A1781,
     Product.A1790: A1790,
     Product.A1790P: A1790P,
     Product.A17C5: A17C5,
