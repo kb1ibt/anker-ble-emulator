@@ -41,6 +41,8 @@ class ModuleBuild(StrEnum):
     #: The Prime Charger 160W's module; its ``0830`` isn't recorded, so it's
     #: named by its ``0829`` chip and library version.
     CHARGING_0_0_5_0 = "Charging v0.0.5.0"
+    #: The Solarbank 2's module, likewise named by its ``0829``.
+    ESP32_0_0_0_3 = "ESP32 0.0.0.3"
     #: The C1000 (first generation) module.
     V0_2_3_1 = "v0.2.3.1"
     #: The Prime line's module.
@@ -72,6 +74,7 @@ PRIME_SESSION_OPS = frozenset({0x20, 0x28, 0x2D, 0x2F, 0x30, 0x36})
 #: Session ops by build; an unrecorded build is known to answer only what was seen.
 SESSION_OPS = {
     ModuleBuild.CHARGING_0_0_5_0: frozenset[int](),
+    ModuleBuild.ESP32_0_0_0_3: frozenset[int](),
     ModuleBuild.V0_2_3_1: frozenset({0x30}),
     ModuleBuild.V0_2_9_7: PRIME_SESSION_OPS,
     ModuleBuild.V0_2_9_8: frozenset({0x30}),

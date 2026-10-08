@@ -29,6 +29,7 @@ EMULATED = (
     Product.A1765,
     Product.A1783,
     Product.A1785,
+    Product.A17C1,
     Product.A2687,
     Product.A2345,
     Product.A91B2,

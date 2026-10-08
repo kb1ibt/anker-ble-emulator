@@ -1,6 +1,7 @@
 # Copyright (c) 2026 Shawn Stricker
 """Emulated devices, one module per product."""
 
+from .a17c1 import A17C1
 from .a91b2 import A91B2
 from .a1722 import A1722
 from .a1761 import A1761
@@ -25,6 +26,7 @@ from .base import (
 
 
 __all__ = [
+    "A17C1",
     "A91B2",
     "A1722",
     "A1761",
