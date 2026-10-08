@@ -36,6 +36,8 @@ if TYPE_CHECKING:
 
 #: The base classes and the outer each speaks.
 OUTERS = {"SolixBLEDevice": "plain", "PrimeDevice": "encrypted"}
+#: A class's own outer, where it sets one (T6 on).
+ENCRYPTED_DEFAULT = "_DEFAULT_ENCRYPTED_NEGOTIATION"
 TELEMETRY = "_TELEMETRY_COMMANDS"
 SNAPSHOT = "_SNAPSHOT_COMMANDS"
 STATUS_REQUEST = "CMD_GET_STATUS"
@@ -211,7 +213,14 @@ def _argument(call: ast.Call, name: str, index: int) -> ast.expr | None:
 def _read(
     source: str, parse: str, tag: object, begin: object, end: object
 ) -> dict[str, object]:
-    return {"source": source, "parse": parse, "tag": tag, "begin": begin, "end": end}
+    return {
+        "source": source,
+        "parse": parse,
+        "tag": tag,
+        "begin": begin,
+        "end": end,
+        "signed": False,
+    }
 
 
 def decode_reads(
@@ -249,6 +258,7 @@ def decode_reads(
                     _literal(_argument(node, "begin", 1), names),
                     _literal(_argument(node, "end", 2), names),
                 )
+                | {"signed": _literal(_argument(node, "signed", 3), names) is True}
             )
         elif isinstance(node, ast.Call) and name == RECORD and id(node) not in assigned:
             reads.append(
@@ -410,6 +420,8 @@ def device_facts(
         functions |= {n: (f, cls.constants) for n, f in cls.functions.items()}
         properties |= cls.properties
         attributes |= {k: v for k, v in cls.attributes.items() if v is not None}
+    if isinstance(encrypted := attributes.get(ENCRYPTED_DEFAULT), bool):
+        outer = "encrypted" if encrypted else "plain"
     methods = {n: pair for n, pair in functions.items() if n not in properties}
     helpers = {n: function for n, (function, _) in methods.items()}
     reads = {p: decode_reads(functions[p][0], {}, helpers) for p in sorted(properties)}

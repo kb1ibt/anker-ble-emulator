@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
     from anker_ble_emulator.clock import Clock
-    from anker_ble_emulator.layouts import Value
+    from anker_ble_emulator.layouts import Field, Value
 
 #: A locally administered unicast MAC.
 DEFAULT_MAC = "AA:12:DE:AD:BE:EF"
@@ -158,6 +158,8 @@ class Profile:
         mcu_channel: The channel the MCU's frames travel on.
         built: Msgtypes with no recording, built from the layout's typed
             fields (a reply behind a ``00`` status).
+        fields: Typed fields the layout lacks, by message: tags the map names
+            untyped, typed from where SolixBLE's class decodes them.
         map_built: Nothing about the product is recorded: the profile comes
             from anker-solix-api's map and SolixBLE's device class.
 
@@ -186,6 +188,7 @@ class Profile:
     fragment_cap: int = 253
     mcu_channel: int = CHANNEL_SESSION
     built: tuple[int, ...] = ()
+    fields: Mapping[int, tuple[Field, ...]] = field(default_factory=dict)
     map_built: bool = False
 
     def frames(self, layout: Layout | None = None) -> dict[int, bytes]:
@@ -347,6 +350,7 @@ class EmulatedDevice:
         #: The product's layout from anker-solix-api's maps, where it has one.
         self.layout = Layout.load(pn)
         if self.layout is not None:
+            self.layout.extend(profile.fields)
             self.layout.alias(profile.layout_aliases)
         script = profile.script(self.layout)
         self.module = Module(config, script, clock or MonotonicClock())

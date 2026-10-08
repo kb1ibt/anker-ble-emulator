@@ -147,6 +147,20 @@ class Layout:
         for msgtype, source in aliases.items():
             self.messages[msgtype] = self._message(source)
 
+    def extend(self, fields: Mapping[int, tuple[Field, ...]]) -> None:
+        """Add typed fields to messages; a tag the message already types is kept.
+
+        Raises:
+            LayoutError: If a message isn't in the layout.
+
+        """
+        for msgtype, extra in fields.items():
+            typed = self._message(msgtype)
+            tags = {each.tag for each in typed}
+            self.messages[msgtype] = typed + tuple(
+                f for f in extra if f.tag not in tags
+            )
+
     def build(self, msgtype: int, values: Mapping[str, Value] | None = None) -> bytes:
         """Return a telemetry payload of the message's typed fields, zero unless set.
 

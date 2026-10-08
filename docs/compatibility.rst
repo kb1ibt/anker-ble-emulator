@@ -70,9 +70,17 @@ Products with a SolixBLE device class and an anker-solix-api map but no
 recording get a profile generated from both (``tools/generate_profiles.py``,
 into ``devices/generated/``): the class's outer, status request and commands,
 and telemetry built from the map's typed fields under each message the class
-listens for. Nothing about them is recorded: no advertisement record, no
-``0830``, no frame. :doc:`solixble-crosscheck` checks every mapped product's
-SolixBLE decode positions and command links against its map.
+listens for. Fields the map names but doesn't type are typed from where the
+SolixBLE class decodes them. Nothing about these products is recorded: no
+advertisement record, no ``0830``, no frame. :doc:`solixble-crosscheck` checks
+every mapped product's SolixBLE decode positions and command links against its
+map.
+
+Each SolixBLE device class connects to its emulated product and decodes every
+property, except the C800's: its built ``0402`` (236 B) fits one frame, while
+SolixBLE's ``C800`` takes ``c402`` only as a fragment run whose first fragment
+fills the MTU, as the recorded C300 and C1000 ``c402`` do. The C800's field
+widths aren't recorded, so its telemetry is shorter than the device's.
 
 .. include:: _generated/map_built.rst
 

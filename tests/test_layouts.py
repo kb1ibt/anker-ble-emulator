@@ -8,6 +8,8 @@ import pytest
 from anker_ble_emulator.layouts import (
     STATUS_ACCEPTED,
     STATUS_REJECTED,
+    TYPE_UI,
+    Field,
     Layout,
     LayoutError,
     encode_value,
@@ -150,6 +152,24 @@ def test_a_selector_no_variant_names_is_refused() -> None:
     assert layout.check(0x207, bytes.fromhex("a10121a2020107a3020101")) == (
         STATUS_REJECTED
     )
+
+
+def test_extend_adds_fields_and_keeps_the_ones_already_typed() -> None:
+    layout = Layout(LAYOUT)
+    typed = layout.messages[0x405]
+    existing = typed[0]
+
+    layout.extend(
+        {
+            0x405: (
+                Field(existing.tag, "other", TYPE_UI, 2),
+                Field(0xEE, "added", TYPE_UI, 2),
+            )
+        }
+    )
+
+    assert layout.messages[0x405] == (*typed, Field(0xEE, "added", TYPE_UI, 2))
+    assert decode_fields(layout.build(0x405, {"added": 7}))[0xEE] == b"\x01\x07"
 
 
 def test_locate_finds_fields_and_parts() -> None:

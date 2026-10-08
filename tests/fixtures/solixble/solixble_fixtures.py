@@ -53,6 +53,9 @@ BASE = {
         "    def serial(self):\n"
         '        return self._parse_string("a2", 3, 20)\n'
         "    @property\n"
+        "    def temperature(self):\n"
+        '        return self._parse_int("c2", 1, 3, True)\n'
+        "    @property\n"
         "    def nothing(self):\n"
         "        return 0\n"
         "    async def turn_ac_on(self):\n"
@@ -69,6 +72,8 @@ BASE = {
         "class StationPlus(Station):\n"
         "    async def turn_ac_on(self):\n"
         "        pass\n"
+        "class StationGen2(Station):\n"
+        "    _DEFAULT_ENCRYPTED_NEGOTIATION: bool = True\n"
     ),
     "SolixBLE/devices/charger.py": (
         'CMD_SUBSCRIBE = "4200"\n'
@@ -125,10 +130,35 @@ def write_solixble(root: Path, sources: dict[str, str] = BASE) -> Path:
 
 
 def stream_read(
-    parse: str, begin: int | None, end: int | None, tag: str = "a2"
+    parse: str,
+    begin: int | None,
+    end: int | None,
+    tag: str = "a2",
+    *,
+    signed: bool = False,
 ) -> dict[str, object]:
     """Return a property's stream read as the class import records it."""
-    return {"source": "stream", "parse": parse, "tag": tag, "begin": begin, "end": end}
+    return {
+        "source": "stream",
+        "parse": parse,
+        "tag": tag,
+        "begin": begin,
+        "end": end,
+        "signed": signed,
+    }
+
+
+def snapshot_read(tag: str, begin: int | None, end: int | None) -> dict[str, object]:
+    """Return a property's snapshot read: a slice, or the whole record."""
+    parse = "record" if begin is None and end is None else "int"
+    return {
+        "source": "snapshot",
+        "parse": parse,
+        "tag": tag,
+        "begin": begin,
+        "end": end,
+        "signed": False,
+    }
 
 
 def run_import(output: Path, *roots: str) -> dict[str, Any]:

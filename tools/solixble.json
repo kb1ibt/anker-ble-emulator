@@ -39,7 +39,8 @@
       "parse": "int",
       "tag": "f0",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "ac_output": [
@@ -48,7 +49,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "ac_power_in": [
@@ -57,7 +59,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 3,
-      "end": 5
+      "end": 5,
+      "signed": false
      }
     ],
     "ac_power_out": [
@@ -66,7 +69,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "battery_health": [
@@ -75,7 +79,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 4,
-      "end": 5
+      "end": 5,
+      "signed": false
      }
     ],
     "battery_percentage": [
@@ -84,7 +89,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 3,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "charging_status": [
@@ -93,7 +99,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 2,
-      "end": 3
+      "end": 3,
+      "signed": false
      }
     ],
     "max_battery_percentage": [
@@ -102,7 +109,8 @@
       "parse": "int",
       "tag": "d9",
       "begin": 4,
-      "end": 5
+      "end": 5,
+      "signed": false
      }
     ],
     "min_battery_percentage": [
@@ -111,7 +119,8 @@
       "parse": "int",
       "tag": "d9",
       "begin": 5,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "model": [
@@ -120,7 +129,8 @@
       "parse": "string",
       "tag": "a2",
       "begin": 22,
-      "end": 27
+      "end": 27,
+      "signed": false
      }
     ],
     "power_out": [
@@ -129,7 +139,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 1,
-      "end": 3
+      "end": 3,
+      "signed": false
      }
     ],
     "serial_number": [
@@ -138,7 +149,8 @@
       "parse": "string",
       "tag": "a2",
       "begin": 3,
-      "end": 20
+      "end": 20,
+      "signed": false
      }
     ],
     "solar_power_in": [
@@ -147,7 +159,8 @@
       "parse": "int",
       "tag": "a8",
       "begin": 2,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "temperature": [
@@ -156,7 +169,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": true
      }
     ],
     "time_remaining": [
@@ -165,7 +179,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 7,
-      "end": 9
+      "end": 9,
+      "signed": false
      }
     ],
     "usb_output": [
@@ -174,7 +189,8 @@
       "parse": "int",
       "tag": "aa",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_power": [
@@ -183,7 +199,8 @@
       "parse": "int",
       "tag": "aa",
       "begin": 2,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ]
    }
@@ -305,7 +322,8 @@
       "parse": "int",
       "tag": "bb",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_power_in": [
@@ -314,7 +332,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_power_out": [
@@ -323,7 +342,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_timer_remaining": [
@@ -332,7 +352,8 @@
       "parse": "int",
       "tag": "a2",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_health": [
@@ -341,7 +362,8 @@
       "parse": "int",
       "tag": "c3",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_health_expansion": [
@@ -350,7 +372,8 @@
       "parse": "int",
       "tag": "c4",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_percentage": [
@@ -359,7 +382,8 @@
       "parse": "int",
       "tag": "c1",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_percentage_expansion": [
@@ -368,7 +392,8 @@
       "parse": "int",
       "tag": "c2",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "dc_output": [
@@ -377,7 +402,8 @@
       "parse": "int",
       "tag": "b2",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "dc_power_out": [
@@ -386,7 +412,8 @@
       "parse": "int",
       "tag": "b2",
       "begin": 2,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "num_expansion": [
@@ -395,7 +422,8 @@
       "parse": "int",
       "tag": "c5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "power_in": [
@@ -404,7 +432,8 @@
       "parse": "int",
       "tag": "af",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "power_out": [
@@ -413,7 +442,8 @@
       "parse": "int",
       "tag": "b0",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "serial_number": [
@@ -422,7 +452,8 @@
       "parse": "string",
       "tag": "d0",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "software_version": [
@@ -431,7 +462,8 @@
       "parse": "int",
       "tag": "b3",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "software_version_controller": [
@@ -440,7 +472,8 @@
       "parse": "int",
       "tag": "ba",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "software_version_expansion": [
@@ -449,7 +482,8 @@
       "parse": "int",
       "tag": "b9",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_power_in": [
@@ -458,7 +492,8 @@
       "parse": "int",
       "tag": "ae",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "temperature": [
@@ -467,7 +502,8 @@
       "parse": "int",
       "tag": "bd",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": true
      }
     ],
     "temperature_expansion": [
@@ -476,7 +512,8 @@
       "parse": "int",
       "tag": "be",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": true
      }
     ],
     "time_remaining": [
@@ -485,7 +522,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_a1_power": [
@@ -494,7 +532,8 @@
       "parse": "int",
       "tag": "a9",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_a2_power": [
@@ -503,7 +542,8 @@
       "parse": "int",
       "tag": "aa",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c1_power": [
@@ -512,7 +552,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c2_power": [
@@ -521,7 +562,8 @@
       "parse": "int",
       "tag": "a8",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ]
    }
@@ -695,7 +737,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 5,
-      "end": 7
+      "end": 7,
+      "signed": false
      }
     ],
     "ac_fast_charge_enabled": [
@@ -704,7 +747,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 21,
-      "end": 22
+      "end": 22,
+      "signed": false
      }
     ],
     "ac_frequency": [
@@ -713,7 +757,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 7,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "ac_input_port": [
@@ -722,7 +767,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 4,
-      "end": 5
+      "end": 5,
+      "signed": false
      }
     ],
     "ac_output": [
@@ -731,7 +777,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "ac_power_in": [
@@ -740,7 +787,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 3,
-      "end": 5
+      "end": 5,
+      "signed": false
      }
     ],
     "ac_power_out": [
@@ -749,7 +797,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "ac_timer_remaining": [
@@ -758,7 +807,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 1,
-      "end": 5
+      "end": 5,
+      "signed": false
      }
     ],
     "battery_health": [
@@ -767,7 +817,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 4,
-      "end": 5
+      "end": 5,
+      "signed": false
      }
     ],
     "battery_percentage": [
@@ -776,7 +827,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 3,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "charge_discharge_status": [
@@ -785,7 +837,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 2,
-      "end": 3
+      "end": 3,
+      "signed": false
      }
     ],
     "charging_status": [
@@ -794,7 +847,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "dc_input_port": [
@@ -803,7 +857,8 @@
       "parse": "int",
       "tag": "a8",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "dc_output": [
@@ -812,7 +867,8 @@
       "parse": "int",
       "tag": "b2",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "dc_power_out": [
@@ -821,7 +877,8 @@
       "parse": "int",
       "tag": "b2",
       "begin": 2,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "dc_power_saving_mode_enabled": [
@@ -830,7 +887,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 13,
-      "end": 14
+      "end": 14,
+      "signed": false
      }
     ],
     "dc_timer_remaining": [
@@ -839,7 +897,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 9,
-      "end": 13
+      "end": 13,
+      "signed": false
      }
     ],
     "device_timeout": [
@@ -848,7 +907,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 14,
-      "end": 16
+      "end": 16,
+      "signed": false
      }
     ],
     "display_mode": [
@@ -857,7 +917,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 18,
-      "end": 19
+      "end": 19,
+      "signed": false
      }
     ],
     "display_timeout": [
@@ -866,7 +927,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 16,
-      "end": 18
+      "end": 18,
+      "signed": false
      }
     ],
     "firmware_updating": [
@@ -875,7 +937,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "is_display_on": [
@@ -884,7 +947,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 22,
-      "end": 23
+      "end": 23,
+      "signed": false
      }
     ],
     "max_battery_percentage": [
@@ -893,7 +957,8 @@
       "parse": "int",
       "tag": "d9",
       "begin": 4,
-      "end": 5
+      "end": 5,
+      "signed": false
      }
     ],
     "max_input_power": [
@@ -902,7 +967,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 5,
-      "end": 7
+      "end": 7,
+      "signed": false
      }
     ],
     "min_battery_percentage": [
@@ -911,7 +977,8 @@
       "parse": "int",
       "tag": "d9",
       "begin": 5,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "part_number": [
@@ -920,7 +987,8 @@
       "parse": "string",
       "tag": "a2",
       "begin": 22,
-      "end": 27
+      "end": 27,
+      "signed": false
      }
     ],
     "port_memory_enabled": [
@@ -929,7 +997,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 23,
-      "end": 24
+      "end": 24,
+      "signed": false
      }
     ],
     "power_out": [
@@ -938,7 +1007,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 1,
-      "end": 3
+      "end": 3,
+      "signed": false
      }
     ],
     "power_saving_mode_enabled": [
@@ -947,7 +1017,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 8,
-      "end": 9
+      "end": 9,
+      "signed": false
      }
     ],
     "serial_number": [
@@ -956,7 +1027,8 @@
       "parse": "string",
       "tag": "a2",
       "begin": 3,
-      "end": 20
+      "end": 20,
+      "signed": false
      }
     ],
     "solar_power_in": [
@@ -965,7 +1037,8 @@
       "parse": "int",
       "tag": "a8",
       "begin": 2,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "temperature": [
@@ -974,7 +1047,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": true
      }
     ],
     "time_remaining": [
@@ -983,7 +1057,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 7,
-      "end": 9
+      "end": 9,
+      "signed": false
      }
     ],
     "usb_a1_power": [
@@ -992,7 +1067,8 @@
       "parse": "int",
       "tag": "ae",
       "begin": 2,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c1_power": [
@@ -1001,7 +1077,8 @@
       "parse": "int",
       "tag": "aa",
       "begin": 2,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c2_power": [
@@ -1010,7 +1087,8 @@
       "parse": "int",
       "tag": "ab",
       "begin": 2,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c3_power": [
@@ -1019,7 +1097,8 @@
       "parse": "int",
       "tag": "ac",
       "begin": 2,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_a1": [
@@ -1028,7 +1107,8 @@
       "parse": "int",
       "tag": "ae",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_c1": [
@@ -1037,7 +1117,8 @@
       "parse": "int",
       "tag": "aa",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_c2": [
@@ -1046,7 +1127,8 @@
       "parse": "int",
       "tag": "ab",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_c3": [
@@ -1055,13 +1137,14 @@
       "parse": "int",
       "tag": "ac",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ]
    }
   },
   "C2000G2": {
-   "outer": "plain",
+   "outer": "encrypted",
    "telemetry": [
     "421",
     "900",
@@ -1248,7 +1331,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 5,
-      "end": 7
+      "end": 7,
+      "signed": false
      }
     ],
     "ac_fast_charge_enabled": [
@@ -1257,7 +1341,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 21,
-      "end": 22
+      "end": 22,
+      "signed": false
      }
     ],
     "ac_frequency": [
@@ -1266,7 +1351,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 7,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "ac_input_port": [
@@ -1275,7 +1361,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 4,
-      "end": 5
+      "end": 5,
+      "signed": false
      }
     ],
     "ac_output": [
@@ -1284,7 +1371,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "ac_power_in": [
@@ -1293,7 +1381,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 3,
-      "end": 5
+      "end": 5,
+      "signed": false
      }
     ],
     "ac_power_out": [
@@ -1302,7 +1391,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "ac_timer_remaining": [
@@ -1311,7 +1401,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 1,
-      "end": 5
+      "end": 5,
+      "signed": false
      }
     ],
     "battery_health": [
@@ -1320,7 +1411,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 4,
-      "end": 5
+      "end": 5,
+      "signed": false
      }
     ],
     "battery_percentage": [
@@ -1329,7 +1421,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 3,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "charge_discharge_status": [
@@ -1338,7 +1431,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 2,
-      "end": 3
+      "end": 3,
+      "signed": false
      }
     ],
     "charging_status": [
@@ -1347,7 +1441,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "dc_input_port": [
@@ -1356,7 +1451,8 @@
       "parse": "int",
       "tag": "a8",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "dc_output": [
@@ -1365,7 +1461,8 @@
       "parse": "int",
       "tag": "b2",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "dc_power_out": [
@@ -1374,7 +1471,8 @@
       "parse": "int",
       "tag": "b2",
       "begin": 2,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "dc_power_saving_mode_enabled": [
@@ -1383,7 +1481,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 13,
-      "end": 14
+      "end": 14,
+      "signed": false
      }
     ],
     "dc_timer_remaining": [
@@ -1392,7 +1491,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 9,
-      "end": 13
+      "end": 13,
+      "signed": false
      }
     ],
     "device_timeout": [
@@ -1401,7 +1501,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 14,
-      "end": 16
+      "end": 16,
+      "signed": false
      }
     ],
     "display_mode": [
@@ -1410,7 +1511,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 18,
-      "end": 19
+      "end": 19,
+      "signed": false
      }
     ],
     "display_timeout": [
@@ -1419,7 +1521,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 16,
-      "end": 18
+      "end": 18,
+      "signed": false
      }
     ],
     "firmware_updating": [
@@ -1428,7 +1531,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "is_display_on": [
@@ -1437,7 +1541,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 22,
-      "end": 23
+      "end": 23,
+      "signed": false
      }
     ],
     "max_battery_percentage": [
@@ -1446,7 +1551,8 @@
       "parse": "int",
       "tag": "d9",
       "begin": 4,
-      "end": 5
+      "end": 5,
+      "signed": false
      }
     ],
     "max_input_power": [
@@ -1455,7 +1561,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 5,
-      "end": 7
+      "end": 7,
+      "signed": false
      }
     ],
     "min_battery_percentage": [
@@ -1464,7 +1571,8 @@
       "parse": "int",
       "tag": "d9",
       "begin": 5,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "part_number": [
@@ -1473,7 +1581,8 @@
       "parse": "string",
       "tag": "a2",
       "begin": 22,
-      "end": 27
+      "end": 27,
+      "signed": false
      }
     ],
     "port_memory_enabled": [
@@ -1482,7 +1591,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 23,
-      "end": 24
+      "end": 24,
+      "signed": false
      }
     ],
     "power_out": [
@@ -1491,7 +1601,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 1,
-      "end": 3
+      "end": 3,
+      "signed": false
      }
     ],
     "power_saving_mode_enabled": [
@@ -1500,7 +1611,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 8,
-      "end": 9
+      "end": 9,
+      "signed": false
      }
     ],
     "serial_number": [
@@ -1509,7 +1621,8 @@
       "parse": "string",
       "tag": "a2",
       "begin": 3,
-      "end": 20
+      "end": 20,
+      "signed": false
      }
     ],
     "solar_power_in": [
@@ -1518,7 +1631,8 @@
       "parse": "int",
       "tag": "a8",
       "begin": 2,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "temperature": [
@@ -1527,7 +1641,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": true
      }
     ],
     "time_remaining": [
@@ -1536,7 +1651,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 7,
-      "end": 9
+      "end": 9,
+      "signed": false
      }
     ],
     "usb_a1_power": [
@@ -1545,7 +1661,8 @@
       "parse": "int",
       "tag": "ae",
       "begin": 2,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c1_power": [
@@ -1554,7 +1671,8 @@
       "parse": "int",
       "tag": "aa",
       "begin": 2,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c2_power": [
@@ -1563,7 +1681,8 @@
       "parse": "int",
       "tag": "ab",
       "begin": 2,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c3_power": [
@@ -1572,7 +1691,8 @@
       "parse": "int",
       "tag": "ac",
       "begin": 2,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_a1": [
@@ -1581,7 +1701,8 @@
       "parse": "int",
       "tag": "ae",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_c1": [
@@ -1590,7 +1711,8 @@
       "parse": "int",
       "tag": "aa",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_c2": [
@@ -1599,7 +1721,8 @@
       "parse": "int",
       "tag": "ab",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_c3": [
@@ -1608,7 +1731,8 @@
       "parse": "int",
       "tag": "ac",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ]
    }
@@ -1730,7 +1854,8 @@
       "parse": "int",
       "tag": "b7",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_power_in": [
@@ -1739,7 +1864,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_power_out": [
@@ -1748,7 +1874,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_timer_remaining": [
@@ -1757,7 +1884,8 @@
       "parse": "int",
       "tag": "a2",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_percentage": [
@@ -1766,7 +1894,8 @@
       "parse": "int",
       "tag": "bb",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "charging_status": [
@@ -1775,7 +1904,8 @@
       "parse": "int",
       "tag": "ba",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "dc_output": [
@@ -1784,7 +1914,8 @@
       "parse": "int",
       "tag": "c1",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "dc_power_out": [
@@ -1793,7 +1924,8 @@
       "parse": "int",
       "tag": "ab",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "dc_timer_remaining": [
@@ -1802,7 +1934,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "light": [
@@ -1811,7 +1944,8 @@
       "parse": "int",
       "tag": "cf",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "power_in": [
@@ -1820,7 +1954,8 @@
       "parse": "int",
       "tag": "ad",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "power_out": [
@@ -1829,7 +1964,8 @@
       "parse": "int",
       "tag": "ae",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "serial_number": [
@@ -1838,7 +1974,8 @@
       "parse": "string",
       "tag": "c5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "software_version": [
@@ -1847,7 +1984,8 @@
       "parse": "int",
       "tag": "b1",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_power_in": [
@@ -1856,7 +1994,8 @@
       "parse": "int",
       "tag": "ac",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "temperature": [
@@ -1865,7 +2004,8 @@
       "parse": "int",
       "tag": "b9",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": true
      }
     ],
     "time_remaining": [
@@ -1874,7 +2014,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_a1_power": [
@@ -1883,7 +2024,8 @@
       "parse": "int",
       "tag": "aa",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c1_power": [
@@ -1892,7 +2034,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c2_power": [
@@ -1901,7 +2044,8 @@
       "parse": "int",
       "tag": "a8",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c3_power": [
@@ -1910,7 +2054,8 @@
       "parse": "int",
       "tag": "a9",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_a1": [
@@ -1919,7 +2064,8 @@
       "parse": "int",
       "tag": "c0",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_c1": [
@@ -1928,7 +2074,8 @@
       "parse": "int",
       "tag": "bd",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_c2": [
@@ -1937,7 +2084,8 @@
       "parse": "int",
       "tag": "be",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_c3": [
@@ -1946,7 +2094,8 @@
       "parse": "int",
       "tag": "bf",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ]
    }
@@ -2039,7 +2188,8 @@
       "parse": "int",
       "tag": "af",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_health": [
@@ -2048,7 +2198,8 @@
       "parse": "int",
       "tag": "b8",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_percentage": [
@@ -2057,7 +2208,8 @@
       "parse": "int",
       "tag": "b7",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "charging_status": [
@@ -2066,7 +2218,8 @@
       "parse": "int",
       "tag": "b6",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "dc_12v_auto_on": [
@@ -2075,7 +2228,8 @@
       "parse": "int",
       "tag": "f7",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "dc_output": [
@@ -2084,7 +2238,8 @@
       "parse": "int",
       "tag": "bf",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "dc_power_out": [
@@ -2093,7 +2248,8 @@
       "parse": "int",
       "tag": "aa",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "dc_timer_remaining": [
@@ -2102,7 +2258,8 @@
       "parse": "int",
       "tag": "a2",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "device_overload": [
@@ -2111,7 +2268,8 @@
       "parse": "int",
       "tag": "c1",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "device_timeout": [
@@ -2120,7 +2278,8 @@
       "parse": "int",
       "tag": "c4",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "display_mode": [
@@ -2129,7 +2288,8 @@
       "parse": "int",
       "tag": "c7",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "display_timeout": [
@@ -2138,7 +2298,8 @@
       "parse": "int",
       "tag": "c5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "is_display_on": [
@@ -2147,7 +2308,8 @@
       "parse": "int",
       "tag": "ca",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "light": [
@@ -2156,7 +2318,8 @@
       "parse": "int",
       "tag": "c8",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "light_timeout": [
@@ -2165,7 +2328,8 @@
       "parse": "int",
       "tag": "cb",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "power_in": [
@@ -2174,7 +2338,8 @@
       "parse": "int",
       "tag": "ac",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "power_out": [
@@ -2183,7 +2348,8 @@
       "parse": "int",
       "tag": "ad",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "serial_number": [
@@ -2192,7 +2358,8 @@
       "parse": "string",
       "tag": "c3",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "software_version": [
@@ -2201,7 +2368,8 @@
       "parse": "int",
       "tag": "b0",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_port": [
@@ -2210,7 +2378,8 @@
       "parse": "int",
       "tag": "cd",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_power_in": [
@@ -2219,7 +2388,8 @@
       "parse": "int",
       "tag": "ab",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "temperature": [
@@ -2228,7 +2398,8 @@
       "parse": "int",
       "tag": "b5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": true
      }
     ],
     "temperature_unit": [
@@ -2237,7 +2408,8 @@
       "parse": "int",
       "tag": "c9",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "time_remaining": [
@@ -2246,7 +2418,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_a1_power": [
@@ -2255,7 +2428,8 @@
       "parse": "int",
       "tag": "a8",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_a2_power": [
@@ -2264,7 +2438,8 @@
       "parse": "int",
       "tag": "a9",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c1_power": [
@@ -2273,7 +2448,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c2_power": [
@@ -2282,7 +2458,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c3_power": [
@@ -2291,7 +2468,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c4_power": [
@@ -2300,7 +2478,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_a1": [
@@ -2309,7 +2488,8 @@
       "parse": "int",
       "tag": "bd",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_a2": [
@@ -2318,7 +2498,8 @@
       "parse": "int",
       "tag": "be",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_c1": [
@@ -2327,7 +2508,8 @@
       "parse": "int",
       "tag": "b9",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_c2": [
@@ -2336,7 +2518,8 @@
       "parse": "int",
       "tag": "ba",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_c3": [
@@ -2345,7 +2528,8 @@
       "parse": "int",
       "tag": "bb",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_c4": [
@@ -2354,7 +2538,8 @@
       "parse": "int",
       "tag": "bc",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ]
    }
@@ -2476,7 +2661,8 @@
       "parse": "int",
       "tag": "bb",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_power_in": [
@@ -2485,7 +2671,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_power_out": [
@@ -2494,7 +2681,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_timer_remaining": [
@@ -2503,7 +2691,8 @@
       "parse": "int",
       "tag": "a2",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_health": [
@@ -2512,7 +2701,8 @@
       "parse": "int",
       "tag": "c3",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_percentage": [
@@ -2521,7 +2711,8 @@
       "parse": "int",
       "tag": "c1",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "power_in": [
@@ -2530,7 +2721,8 @@
       "parse": "int",
       "tag": "af",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "power_out": [
@@ -2539,7 +2731,8 @@
       "parse": "int",
       "tag": "b0",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "serial_number": [
@@ -2548,7 +2741,8 @@
       "parse": "string",
       "tag": "d0",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "software_version": [
@@ -2557,7 +2751,8 @@
       "parse": "int",
       "tag": "b3",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_power_in": [
@@ -2566,7 +2761,8 @@
       "parse": "int",
       "tag": "ae",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "temperature": [
@@ -2575,7 +2771,8 @@
       "parse": "int",
       "tag": "bd",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": true
      }
     ],
     "time_remaining": [
@@ -2584,7 +2781,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_a1_power": [
@@ -2593,7 +2791,8 @@
       "parse": "int",
       "tag": "a9",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_a2_power": [
@@ -2602,7 +2801,8 @@
       "parse": "int",
       "tag": "aa",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c1_power": [
@@ -2611,7 +2811,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c2_power": [
@@ -2620,7 +2821,8 @@
       "parse": "int",
       "tag": "a8",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ]
    }
@@ -2643,7 +2845,8 @@
       "parse": "int",
       "tag": "af",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_power_out": [
@@ -2652,7 +2855,8 @@
       "parse": "int",
       "tag": "b0",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_power_out_sockets": [
@@ -2661,7 +2865,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_to_battery": [
@@ -2670,7 +2875,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_health": [
@@ -2679,7 +2885,8 @@
       "parse": "int",
       "tag": "c3",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_health_expansion": [
@@ -2688,7 +2895,8 @@
       "parse": "int",
       "tag": "c4",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_percentage": [
@@ -2697,7 +2905,8 @@
       "parse": "int",
       "tag": "c1",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_percentage_expansion": [
@@ -2706,7 +2915,8 @@
       "parse": "int",
       "tag": "c2",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "dc_1_power_out": [
@@ -2715,7 +2925,8 @@
       "parse": "int",
       "tag": "ac",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "dc_2_power_out": [
@@ -2724,7 +2935,8 @@
       "parse": "int",
       "tag": "ad",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "num_expansion": [
@@ -2733,7 +2945,8 @@
       "parse": "int",
       "tag": "c5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "serial_number": [
@@ -2742,7 +2955,8 @@
       "parse": "string",
       "tag": "d0",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "software_version": [
@@ -2751,7 +2965,8 @@
       "parse": "int",
       "tag": "b3",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "software_version_controller": [
@@ -2760,7 +2975,8 @@
       "parse": "int",
       "tag": "ba",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "software_version_expansion": [
@@ -2769,7 +2985,8 @@
       "parse": "int",
       "tag": "b9",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_power_in": [
@@ -2778,7 +2995,8 @@
       "parse": "int",
       "tag": "ae",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "temperature": [
@@ -2787,7 +3005,8 @@
       "parse": "int",
       "tag": "bd",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": true
      }
     ],
     "temperature_expansion": [
@@ -2796,7 +3015,8 @@
       "parse": "int",
       "tag": "be",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": true
      }
     ],
     "time_remaining": [
@@ -2805,7 +3025,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_a1_power": [
@@ -2814,7 +3035,8 @@
       "parse": "int",
       "tag": "aa",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_a2_power": [
@@ -2823,7 +3045,8 @@
       "parse": "int",
       "tag": "ab",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c1_power": [
@@ -2832,7 +3055,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c2_power": [
@@ -2841,7 +3065,8 @@
       "parse": "int",
       "tag": "a8",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c3_power": [
@@ -2850,7 +3075,8 @@
       "parse": "int",
       "tag": "a9",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ]
    }
@@ -3030,7 +3256,8 @@
       "parse": "int",
       "tag": null,
       "begin": 101,
-      "end": 103
+      "end": 103,
+      "signed": false
      }
     ],
     "ac_output": [
@@ -3039,7 +3266,8 @@
       "parse": "int",
       "tag": null,
       "begin": 63,
-      "end": 64
+      "end": 64,
+      "signed": false
      }
     ],
     "ac_power_in": [
@@ -3048,7 +3276,8 @@
       "parse": "int",
       "tag": null,
       "begin": 19,
-      "end": 21
+      "end": 21,
+      "signed": false
      }
     ],
     "ac_power_out": [
@@ -3057,7 +3286,8 @@
       "parse": "int",
       "tag": null,
       "begin": 21,
-      "end": 23
+      "end": 23,
+      "signed": false
      }
     ],
     "battery_health": [
@@ -3066,7 +3296,8 @@
       "parse": "int",
       "tag": null,
       "begin": 72,
-      "end": 73
+      "end": 73,
+      "signed": false
      }
     ],
     "battery_percentage": [
@@ -3075,7 +3306,8 @@
       "parse": "int",
       "tag": null,
       "begin": 70,
-      "end": 71
+      "end": 71,
+      "signed": false
      }
     ],
     "battery_percentage_expansion": [
@@ -3084,7 +3316,8 @@
       "parse": "int",
       "tag": null,
       "begin": 71,
-      "end": 72
+      "end": 72,
+      "signed": false
      }
     ],
     "charging_status": [
@@ -3093,7 +3326,8 @@
       "parse": "int",
       "tag": null,
       "begin": 68,
-      "end": 69
+      "end": 69,
+      "signed": false
      }
     ],
     "days_remaining": [
@@ -3102,7 +3336,8 @@
       "parse": "int",
       "tag": null,
       "begin": 18,
-      "end": 19
+      "end": 19,
+      "signed": false
      }
     ],
     "dc_1_power_out": [
@@ -3111,7 +3346,8 @@
       "parse": "int",
       "tag": null,
       "begin": 33,
-      "end": 35
+      "end": 35,
+      "signed": false
      }
     ],
     "dc_2_power_out": [
@@ -3120,7 +3356,8 @@
       "parse": "int",
       "tag": null,
       "begin": 35,
-      "end": 37
+      "end": 37,
+      "signed": false
      }
     ],
     "dc_output_1": [
@@ -3129,7 +3366,8 @@
       "parse": "int",
       "tag": null,
       "begin": 80,
-      "end": 81
+      "end": 81,
+      "signed": false
      }
     ],
     "dc_output_2": [
@@ -3138,7 +3376,8 @@
       "parse": "int",
       "tag": null,
       "begin": 81,
-      "end": 82
+      "end": 82,
+      "signed": false
      }
     ],
     "dc_timer_remaining": [
@@ -3147,7 +3386,8 @@
       "parse": "int",
       "tag": null,
       "begin": 13,
-      "end": 15
+      "end": 15,
+      "signed": false
      }
     ],
     "display_mode": [
@@ -3156,7 +3396,8 @@
       "parse": "int",
       "tag": null,
       "begin": 115,
-      "end": 116
+      "end": 116,
+      "signed": false
      }
     ],
     "display_timeout": [
@@ -3165,7 +3406,8 @@
       "parse": "int",
       "tag": null,
       "begin": 105,
-      "end": 107
+      "end": 107,
+      "signed": false
      }
     ],
     "hours_remaining": [
@@ -3174,7 +3416,8 @@
       "parse": "int",
       "tag": null,
       "begin": 17,
-      "end": 18
+      "end": 18,
+      "signed": false
      }
     ],
     "light": [
@@ -3183,7 +3426,8 @@
       "parse": "int",
       "tag": null,
       "begin": 117,
-      "end": 118
+      "end": 118,
+      "signed": false
      }
     ],
     "power_in": [
@@ -3192,7 +3436,8 @@
       "parse": "int",
       "tag": null,
       "begin": 39,
-      "end": 41
+      "end": 41,
+      "signed": false
      }
     ],
     "power_out": [
@@ -3201,7 +3446,8 @@
       "parse": "int",
       "tag": null,
       "begin": 41,
-      "end": 43
+      "end": 43,
+      "signed": false
      }
     ],
     "power_saving_mode_enabled": [
@@ -3210,7 +3456,8 @@
       "parse": "int",
       "tag": null,
       "begin": 117,
-      "end": 118
+      "end": 118,
+      "signed": false
      }
     ],
     "serial_number": [
@@ -3219,7 +3466,8 @@
       "parse": "string",
       "tag": null,
       "begin": 85,
-      "end": 101
+      "end": 101,
+      "signed": false
      }
     ],
     "solar_power_in": [
@@ -3228,7 +3476,8 @@
       "parse": "int",
       "tag": null,
       "begin": 37,
-      "end": 39
+      "end": 39,
+      "signed": false
      }
     ],
     "temperature": [
@@ -3237,7 +3486,8 @@
       "parse": "int",
       "tag": null,
       "begin": 66,
-      "end": 67
+      "end": 67,
+      "signed": true
      }
     ],
     "temperature_expansion": [
@@ -3246,7 +3496,8 @@
       "parse": "int",
       "tag": null,
       "begin": 67,
-      "end": 68
+      "end": 68,
+      "signed": true
      }
     ],
     "temperature_unit": [
@@ -3255,7 +3506,8 @@
       "parse": "int",
       "tag": null,
       "begin": 119,
-      "end": 120
+      "end": 120,
+      "signed": false
      }
     ],
     "usb_a1_power": [
@@ -3264,7 +3516,8 @@
       "parse": "int",
       "tag": null,
       "begin": 29,
-      "end": 31
+      "end": 31,
+      "signed": false
      }
     ],
     "usb_a2_power": [
@@ -3273,7 +3526,8 @@
       "parse": "int",
       "tag": null,
       "begin": 31,
-      "end": 33
+      "end": 33,
+      "signed": false
      }
     ],
     "usb_c1_power": [
@@ -3282,7 +3536,8 @@
       "parse": "int",
       "tag": null,
       "begin": 23,
-      "end": 25
+      "end": 25,
+      "signed": false
      }
     ],
     "usb_c2_power": [
@@ -3291,7 +3546,8 @@
       "parse": "int",
       "tag": null,
       "begin": 25,
-      "end": 27
+      "end": 27,
+      "signed": false
      }
     ],
     "usb_c3_power": [
@@ -3300,7 +3556,8 @@
       "parse": "int",
       "tag": null,
       "begin": 27,
-      "end": 29
+      "end": 29,
+      "signed": false
      }
     ],
     "usb_port_a1": [
@@ -3309,7 +3566,8 @@
       "parse": "int",
       "tag": null,
       "begin": 78,
-      "end": 79
+      "end": 79,
+      "signed": false
      }
     ],
     "usb_port_a2": [
@@ -3318,7 +3576,8 @@
       "parse": "int",
       "tag": null,
       "begin": 79,
-      "end": 80
+      "end": 80,
+      "signed": false
      }
     ],
     "usb_port_c1": [
@@ -3327,7 +3586,8 @@
       "parse": "int",
       "tag": null,
       "begin": 75,
-      "end": 76
+      "end": 76,
+      "signed": false
      }
     ],
     "usb_port_c2": [
@@ -3336,7 +3596,8 @@
       "parse": "int",
       "tag": null,
       "begin": 76,
-      "end": 77
+      "end": 77,
+      "signed": false
      }
     ],
     "usb_port_c3": [
@@ -3345,7 +3606,8 @@
       "parse": "int",
       "tag": null,
       "begin": 77,
-      "end": 78
+      "end": 78,
+      "signed": false
      }
     ]
    }
@@ -3518,7 +3780,8 @@
       "parse": "int",
       "tag": "d1",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_output": [
@@ -3527,7 +3790,8 @@
       "parse": "int",
       "tag": "bb",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_power_in": [
@@ -3536,7 +3800,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_power_out": [
@@ -3545,7 +3810,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_power_out_sockets": [
@@ -3554,7 +3820,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_timer_remaining": [
@@ -3563,7 +3830,8 @@
       "parse": "int",
       "tag": "a2",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_to_battery": [
@@ -3572,7 +3840,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_health": [
@@ -3581,7 +3850,8 @@
       "parse": "int",
       "tag": "c3",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_health_expansion": [
@@ -3590,7 +3860,8 @@
       "parse": "int",
       "tag": "c4",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_percentage": [
@@ -3599,7 +3870,8 @@
       "parse": "int",
       "tag": "c1",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_percentage_expansion": [
@@ -3608,7 +3880,8 @@
       "parse": "int",
       "tag": "c2",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "charging_status": [
@@ -3617,7 +3890,8 @@
       "parse": "int",
       "tag": "bc",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "dc_1_power_out": [
@@ -3626,7 +3900,8 @@
       "parse": "int",
       "tag": "ac",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "dc_2_power_out": [
@@ -3635,7 +3910,8 @@
       "parse": "int",
       "tag": "ad",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "dc_output": [
@@ -3644,7 +3920,8 @@
       "parse": "int",
       "tag": "cb",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "dc_timer_remaining": [
@@ -3653,7 +3930,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "display_mode": [
@@ -3662,7 +3940,8 @@
       "parse": "int",
       "tag": "d9",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "display_timeout": [
@@ -3671,7 +3950,8 @@
       "parse": "int",
       "tag": "d3",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "is_display_on": [
@@ -3680,7 +3960,8 @@
       "parse": "int",
       "tag": "de",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "light": [
@@ -3689,7 +3970,8 @@
       "parse": "int",
       "tag": "cf",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "num_expansion": [
@@ -3698,7 +3980,8 @@
       "parse": "int",
       "tag": "c5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "power_in": [
@@ -3707,7 +3990,8 @@
       "parse": "int",
       "tag": "af",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "power_out": [
@@ -3716,7 +4000,8 @@
       "parse": "int",
       "tag": "b0",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "power_saving_mode_enabled": [
@@ -3725,7 +4010,8 @@
       "parse": "int",
       "tag": "db",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "serial_number": [
@@ -3734,7 +4020,8 @@
       "parse": "string",
       "tag": "d0",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "software_version": [
@@ -3743,7 +4030,8 @@
       "parse": "int",
       "tag": "b3",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "software_version_controller": [
@@ -3752,7 +4040,8 @@
       "parse": "int",
       "tag": "ba",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "software_version_expansion": [
@@ -3761,7 +4050,8 @@
       "parse": "int",
       "tag": "b9",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_port": [
@@ -3770,7 +4060,8 @@
       "parse": "int",
       "tag": "bf",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_power_in": [
@@ -3779,7 +4070,8 @@
       "parse": "int",
       "tag": "ae",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "temperature": [
@@ -3788,7 +4080,8 @@
       "parse": "int",
       "tag": "bd",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": true
      }
     ],
     "temperature_expansion": [
@@ -3797,7 +4090,8 @@
       "parse": "int",
       "tag": "be",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": true
      }
     ],
     "time_remaining": [
@@ -3806,7 +4100,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_a1_power": [
@@ -3815,7 +4110,8 @@
       "parse": "int",
       "tag": "aa",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_a2_power": [
@@ -3824,7 +4120,8 @@
       "parse": "int",
       "tag": "ab",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c1_power": [
@@ -3833,7 +4130,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c2_power": [
@@ -3842,7 +4140,8 @@
       "parse": "int",
       "tag": "a8",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c3_power": [
@@ -3851,7 +4150,8 @@
       "parse": "int",
       "tag": "a9",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_a1": [
@@ -3860,7 +4160,8 @@
       "parse": "int",
       "tag": "c9",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_a2": [
@@ -3869,7 +4170,8 @@
       "parse": "int",
       "tag": "ca",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_c1": [
@@ -3878,7 +4180,8 @@
       "parse": "int",
       "tag": "c6",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_c2": [
@@ -3887,7 +4190,8 @@
       "parse": "int",
       "tag": "c7",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_c3": [
@@ -3896,7 +4200,8 @@
       "parse": "int",
       "tag": "c8",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ]
    }
@@ -3956,7 +4261,8 @@
       "parse": "int",
       "tag": "bc",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_power_in": [
@@ -3965,7 +4271,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_power_out": [
@@ -3974,7 +4281,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_charge_power": [
@@ -3983,7 +4291,8 @@
       "parse": "int",
       "tag": "b1",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_discharge_power": [
@@ -3992,7 +4301,8 @@
       "parse": "int",
       "tag": "b4",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_percentage": [
@@ -4001,7 +4311,8 @@
       "parse": "int",
       "tag": "ad",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_percentage_aggregate": [
@@ -4010,7 +4321,8 @@
       "parse": "int",
       "tag": "c0",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "charging_status": [
@@ -4019,7 +4331,8 @@
       "parse": "int",
       "tag": "bd",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "dc_output": [
@@ -4028,7 +4341,8 @@
       "parse": "int",
       "tag": "ac",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "display_timeout": [
@@ -4037,7 +4351,8 @@
       "parse": "int",
       "tag": "cf",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "max_battery_percentage": [
@@ -4046,7 +4361,8 @@
       "parse": "int",
       "tag": "c1",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "power_out": [
@@ -4055,7 +4371,8 @@
       "parse": "int",
       "tag": "b2",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "serial_number": [
@@ -4064,7 +4381,8 @@
       "parse": "string",
       "tag": "cc",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "software_version": [
@@ -4073,7 +4391,8 @@
       "parse": "int",
       "tag": "b5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "software_version_expansion": [
@@ -4082,7 +4401,8 @@
       "parse": "int",
       "tag": "ba",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_power_in": [
@@ -4091,7 +4411,8 @@
       "parse": "int",
       "tag": "ae",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_pv_1_power_in": [
@@ -4100,7 +4421,8 @@
       "parse": "int",
       "tag": "af",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_pv_2_power_in": [
@@ -4109,7 +4431,8 @@
       "parse": "int",
       "tag": "b0",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "temperature": [
@@ -4118,7 +4441,8 @@
       "parse": "int",
       "tag": "be",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": true
      }
     ],
     "time_remaining": [
@@ -4127,7 +4451,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_a1_power": [
@@ -4136,7 +4461,8 @@
       "parse": "int",
       "tag": "aa",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_a2_power": [
@@ -4145,7 +4471,8 @@
       "parse": "int",
       "tag": "ab",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c1_power": [
@@ -4154,7 +4481,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c2_power": [
@@ -4163,7 +4491,8 @@
       "parse": "int",
       "tag": "a8",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c3_power": [
@@ -4172,7 +4501,8 @@
       "parse": "int",
       "tag": "a9",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_a1": [
@@ -4181,7 +4511,8 @@
       "parse": "int",
       "tag": "c5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_a2": [
@@ -4190,7 +4521,8 @@
       "parse": "int",
       "tag": "c6",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_c1": [
@@ -4199,7 +4531,8 @@
       "parse": "int",
       "tag": "c2",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_c2": [
@@ -4208,7 +4541,8 @@
       "parse": "int",
       "tag": "c3",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_port_c3": [
@@ -4217,7 +4551,8 @@
       "parse": "int",
       "tag": "c4",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ]
    }
@@ -4260,7 +4595,8 @@
       "parse": "int",
       "tag": "a2",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "pad_1_power": [
@@ -4269,7 +4605,8 @@
       "parse": "int",
       "tag": "a2",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "pad_2": [
@@ -4278,7 +4615,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "pad_2_power": [
@@ -4287,7 +4625,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "pad_3": [
@@ -4296,7 +4635,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "pad_3_power": [
@@ -4305,7 +4645,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ]
    }
@@ -4446,7 +4787,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 4,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "usb_c1_power": [
@@ -4455,7 +4797,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "usb_c1_voltage": [
@@ -4464,7 +4807,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "usb_c2_current": [
@@ -4473,7 +4817,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 4,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "usb_c2_power": [
@@ -4482,7 +4827,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "usb_c2_voltage": [
@@ -4491,7 +4837,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "usb_c3_current": [
@@ -4500,7 +4847,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 4,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "usb_c3_power": [
@@ -4509,7 +4857,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "usb_c3_voltage": [
@@ -4518,7 +4867,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "usb_port_c1": [
@@ -4527,7 +4877,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_c2": [
@@ -4536,7 +4887,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_c3": [
@@ -4545,7 +4897,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ]
    }
@@ -4960,7 +5313,8 @@
       "parse": "int",
       "tag": "a2",
       "begin": 1,
-      "end": 3
+      "end": 3,
+      "signed": false
      }
     ],
     "usb_a1_a2_schedule": [
@@ -4969,7 +5323,8 @@
       "parse": "record",
       "tag": "ae",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_a1_a2_timer": [
@@ -4978,7 +5333,8 @@
       "parse": "record",
       "tag": "ae",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_a1_current": [
@@ -4987,7 +5343,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 4,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "usb_a1_power": [
@@ -4996,7 +5353,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "usb_a1_voltage": [
@@ -5005,7 +5363,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "usb_a2_current": [
@@ -5014,7 +5373,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 4,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "usb_a2_power": [
@@ -5023,7 +5383,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "usb_a2_voltage": [
@@ -5032,7 +5393,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "usb_c1_current": [
@@ -5041,7 +5403,8 @@
       "parse": "int",
       "tag": "a2",
       "begin": 4,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "usb_c1_power": [
@@ -5050,7 +5413,8 @@
       "parse": "int",
       "tag": "a2",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "usb_c1_schedule": [
@@ -5059,7 +5423,8 @@
       "parse": "record",
       "tag": "aa",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c1_timer": [
@@ -5068,7 +5433,8 @@
       "parse": "record",
       "tag": "aa",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c1_voltage": [
@@ -5077,7 +5443,8 @@
       "parse": "int",
       "tag": "a2",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "usb_c2_current": [
@@ -5086,7 +5453,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 4,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "usb_c2_power": [
@@ -5095,7 +5463,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "usb_c2_schedule": [
@@ -5104,7 +5473,8 @@
       "parse": "record",
       "tag": "ab",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c2_timer": [
@@ -5113,7 +5483,8 @@
       "parse": "record",
       "tag": "ab",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c2_voltage": [
@@ -5122,7 +5493,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "usb_c3_current": [
@@ -5131,7 +5503,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 4,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "usb_c3_power": [
@@ -5140,7 +5513,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "usb_c3_schedule": [
@@ -5149,7 +5523,8 @@
       "parse": "record",
       "tag": "ac",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c3_timer": [
@@ -5158,7 +5533,8 @@
       "parse": "record",
       "tag": "ac",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c3_voltage": [
@@ -5167,7 +5543,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "usb_c4_current": [
@@ -5176,7 +5553,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 4,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "usb_c4_power": [
@@ -5185,7 +5563,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "usb_c4_schedule": [
@@ -5194,7 +5573,8 @@
       "parse": "record",
       "tag": "ad",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c4_timer": [
@@ -5203,7 +5583,8 @@
       "parse": "record",
       "tag": "ad",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c4_voltage": [
@@ -5212,7 +5593,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "usb_port_a1": [
@@ -5221,7 +5603,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_a2": [
@@ -5230,7 +5613,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_c1": [
@@ -5239,7 +5623,8 @@
       "parse": "int",
       "tag": "a2",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_c2": [
@@ -5248,7 +5633,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_c3": [
@@ -5257,7 +5643,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_c4": [
@@ -5266,7 +5653,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ]
    }
@@ -5845,7 +6233,8 @@
       "parse": "int",
       "tag": "b5",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "ac_output_1": [
@@ -5854,7 +6243,8 @@
       "parse": "int",
       "tag": "aa",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "ac_output_1_schedule": [
@@ -5863,7 +6253,8 @@
       "parse": "record",
       "tag": "aa",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_output_1_timer": [
@@ -5872,7 +6263,8 @@
       "parse": "record",
       "tag": "aa",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_output_2": [
@@ -5881,7 +6273,8 @@
       "parse": "int",
       "tag": "ab",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "ac_output_2_schedule": [
@@ -5890,7 +6283,8 @@
       "parse": "record",
       "tag": "ab",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_output_2_timer": [
@@ -5899,7 +6293,8 @@
       "parse": "record",
       "tag": "ab",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "charging_mode": [
@@ -5908,7 +6303,8 @@
       "parse": "int",
       "tag": "ae",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "charging_submode": [
@@ -5917,7 +6313,8 @@
       "parse": "int",
       "tag": "ae",
       "begin": 2,
-      "end": 3
+      "end": 3,
+      "signed": false
      }
     ],
     "clock_format": [
@@ -5926,7 +6323,8 @@
       "parse": "int",
       "tag": "b4",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "display_brightness": [
@@ -5935,7 +6333,8 @@
       "parse": "int",
       "tag": "ad",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "display_theme": [
@@ -5944,7 +6343,8 @@
       "parse": "int",
       "tag": "ac",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "display_timeout": [
@@ -5953,7 +6353,8 @@
       "parse": "int",
       "tag": "ad",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "is_display_on": [
@@ -5962,7 +6363,8 @@
       "parse": "int",
       "tag": "ac",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "software_version": [
@@ -5971,7 +6373,8 @@
       "parse": "int",
       "tag": "a2",
       "begin": 1,
-      "end": 3
+      "end": 3,
+      "signed": false
      }
     ],
     "usb_a1_current": [
@@ -5980,7 +6383,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 4,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "usb_a1_power": [
@@ -5989,7 +6393,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "usb_a1_voltage": [
@@ -5998,7 +6403,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "usb_a2_current": [
@@ -6007,7 +6413,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 4,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "usb_a2_power": [
@@ -6016,7 +6423,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "usb_a2_voltage": [
@@ -6025,7 +6433,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "usb_c1_current": [
@@ -6034,7 +6443,8 @@
       "parse": "int",
       "tag": "a2",
       "begin": 4,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "usb_c1_power": [
@@ -6043,7 +6453,8 @@
       "parse": "int",
       "tag": "a2",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "usb_c1_schedule": [
@@ -6052,7 +6463,8 @@
       "parse": "record",
       "tag": "b0",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c1_timer": [
@@ -6061,7 +6473,8 @@
       "parse": "record",
       "tag": "b0",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c1_voltage": [
@@ -6070,7 +6483,8 @@
       "parse": "int",
       "tag": "a2",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "usb_c2_current": [
@@ -6079,7 +6493,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 4,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "usb_c2_power": [
@@ -6088,7 +6503,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "usb_c2_schedule": [
@@ -6097,7 +6513,8 @@
       "parse": "record",
       "tag": "b1",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c2_timer": [
@@ -6106,7 +6523,8 @@
       "parse": "record",
       "tag": "b1",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c2_voltage": [
@@ -6115,7 +6533,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "usb_c3_current": [
@@ -6124,7 +6543,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 4,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "usb_c3_power": [
@@ -6133,7 +6553,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "usb_c3_schedule": [
@@ -6142,7 +6563,8 @@
       "parse": "record",
       "tag": "b2",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c3_timer": [
@@ -6151,7 +6573,8 @@
       "parse": "record",
       "tag": "b2",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c3_voltage": [
@@ -6160,7 +6583,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "usb_c4_current": [
@@ -6169,7 +6593,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 4,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "usb_c4_power": [
@@ -6178,7 +6603,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "usb_c4_schedule": [
@@ -6187,7 +6613,8 @@
       "parse": "record",
       "tag": "b3",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c4_timer": [
@@ -6196,7 +6623,8 @@
       "parse": "record",
       "tag": "b3",
       "begin": null,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usb_c4_voltage": [
@@ -6205,7 +6633,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "usb_port_a1": [
@@ -6214,7 +6643,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_a2": [
@@ -6223,7 +6653,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_c1": [
@@ -6232,7 +6663,8 @@
       "parse": "int",
       "tag": "a2",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_c2": [
@@ -6241,7 +6673,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_c3": [
@@ -6250,7 +6683,8 @@
       "parse": "int",
       "tag": "a4",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_c4": [
@@ -6259,7 +6693,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ]
    }
@@ -6282,7 +6717,8 @@
       "parse": "int",
       "tag": "a2",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "power_out": [
@@ -6291,7 +6727,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "temperature": [
@@ -6300,7 +6737,8 @@
       "parse": "int",
       "tag": "af",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": true
      }
     ],
     "usb_a1_current": [
@@ -6309,7 +6747,8 @@
       "parse": "int",
       "tag": "ac",
       "begin": 4,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "usb_a1_power": [
@@ -6318,7 +6757,8 @@
       "parse": "int",
       "tag": "ac",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "usb_a1_voltage": [
@@ -6327,7 +6767,8 @@
       "parse": "int",
       "tag": "ac",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "usb_c1_current": [
@@ -6336,7 +6777,8 @@
       "parse": "int",
       "tag": "a8",
       "begin": 4,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "usb_c1_power": [
@@ -6345,7 +6787,8 @@
       "parse": "int",
       "tag": "a8",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "usb_c1_voltage": [
@@ -6354,7 +6797,8 @@
       "parse": "int",
       "tag": "a8",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "usb_c2_current": [
@@ -6363,7 +6807,8 @@
       "parse": "int",
       "tag": "a9",
       "begin": 4,
-      "end": 6
+      "end": 6,
+      "signed": false
      }
     ],
     "usb_c2_power": [
@@ -6372,7 +6817,8 @@
       "parse": "int",
       "tag": "a9",
       "begin": 6,
-      "end": 8
+      "end": 8,
+      "signed": false
      }
     ],
     "usb_c2_voltage": [
@@ -6381,7 +6827,8 @@
       "parse": "int",
       "tag": "a9",
       "begin": 2,
-      "end": 4
+      "end": 4,
+      "signed": false
      }
     ],
     "usb_port_a1": [
@@ -6390,7 +6837,8 @@
       "parse": "int",
       "tag": "ac",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_c1": [
@@ -6399,7 +6847,8 @@
       "parse": "int",
       "tag": "a8",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ],
     "usb_port_c2": [
@@ -6408,7 +6857,8 @@
       "parse": "int",
       "tag": "a9",
       "begin": 1,
-      "end": 2
+      "end": 2,
+      "signed": false
      }
     ]
    }
@@ -6431,7 +6881,8 @@
       "parse": "int",
       "tag": "ac",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "ac_power_out_sockets": [
@@ -6440,7 +6891,8 @@
       "parse": "int",
       "tag": "c8",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_charge_power": [
@@ -6449,7 +6901,8 @@
       "parse": "int",
       "tag": "b0",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_discharge_power": [
@@ -6458,7 +6911,8 @@
       "parse": "int",
       "tag": "b7",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_heating": [
@@ -6467,7 +6921,8 @@
       "parse": "int",
       "tag": "e8",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_percentage": [
@@ -6476,7 +6931,8 @@
       "parse": "int",
       "tag": "a3",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_percentage_aggregate": [
@@ -6485,7 +6941,8 @@
       "parse": "int",
       "tag": "ad",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "charged_energy": [
@@ -6494,7 +6951,8 @@
       "parse": "int",
       "tag": "b2",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "consumed_energy": [
@@ -6503,7 +6961,8 @@
       "parse": "int",
       "tag": "c9",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "error_code": [
@@ -6512,7 +6971,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "grid_export_energy": [
@@ -6521,7 +6981,8 @@
       "parse": "int",
       "tag": "bf",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "grid_import_energy": [
@@ -6530,7 +6991,8 @@
       "parse": "int",
       "tag": "be",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "grid_status": [
@@ -6539,7 +7001,8 @@
       "parse": "int",
       "tag": "e0",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "grid_to_home_power": [
@@ -6548,7 +7011,8 @@
       "parse": "int",
       "tag": "bc",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "home_load_preset": [
@@ -6557,7 +7021,8 @@
       "parse": "int",
       "tag": "c7",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "house_demand": [
@@ -6566,7 +7031,8 @@
       "parse": "int",
       "tag": "c4",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "input_cutoff_data": [
@@ -6575,7 +7041,8 @@
       "parse": "int",
       "tag": "b6",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "light_mode": [
@@ -6584,7 +7051,8 @@
       "parse": "int",
       "tag": "d2",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "light_on": [
@@ -6593,7 +7061,8 @@
       "parse": "int",
       "tag": "e1",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "lowpower_input_data": [
@@ -6602,7 +7071,8 @@
       "parse": "int",
       "tag": "b5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "max_load": [
@@ -6611,7 +7081,8 @@
       "parse": "int",
       "tag": "c2",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "output_cutoff_data": [
@@ -6620,7 +7091,8 @@
       "parse": "int",
       "tag": "b4",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "output_energy": [
@@ -6629,7 +7101,8 @@
       "parse": "int",
       "tag": "b3",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "power_out": [
@@ -6638,7 +7111,8 @@
       "parse": "int",
       "tag": "d3",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "pv_to_grid_power": [
@@ -6647,7 +7121,8 @@
       "parse": "int",
       "tag": "bd",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "pv_yield": [
@@ -6656,7 +7131,8 @@
       "parse": "int",
       "tag": "b1",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "serial_number": [
@@ -6665,7 +7141,8 @@
       "parse": "string",
       "tag": "a2",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "software_version": [
@@ -6674,7 +7151,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "software_version_controller": [
@@ -6683,7 +7161,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "software_version_expansion": [
@@ -6692,7 +7171,8 @@
       "parse": "int",
       "tag": "a8",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_power_in": [
@@ -6701,7 +7181,8 @@
       "parse": "int",
       "tag": "ab",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_pv_1_power_in": [
@@ -6710,7 +7191,8 @@
       "parse": "int",
       "tag": "ca",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_pv_2_power_in": [
@@ -6719,7 +7201,8 @@
       "parse": "int",
       "tag": "cb",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_pv_3_power_in": [
@@ -6728,7 +7211,8 @@
       "parse": "int",
       "tag": "cc",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_pv_4_power_in": [
@@ -6737,7 +7221,8 @@
       "parse": "int",
       "tag": "cd",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "temperature": [
@@ -6746,7 +7231,8 @@
       "parse": "int",
       "tag": "aa",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": true
      }
     ],
     "temperature_unit": [
@@ -6755,7 +7241,8 @@
       "parse": "int",
       "tag": "a9",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "usage_mode": [
@@ -6764,7 +7251,8 @@
       "parse": "int",
       "tag": "c6",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ]
    }
@@ -6787,7 +7275,8 @@
       "parse": "int",
       "tag": "a6",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_percentage": [
@@ -6796,7 +7285,8 @@
       "parse": "int",
       "tag": "a7",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_percentage_aggregate": [
@@ -6805,7 +7295,8 @@
       "parse": "int",
       "tag": "a5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "battery_power": [
@@ -6814,7 +7305,8 @@
       "parse": "int",
       "tag": "b6",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": true
      }
     ],
     "charged_energy": [
@@ -6823,7 +7315,8 @@
       "parse": "int",
       "tag": "b7",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "discharged_energy": [
@@ -6832,7 +7325,8 @@
       "parse": "int",
       "tag": "b8",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "grid_export_energy": [
@@ -6841,7 +7335,8 @@
       "parse": "int",
       "tag": "bf",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "grid_import_energy": [
@@ -6850,7 +7345,8 @@
       "parse": "int",
       "tag": "be",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "grid_power": [
@@ -6859,7 +7355,8 @@
       "parse": "int",
       "tag": "bd",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": true
      }
     ],
     "grid_to_home_power": [
@@ -6868,7 +7365,8 @@
       "parse": "int",
       "tag": "d5",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "house_consumption": [
@@ -6877,7 +7375,8 @@
       "parse": "int",
       "tag": "b2",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "house_demand": [
@@ -6886,7 +7385,8 @@
       "parse": "int",
       "tag": "b1",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "power_out": [
@@ -6895,7 +7395,8 @@
       "parse": "int",
       "tag": "d3",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "pv_yield": [
@@ -6904,7 +7405,8 @@
       "parse": "int",
       "tag": "ac",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "serial_number": [
@@ -6913,7 +7415,8 @@
       "parse": "string",
       "tag": "a2",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_power_in": [
@@ -6922,7 +7425,8 @@
       "parse": "int",
       "tag": "ab",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_pv_1_power_in": [
@@ -6931,7 +7435,8 @@
       "parse": "int",
       "tag": "c7",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_pv_2_power_in": [
@@ -6940,7 +7445,8 @@
       "parse": "int",
       "tag": "c8",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_pv_3_power_in": [
@@ -6949,7 +7455,8 @@
       "parse": "int",
       "tag": "c9",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "solar_pv_4_power_in": [
@@ -6958,7 +7465,8 @@
       "parse": "int",
       "tag": "ca",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": false
      }
     ],
     "temperature": [
@@ -6967,7 +7475,8 @@
       "parse": "int",
       "tag": "cc",
       "begin": 1,
-      "end": null
+      "end": null,
+      "signed": true
      }
     ]
    }

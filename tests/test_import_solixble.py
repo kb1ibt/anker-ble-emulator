@@ -3,11 +3,14 @@
 
 from pathlib import Path
 
-from tests.fixtures.solixble import EXTRA, run_import, write_solixble
+from tests.fixtures.solixble import (
+    EXTRA,
+    run_import,
+    snapshot_read,
+    stream_read,
+    write_solixble,
+)
 from tools.import_solixble import msgtype
-
-
-WHOLE = {"source": "snapshot", "parse": "record", "begin": None, "end": None}
 
 
 def test_a_plain_device_reads_its_status_properties_and_commands(
@@ -20,12 +23,9 @@ def test_a_plain_device_reads_its_status_properties_and_commands(
     assert station["telemetry"] == ["402", "300", "405"]
     assert station["status"] == ["040", "840"]
     assert station["properties"] == {
-        "battery": [
-            {"source": "stream", "parse": "int", "tag": "c1", "begin": 1, "end": None}
-        ],
-        "serial": [
-            {"source": "stream", "parse": "string", "tag": "a2", "begin": 3, "end": 20}
-        ],
+        "battery": [stream_read("int", 1, None, tag="c1")],
+        "serial": [stream_read("string", 3, 20)],
+        "temperature": [stream_read("int", 1, 3, tag="c2", signed=True)],
     }
     assert station["commands"] == [
         {
@@ -51,6 +51,12 @@ def test_a_plain_device_reads_its_status_properties_and_commands(
     ]
 
 
+def test_a_class_s_own_outer_overrides_its_base_s(tmp_path: Path) -> None:
+    data = run_import(tmp_path / "out.json", str(write_solixble(tmp_path / "base")))
+
+    assert data["classes"]["StationGen2"]["outer"] == "encrypted"
+
+
 def test_an_encrypted_device_reads_its_helpers_and_snapshot(tmp_path: Path) -> None:
     data = run_import(tmp_path / "out.json", str(write_solixble(tmp_path / "base")))
     charger = data["classes"]["Charger"]
@@ -61,16 +67,12 @@ def test_an_encrypted_device_reads_its_helpers_and_snapshot(tmp_path: Path) -> N
     assert charger["subscribe"] == "200"
     assert charger["status"] is None
     assert charger["properties"] == {
-        "port_power": [
-            {"source": "stream", "parse": "int", "tag": "a2", "begin": 2, "end": 4}
-        ],
-        "schedule": [WHOLE | {"tag": "aa"}],
-        "timer": [WHOLE | {"tag": "ab"}],
-        "version": [
-            {"source": "snapshot", "parse": "int", "tag": "a2", "begin": 1, "end": 3}
-        ],
+        "port_power": [stream_read("int", 2, 4)],
+        "schedule": [snapshot_read("aa", None, None)],
+        "timer": [snapshot_read("ab", None, None)],
+        "version": [snapshot_read("a2", 1, 3)],
     }
-    assert set(data["classes"]) == {"Charger", "Station", "StationPlus"}
+    assert set(data["classes"]) == {"Charger", "Station", "StationGen2", "StationPlus"}
     assert [c["method"] for c in data["classes"]["StationPlus"]["commands"]] == [
         "get_status_update",
         "raw",
@@ -88,15 +90,7 @@ def test_a_later_checkout_only_adds_the_classes_the_first_lacks(
     assert data["sources"] == ["SolixBLE", "extra branch"]
     assert data["classes"]["Station"]["outer"] == "plain"
     assert data["classes"]["Legacy"]["properties"] == {
-        "level": [
-            {
-                "source": "stream",
-                "parse": "int",
-                "tag": "a1",
-                "begin": None,
-                "end": None,
-            }
-        ]
+        "level": [stream_read("int", None, None, tag="a1")]
     }
 
 
