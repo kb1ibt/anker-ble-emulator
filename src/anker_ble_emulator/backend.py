@@ -11,7 +11,7 @@ from bleak.backends.client import BaseBleakClient
 from bleak.backends.service import BleakGATTService, BleakGATTServiceCollection
 from bleak.exc import BleakError
 
-from .devices import SERVICE_UUID, EmulatedDevice
+from .devices import EmulatedDevice
 
 
 if TYPE_CHECKING:
@@ -23,6 +23,8 @@ if TYPE_CHECKING:
 
     from .module import Output
 
+#: The GATT service holding both characteristics; ``ff09`` is only advertised.
+GATT_SERVICE_UUID = "8c850001-0302-41c5-b46e-cf057c562025"
 COMMAND_UUID = "8c850002-0302-41c5-b46e-cf057c562025"
 TELEMETRY_UUID = "8c850003-0302-41c5-b46e-cf057c562025"
 SERVICE_HANDLE = 15
@@ -34,7 +36,7 @@ ATT_MTU = 256
 
 def _services(payload_cap: int) -> BleakGATTServiceCollection:
     services = BleakGATTServiceCollection()
-    service = BleakGATTService(None, SERVICE_HANDLE, SERVICE_UUID)
+    service = BleakGATTService(None, SERVICE_HANDLE, GATT_SERVICE_UUID)
     services.add_service(service)
     characteristics: tuple[tuple[int, str, list[CharacteristicPropertyName]], ...] = (
         (TELEMETRY_HANDLE, TELEMETRY_UUID, ["notify"]),

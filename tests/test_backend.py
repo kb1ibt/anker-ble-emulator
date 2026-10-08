@@ -12,6 +12,7 @@ from bleak.exc import BleakError
 from anker_ble_emulator import (
     A1783,
     COMMAND_UUID,
+    GATT_SERVICE_UUID,
     TELEMETRY_UUID,
     EmulatedBleakBackend,
     ManualClock,
@@ -44,6 +45,8 @@ async def test_connect_exposes_the_anker_service() -> None:
     assert telemetry is not None
     assert command.properties == ["write-without-response", "write"]
     assert telemetry.properties == ["notify"]
+    assert command.service_uuid == telemetry.service_uuid == GATT_SERVICE_UUID
+    assert client.services.get_service(GATT_SERVICE_UUID) is not None
     await client.disconnect()
     assert not client.is_connected
     assert not device.module.connected

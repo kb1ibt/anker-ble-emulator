@@ -15,7 +15,7 @@ An emulated Anker Solix BLE device (the comms module and the device MCU behind i
 | layouts | `layouts.py` | `Layout`: a product's telemetry fields (tag, type, length, named parts) and commands (accepted values), from anker-solix-api's maps; builds telemetry, sets values by name, checks commands; packaged in `maps/` |
 | products | `products.py` | `Product` part numbers with their SolixBLE class and anker-solix-api category; `Transport`, `Outer`, `Path` |
 | devices | `devices/` | `base.py`: `EmulatedDevice`, `Profile`, `Advert`; one module per product holding its profile and subclass; `solix_c_gen2.py`: the C Gen 2 line's shared command set; recorded frames in `devices/data/` |
-| backend | `backend.py` | `EmulatedBleakBackend(BaseBleakClient)`: GATT services from bleak's own classes, writes into the module, notifications out |
+| backend | `backend.py` | `EmulatedBleakBackend(BaseBleakClient)`: GATT services from bleak's own classes (service `8c850001`, write `8c850002`, notify `8c850003`; `ff09` is only advertised), writes into the module, notifications out |
 | testing | `testing.py` | `EmulatedConnection`: patches a client library's `establish_connection` (SolixBLE's by default) to return a real connected `BleakClient` on the emulator; keeps SolixBLE `MockDevice`'s names (`expect_ordered` as an optional write assertion, `refuse_after`, `disconnect`, `send_data`, `new_connection_error`, `allow_connect`, `check_assertions`, `writes`) |
 
 ## Emulated products
@@ -60,7 +60,7 @@ class A1783(EmulatedDevice): ...
 | `pn` | `Product` (`A1783`, `A2345`, `A91B2`, ...) | the model; selects the profile (serial length, advert, capability, auth mode, recorded MCU data) |
 | `serial` | string, or `None` | the provisioned serial reported in device info. `None` emulates a module with no serial: connect falls back to `ANKER_DEFAULT_SN_1` and device info omits the field |
 | `mac` | `AA:BB:CC:DD:EE:FF` | the BLE MAC reported in device info and the advert |
-| `transport` | `Transport.NEGOTIATED` (service `ff09`), `T2215`, `LEGACY` (service `1780`) | the GATT transport |
+| `transport` | `Transport.NEGOTIATED` (advertises `ff09`, GATT service `8c850001`), `T2215`, `LEGACY` (service `1780`) | the GATT transport |
 | `outer` | `Outer.ENCRYPTED`, `Outer.PLAIN`, keyword-only, exclusive with `module` | the negotiation outer the module expects: `4xxx` under the static GCM key, or `0xxx` in clear. `PLAIN` makes the module accept a cleartext connect whatever its build. `None` on a transport that doesn't negotiate |
 | `path` | `Path.ECDH`, `Path.LEGACY`, keyword-only | key establishment: P-256 ECDH, or the legacy account-key AES. `None` on a transport that doesn't negotiate |
 | `module` | `ModuleBuild.V0_2_9_7`, `V0_3_0_6`, `V0_3_3_0`, keyword-only, exclusive with `outer` | the comms module's firmware: what `0830` reports, which recorded module replies load, and whether the module enforces the auth mode (v0.3.3.0 only) |

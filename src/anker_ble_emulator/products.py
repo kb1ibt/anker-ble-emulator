@@ -10,7 +10,8 @@ from enum import StrEnum
 class Transport(StrEnum):
     """The GATT transport a device speaks."""
 
-    #: Service ``ff09``: ``ff09`` frames, a negotiated session.
+    #: Advertises ``ff09``, GATT service ``8c850001``: ``ff09`` frames, a
+    #: negotiated session.
     NEGOTIATED = "negotiated"
     #: Service ``2215``: ``ff09`` frames and negotiation on other characteristics.
     T2215 = "2215"

@@ -26,7 +26,7 @@ PROFILE = Profile(
     # No advertisement record is recorded for the A1761.
     advert=Advert(local_name=None),
     data=("a1761.json",),
-    replies={0x040: (0x840,)},
+    replies={0x040: (0x840,), 0x04A: (0x84A,)},
     pushes=(0x402,),
     device_version="v1.5.9",
     known_commands=frozenset(

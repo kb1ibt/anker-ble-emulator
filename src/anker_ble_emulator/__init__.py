@@ -1,7 +1,12 @@
 # Copyright (c) 2026 Shawn Stricker
 """Emulated Anker Solix BLE devices for testing BLE clients through bleak."""
 
-from .backend import COMMAND_UUID, TELEMETRY_UUID, EmulatedBleakBackend
+from .backend import (
+    COMMAND_UUID,
+    GATT_SERVICE_UUID,
+    TELEMETRY_UUID,
+    EmulatedBleakBackend,
+)
 from .clock import Clock, ManualClock, MonotonicClock
 from .devices import (
     A91B2,
@@ -41,6 +46,7 @@ __all__ = [
     "A2687",
     "COMMAND_UUID",
     "DEFAULT_MAC",
+    "GATT_SERVICE_UUID",
     "PRODUCTS",
     "TELEMETRY_UUID",
     "UNSET",

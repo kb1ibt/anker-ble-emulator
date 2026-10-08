@@ -21,7 +21,7 @@ PROFILE = Profile(
     path=Path.ECDH,
     module_build=ModuleBuild.CHARGING_0_0_5_0,
     auth_mode=AuthMode.CONFIRM,
-    # No advertisement record is recorded for the A2687.
+    # Only the product type (b405) is known, not the rest of the record.
     advert=Advert(local_name=None),
     data=("a2687.json",),
     replies={
