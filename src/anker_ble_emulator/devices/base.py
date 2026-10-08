@@ -156,6 +156,10 @@ class Profile:
             carries after the MAC.
         fragment_cap: The largest frame the module sends (``0803`` MTU cap).
         mcu_channel: The channel the MCU's frames travel on.
+        built: Msgtypes with no recording, built from the layout's typed
+            fields (a reply behind a ``00`` status).
+        map_built: Nothing about the product is recorded: the profile comes
+            from anker-solix-api's map and SolixBLE's device class.
 
     """
 
@@ -181,13 +185,22 @@ class Profile:
     serial_tail: int = 0
     fragment_cap: int = 253
     mcu_channel: int = CHANNEL_SESSION
+    built: tuple[int, ...] = ()
+    map_built: bool = False
 
-    def frames(self) -> dict[int, bytes]:
-        """Return the recorded cleartext payloads by msgtype."""
+    def frames(self, layout: Layout | None = None) -> dict[int, bytes]:
+        """Return the cleartext payloads by msgtype: recorded, then built."""
         frames: dict[int, bytes] = {}
         for name in reversed(self.data):
             frames |= {
-                int(key, 16): bytes.fromhex(value) for key, value in _data(name).items()
+                int(key, 16): bytes.fromhex(value)
+                for key, value in data_resource(name).items()
+            }
+        if layout is not None:
+            frames |= {
+                msgtype: (b"\x00" if msgtype & RESPONSE else b"")
+                + layout.build(msgtype)
+                for msgtype in self.built
             }
         return frames
 
@@ -216,7 +229,7 @@ class Profile:
             layout: The product's layout, for command acks and named values.
 
         """
-        frames, channel = self.frames(), self.mcu_channel
+        frames, channel = self.frames(layout), self.mcu_channel
         return McuScript(
             replies={
                 request: tuple(
@@ -231,13 +244,13 @@ class Profile:
             layout=layout,
             summary=None
             if self.summary is None
-            else Summary.from_json(_data(self.summary)),
+            else Summary.from_json(data_resource(self.summary)),
             rejects=self.rejects,
             channel=channel,
         )
 
 
-def _data(name: str) -> dict[str, Any]:
+def data_resource(name: str) -> dict[str, Any]:
     """Return a JSON resource in ``devices/data/``."""
     text = resources.files(__package__).joinpath("data", name).read_text()
     data: dict[str, Any] = json.loads(text)

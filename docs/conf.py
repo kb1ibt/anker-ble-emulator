@@ -4,9 +4,9 @@
 import json
 from pathlib import Path
 
-from anker_ble_emulator.devices import PROFILES
+from anker_ble_emulator.devices import MAP_BUILT, PROFILES
 from anker_ble_emulator.layouts import Layout
-from anker_ble_emulator.products import Product
+from anker_ble_emulator.products import PRODUCTS, Product
 
 
 project = "anker-ble-emulator"
@@ -34,6 +34,12 @@ EMULATED = (
     Product.A2687,
     Product.A2345,
     Product.A91B2,
+)
+MAP_BUILT_ROWS = (
+    "SolixBLE class",
+    "Outer",
+    "Status request",
+    "Telemetry built (typed by)",
 )
 COMMAND_ROWS = (
     "MCU commands known",
@@ -138,6 +144,39 @@ def command_table() -> str:
     return grid_table(("", *map(str, EMULATED)), rows)
 
 
+def map_built_column(pn: Product) -> list[str]:
+    """Return what a map-built product takes from SolixBLE and its map."""
+    profile = PROFILES[pn]
+    status = ", ".join(
+        f"``{request:04x}`` → ``{reply:04x}``"
+        for request, replies in profile.replies.items()
+        for reply in replies
+    )
+    pushes = ", ".join(
+        f"``{msgtype:04x}`` (``{profile.layout_aliases.get(msgtype, msgtype):04x}``)"
+        for msgtype in profile.pushes
+    )
+    return [
+        PRODUCTS[pn].solixble_class,
+        str(profile.outer),
+        status or "none",
+        pushes,
+        *command_column(pn),
+    ]
+
+
+def map_built_table() -> str:
+    """Return the map-built products, products as columns."""
+    columns = [map_built_column(pn) for pn in MAP_BUILT]
+    labels = (*MAP_BUILT_ROWS, *COMMAND_ROWS)
+    rows = [
+        (label, *(column[index] for column in columns))
+        for index, label in enumerate(labels)
+    ]
+    return grid_table(("", *map(str, MAP_BUILT)), rows)
+
+
 GENERATED.mkdir(exist_ok=True)
 (GENERATED / "layout_coverage.rst").write_text(grid_table(LAYOUT_HEADER, layout_rows()))
 (GENERATED / "command_coverage.rst").write_text(command_table())
+(GENERATED / "map_built.rst").write_text(map_built_table())

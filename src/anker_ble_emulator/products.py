@@ -52,6 +52,8 @@ class ModuleBuild(StrEnum):
     V0_3_0_6 = "v0.3.0.6"
     #: Refuses a cleartext connect and a non-ECDH method, and gates ``0027``.
     V0_3_3_0 = "v0.3.3.0"
+    #: A map-built product's module: nothing about it is recorded.
+    UNRECORDED = "unrecorded"
 
     @property
     def enforces(self) -> bool:
@@ -80,6 +82,7 @@ SESSION_OPS = {
     ModuleBuild.V0_2_9_8: frozenset({0x30}),
     ModuleBuild.V0_3_0_6: C_SESSION_OPS,
     ModuleBuild.V0_3_3_0: C_SESSION_OPS,
+    ModuleBuild.UNRECORDED: frozenset[int](),
 }
 
 

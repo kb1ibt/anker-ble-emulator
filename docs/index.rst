@@ -10,5 +10,6 @@ for testing BLE clients. The emulator plugs in under `bleak
    :maxdepth: 2
 
    compatibility
+   solixble-crosscheck
    design
    device-sources

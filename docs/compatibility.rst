@@ -63,6 +63,19 @@ Cloud mode (no BLE link)        ✅        ✅        ✅        ✅        ✅ 
   ``c405`` telemetry in three fragments and a ``0409`` status; it answers no
   recorded request, and its legacy (no account) handshake isn't emulated.
 
+Map-built products
+------------------
+
+Products with a SolixBLE device class and an anker-solix-api map but no
+recording get a profile generated from both (``tools/generate_profiles.py``,
+into ``devices/generated/``): the class's outer, status request and commands,
+and telemetry built from the map's typed fields under each message the class
+listens for. Nothing about them is recorded: no advertisement record, no
+``0830``, no frame. :doc:`solixble-crosscheck` checks every mapped product's
+SolixBLE decode positions and command links against its map.
+
+.. include:: _generated/map_built.rst
+
 Commands and telemetry
 ----------------------
 

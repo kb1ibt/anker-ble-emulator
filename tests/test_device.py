@@ -82,7 +82,7 @@ def test_outer_and_module_are_exclusive() -> None:
     ("pn", "transport", "path", "reason"),
     [
         pytest.param(
-            Product.A1790, None, None, "no emulation profile", id="no profile"
+            Product.A1780, None, None, "no emulation profile", id="no profile"
         ),
         pytest.param(
             Product.A1783,

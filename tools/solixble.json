@@ -1,0 +1,6976 @@
+{
+ "sources": [
+  "SolixBLE 042497c 2026-09-15",
+  "SolixBLE origin/legacy_f2000 13f8fee",
+  "SolixBLE PR#65 moorecp/add-as220-s2000 7a1780b"
+ ],
+ "classes": {
+  "AS220": {
+   "outer": "encrypted",
+   "telemetry": [
+    "900",
+    "421"
+   ],
+   "snapshot": [],
+   "status": null,
+   "subscribe": "100",
+   "commands": [
+    {
+     "method": "bind",
+     "cmd": null,
+     "fields": {},
+     "arguments": {
+      "payload": null
+     }
+    },
+    {
+     "method": "connect",
+     "cmd": null,
+     "fields": {},
+     "arguments": {
+      "payload": null
+     }
+    }
+   ],
+   "properties": {
+    "ac_input": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "f0",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "ac_output": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "ac_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 3,
+      "end": 5
+     }
+    ],
+    "ac_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "battery_health": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 4,
+      "end": 5
+     }
+    ],
+    "battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 3,
+      "end": 4
+     }
+    ],
+    "charging_status": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 2,
+      "end": 3
+     }
+    ],
+    "max_battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "d9",
+      "begin": 4,
+      "end": 5
+     }
+    ],
+    "min_battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "d9",
+      "begin": 5,
+      "end": 6
+     }
+    ],
+    "model": [
+     {
+      "source": "stream",
+      "parse": "string",
+      "tag": "a2",
+      "begin": 22,
+      "end": 27
+     }
+    ],
+    "power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 1,
+      "end": 3
+     }
+    ],
+    "serial_number": [
+     {
+      "source": "stream",
+      "parse": "string",
+      "tag": "a2",
+      "begin": 3,
+      "end": 20
+     }
+    ],
+    "solar_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a8",
+      "begin": 2,
+      "end": null
+     }
+    ],
+    "temperature": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "time_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 7,
+      "end": 9
+     }
+    ],
+    "usb_output": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "aa",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "aa",
+      "begin": 2,
+      "end": null
+     }
+    ]
+   }
+  },
+  "C1000": {
+   "outer": "plain",
+   "telemetry": [
+    "402",
+    "300",
+    "405"
+   ],
+   "snapshot": [],
+   "status": [
+    "040",
+    "840"
+   ],
+   "subscribe": null,
+   "commands": [
+    {
+     "method": "get_status_update",
+     "cmd": "040",
+     "fields": {
+      "a1": "21"
+     },
+     "arguments": {}
+    },
+    {
+     "method": "set_display_mode",
+     "cmd": "04c",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "mode": null
+     }
+    },
+    {
+     "method": "set_display_timeout",
+     "cmd": "046",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "time": null
+     }
+    },
+    {
+     "method": "set_light_mode",
+     "cmd": "04f",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "mode": null
+     }
+    },
+    {
+     "method": "turn_ac_off",
+     "cmd": "04a",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_ac_on",
+     "cmd": "04a",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_dc_off",
+     "cmd": "04b",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_dc_on",
+     "cmd": "04b",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_display_off",
+     "cmd": "052",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_display_on",
+     "cmd": "052",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    }
+   ],
+   "properties": {
+    "ac_output": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bb",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_timer_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a2",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_health": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c3",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_health_expansion": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c4",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c1",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_percentage_expansion": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c2",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "dc_output": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b2",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "dc_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b2",
+      "begin": 2,
+      "end": null
+     }
+    ],
+    "num_expansion": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "af",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b0",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "serial_number": [
+     {
+      "source": "stream",
+      "parse": "string",
+      "tag": "d0",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "software_version": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b3",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "software_version_controller": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ba",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "software_version_expansion": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b9",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ae",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "temperature": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bd",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "temperature_expansion": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "be",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "time_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_a1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a9",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_a2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "aa",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a8",
+      "begin": 1,
+      "end": null
+     }
+    ]
+   }
+  },
+  "C1000G2": {
+   "outer": "plain",
+   "telemetry": [
+    "421",
+    "900"
+   ],
+   "snapshot": [],
+   "status": null,
+   "subscribe": "100",
+   "commands": [
+    {
+     "method": "connect",
+     "cmd": "100",
+     "fields": {
+      "a1": "21"
+     },
+     "arguments": {}
+    },
+    {
+     "method": "get_status_update",
+     "cmd": "100",
+     "fields": {
+      "a1": "21"
+     },
+     "arguments": {}
+    },
+    {
+     "method": "set_ac_timer",
+     "cmd": "101",
+     "fields": {
+      "a1": "21",
+      "a3": null
+     },
+     "arguments": {
+      "seconds": null
+     }
+    },
+    {
+     "method": "set_dc_timer",
+     "cmd": "102",
+     "fields": {
+      "a1": "21",
+      "a3": null
+     },
+     "arguments": {
+      "seconds": null
+     }
+    },
+    {
+     "method": "set_display_mode",
+     "cmd": "103",
+     "fields": {
+      "a1": "21",
+      "a3": null
+     },
+     "arguments": {
+      "mode": null
+     }
+    },
+    {
+     "method": "set_display_mode",
+     "cmd": "103",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {
+      "on": false
+     }
+    },
+    {
+     "method": "set_display_timeout",
+     "cmd": "103",
+     "fields": {
+      "a1": "21",
+      "a4": null
+     },
+     "arguments": {
+      "seconds": null
+     }
+    },
+    {
+     "method": "set_max_battery_percentage",
+     "cmd": "103",
+     "fields": {
+      "a1": "21",
+      "aa": null
+     },
+     "arguments": {
+      "percentage": null
+     }
+    },
+    {
+     "method": "set_min_battery_percentage",
+     "cmd": "103",
+     "fields": {
+      "a1": "21",
+      "ab": null
+     },
+     "arguments": {
+      "percentage": null
+     }
+    },
+    {
+     "method": "turn_ac_off",
+     "cmd": "101",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_ac_on",
+     "cmd": "101",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_dc_off",
+     "cmd": "102",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_dc_on",
+     "cmd": "102",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_display_off",
+     "cmd": "103",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {
+      "on": false
+     }
+    },
+    {
+     "method": "turn_display_on",
+     "cmd": "103",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {
+      "on": true
+     }
+    }
+   ],
+   "properties": {
+    "ac_charging_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 5,
+      "end": 7
+     }
+    ],
+    "ac_fast_charge_enabled": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 21,
+      "end": 22
+     }
+    ],
+    "ac_frequency": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 7,
+      "end": 8
+     }
+    ],
+    "ac_input_port": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 4,
+      "end": 5
+     }
+    ],
+    "ac_output": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "ac_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 3,
+      "end": 5
+     }
+    ],
+    "ac_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "ac_timer_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 1,
+      "end": 5
+     }
+    ],
+    "battery_health": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 4,
+      "end": 5
+     }
+    ],
+    "battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 3,
+      "end": 4
+     }
+    ],
+    "charge_discharge_status": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 2,
+      "end": 3
+     }
+    ],
+    "charging_status": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "dc_input_port": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a8",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "dc_output": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b2",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "dc_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b2",
+      "begin": 2,
+      "end": null
+     }
+    ],
+    "dc_power_saving_mode_enabled": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 13,
+      "end": 14
+     }
+    ],
+    "dc_timer_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 9,
+      "end": 13
+     }
+    ],
+    "device_timeout": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 14,
+      "end": 16
+     }
+    ],
+    "display_mode": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 18,
+      "end": 19
+     }
+    ],
+    "display_timeout": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 16,
+      "end": 18
+     }
+    ],
+    "firmware_updating": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "is_display_on": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 22,
+      "end": 23
+     }
+    ],
+    "max_battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "d9",
+      "begin": 4,
+      "end": 5
+     }
+    ],
+    "max_input_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 5,
+      "end": 7
+     }
+    ],
+    "min_battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "d9",
+      "begin": 5,
+      "end": 6
+     }
+    ],
+    "part_number": [
+     {
+      "source": "stream",
+      "parse": "string",
+      "tag": "a2",
+      "begin": 22,
+      "end": 27
+     }
+    ],
+    "port_memory_enabled": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 23,
+      "end": 24
+     }
+    ],
+    "power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 1,
+      "end": 3
+     }
+    ],
+    "power_saving_mode_enabled": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 8,
+      "end": 9
+     }
+    ],
+    "serial_number": [
+     {
+      "source": "stream",
+      "parse": "string",
+      "tag": "a2",
+      "begin": 3,
+      "end": 20
+     }
+    ],
+    "solar_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a8",
+      "begin": 2,
+      "end": null
+     }
+    ],
+    "temperature": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "time_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 7,
+      "end": 9
+     }
+    ],
+    "usb_a1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ae",
+      "begin": 2,
+      "end": null
+     }
+    ],
+    "usb_c1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "aa",
+      "begin": 2,
+      "end": null
+     }
+    ],
+    "usb_c2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ab",
+      "begin": 2,
+      "end": null
+     }
+    ],
+    "usb_c3_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ac",
+      "begin": 2,
+      "end": null
+     }
+    ],
+    "usb_port_a1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ae",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_c1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "aa",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_c2": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ab",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_c3": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ac",
+      "begin": 1,
+      "end": 2
+     }
+    ]
+   }
+  },
+  "C2000G2": {
+   "outer": "plain",
+   "telemetry": [
+    "421",
+    "900",
+    "490"
+   ],
+   "snapshot": [],
+   "status": null,
+   "subscribe": null,
+   "commands": [
+    {
+     "method": "connect",
+     "cmd": "200",
+     "fields": {},
+     "arguments": {}
+    },
+    {
+     "method": "connect",
+     "cmd": "057",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    },
+    {
+     "method": "get_status_update",
+     "cmd": "100",
+     "fields": {
+      "a1": "21"
+     },
+     "arguments": {}
+    },
+    {
+     "method": "set_ac_charging_power",
+     "cmd": "04a",
+     "fields": {
+      "a1": "21",
+      "a4": null
+     },
+     "arguments": {
+      "watts": null
+     }
+    },
+    {
+     "method": "set_ac_timer",
+     "cmd": "101",
+     "fields": {
+      "a1": "21",
+      "a3": null
+     },
+     "arguments": {
+      "seconds": null
+     }
+    },
+    {
+     "method": "set_dc_timer",
+     "cmd": "102",
+     "fields": {
+      "a1": "21",
+      "a3": null
+     },
+     "arguments": {
+      "seconds": null
+     }
+    },
+    {
+     "method": "set_display_mode",
+     "cmd": "103",
+     "fields": {
+      "a1": "21",
+      "a3": null
+     },
+     "arguments": {
+      "mode": null
+     }
+    },
+    {
+     "method": "set_display_mode",
+     "cmd": "103",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {
+      "on": false
+     }
+    },
+    {
+     "method": "set_display_timeout",
+     "cmd": "103",
+     "fields": {
+      "a1": "21",
+      "a4": null
+     },
+     "arguments": {
+      "seconds": null
+     }
+    },
+    {
+     "method": "set_max_battery_percentage",
+     "cmd": "103",
+     "fields": {
+      "a1": "21",
+      "aa": null
+     },
+     "arguments": {
+      "percentage": null
+     }
+    },
+    {
+     "method": "set_min_battery_percentage",
+     "cmd": "103",
+     "fields": {
+      "a1": "21",
+      "ab": null
+     },
+     "arguments": {
+      "percentage": null
+     }
+    },
+    {
+     "method": "turn_ac_off",
+     "cmd": "101",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_ac_on",
+     "cmd": "101",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_dc_off",
+     "cmd": "102",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_dc_on",
+     "cmd": "102",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_display_off",
+     "cmd": "103",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {
+      "on": false
+     }
+    },
+    {
+     "method": "turn_display_on",
+     "cmd": "103",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {
+      "on": true
+     }
+    }
+   ],
+   "properties": {
+    "ac_charging_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 5,
+      "end": 7
+     }
+    ],
+    "ac_fast_charge_enabled": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 21,
+      "end": 22
+     }
+    ],
+    "ac_frequency": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 7,
+      "end": 8
+     }
+    ],
+    "ac_input_port": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 4,
+      "end": 5
+     }
+    ],
+    "ac_output": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "ac_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 3,
+      "end": 5
+     }
+    ],
+    "ac_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "ac_timer_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 1,
+      "end": 5
+     }
+    ],
+    "battery_health": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 4,
+      "end": 5
+     }
+    ],
+    "battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 3,
+      "end": 4
+     }
+    ],
+    "charge_discharge_status": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 2,
+      "end": 3
+     }
+    ],
+    "charging_status": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "dc_input_port": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a8",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "dc_output": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b2",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "dc_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b2",
+      "begin": 2,
+      "end": null
+     }
+    ],
+    "dc_power_saving_mode_enabled": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 13,
+      "end": 14
+     }
+    ],
+    "dc_timer_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 9,
+      "end": 13
+     }
+    ],
+    "device_timeout": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 14,
+      "end": 16
+     }
+    ],
+    "display_mode": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 18,
+      "end": 19
+     }
+    ],
+    "display_timeout": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 16,
+      "end": 18
+     }
+    ],
+    "firmware_updating": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "is_display_on": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 22,
+      "end": 23
+     }
+    ],
+    "max_battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "d9",
+      "begin": 4,
+      "end": 5
+     }
+    ],
+    "max_input_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 5,
+      "end": 7
+     }
+    ],
+    "min_battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "d9",
+      "begin": 5,
+      "end": 6
+     }
+    ],
+    "part_number": [
+     {
+      "source": "stream",
+      "parse": "string",
+      "tag": "a2",
+      "begin": 22,
+      "end": 27
+     }
+    ],
+    "port_memory_enabled": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 23,
+      "end": 24
+     }
+    ],
+    "power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 1,
+      "end": 3
+     }
+    ],
+    "power_saving_mode_enabled": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 8,
+      "end": 9
+     }
+    ],
+    "serial_number": [
+     {
+      "source": "stream",
+      "parse": "string",
+      "tag": "a2",
+      "begin": 3,
+      "end": 20
+     }
+    ],
+    "solar_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a8",
+      "begin": 2,
+      "end": null
+     }
+    ],
+    "temperature": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "time_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 7,
+      "end": 9
+     }
+    ],
+    "usb_a1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ae",
+      "begin": 2,
+      "end": null
+     }
+    ],
+    "usb_c1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "aa",
+      "begin": 2,
+      "end": null
+     }
+    ],
+    "usb_c2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ab",
+      "begin": 2,
+      "end": null
+     }
+    ],
+    "usb_c3_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ac",
+      "begin": 2,
+      "end": null
+     }
+    ],
+    "usb_port_a1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ae",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_c1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "aa",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_c2": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ab",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_c3": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ac",
+      "begin": 1,
+      "end": 2
+     }
+    ]
+   }
+  },
+  "C300": {
+   "outer": "plain",
+   "telemetry": [
+    "402",
+    "300",
+    "405"
+   ],
+   "snapshot": [],
+   "status": [
+    "040",
+    "840"
+   ],
+   "subscribe": null,
+   "commands": [
+    {
+     "method": "get_status_update",
+     "cmd": "040",
+     "fields": {
+      "a1": "21"
+     },
+     "arguments": {}
+    },
+    {
+     "method": "set_display_mode",
+     "cmd": "04c",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "mode": null
+     }
+    },
+    {
+     "method": "set_display_timeout",
+     "cmd": "046",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "time": null
+     }
+    },
+    {
+     "method": "set_light_mode",
+     "cmd": "04f",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "mode": null
+     }
+    },
+    {
+     "method": "turn_ac_off",
+     "cmd": "04a",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_ac_on",
+     "cmd": "04a",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_dc_off",
+     "cmd": "04b",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_dc_on",
+     "cmd": "04b",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_display_off",
+     "cmd": "052",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_display_on",
+     "cmd": "052",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    }
+   ],
+   "properties": {
+    "ac_output": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b7",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_timer_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a2",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bb",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "charging_status": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ba",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "dc_output": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c1",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "dc_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ab",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "dc_timer_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "light": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "cf",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ad",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ae",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "serial_number": [
+     {
+      "source": "stream",
+      "parse": "string",
+      "tag": "c5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "software_version": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b1",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ac",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "temperature": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b9",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "time_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_a1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "aa",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a8",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c3_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a9",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_a1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c0",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_c1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bd",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_c2": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "be",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_c3": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bf",
+      "begin": 1,
+      "end": null
+     }
+    ]
+   }
+  },
+  "C300DC": {
+   "outer": "plain",
+   "telemetry": [
+    "402",
+    "300",
+    "405"
+   ],
+   "snapshot": [],
+   "status": null,
+   "subscribe": null,
+   "commands": [
+    {
+     "method": "set_display_mode",
+     "cmd": "04c",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "mode": null
+     }
+    },
+    {
+     "method": "set_display_timeout",
+     "cmd": "046",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "time": null
+     }
+    },
+    {
+     "method": "set_light_mode",
+     "cmd": "04f",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "mode": null
+     }
+    },
+    {
+     "method": "turn_dc_off",
+     "cmd": "04b",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_dc_on",
+     "cmd": "04b",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_display_off",
+     "cmd": "052",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_display_on",
+     "cmd": "052",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    }
+   ],
+   "properties": {
+    "battery_capacity": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "af",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_health": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b8",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b7",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "charging_status": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b6",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "dc_12v_auto_on": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "f7",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "dc_output": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bf",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "dc_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "aa",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "dc_timer_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a2",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "device_overload": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c1",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "device_timeout": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c4",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "display_mode": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c7",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "display_timeout": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "is_display_on": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ca",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "light": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c8",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "light_timeout": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "cb",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ac",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ad",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "serial_number": [
+     {
+      "source": "stream",
+      "parse": "string",
+      "tag": "c3",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "software_version": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b0",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_port": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "cd",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ab",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "temperature": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "temperature_unit": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c9",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "time_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_a1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a8",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_a2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a9",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c3_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c4_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_a1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bd",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_a2": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "be",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_c1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b9",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_c2": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ba",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_c3": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bb",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_c4": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bc",
+      "begin": 1,
+      "end": null
+     }
+    ]
+   }
+  },
+  "C800": {
+   "outer": "plain",
+   "telemetry": [
+    "402",
+    "300",
+    "405"
+   ],
+   "snapshot": [],
+   "status": [
+    "040",
+    "840"
+   ],
+   "subscribe": null,
+   "commands": [
+    {
+     "method": "get_status_update",
+     "cmd": "040",
+     "fields": {
+      "a1": "21"
+     },
+     "arguments": {}
+    },
+    {
+     "method": "set_display_mode",
+     "cmd": "04c",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "mode": null
+     }
+    },
+    {
+     "method": "set_display_timeout",
+     "cmd": "046",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "time": null
+     }
+    },
+    {
+     "method": "set_light_mode",
+     "cmd": "04f",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "mode": null
+     }
+    },
+    {
+     "method": "turn_ac_off",
+     "cmd": "04a",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_ac_on",
+     "cmd": "04a",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_dc_off",
+     "cmd": "04b",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_dc_on",
+     "cmd": "04b",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_display_off",
+     "cmd": "052",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_display_on",
+     "cmd": "052",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    }
+   ],
+   "properties": {
+    "ac_output": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bb",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_timer_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a2",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_health": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c3",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c1",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "af",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b0",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "serial_number": [
+     {
+      "source": "stream",
+      "parse": "string",
+      "tag": "d0",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "software_version": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b3",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ae",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "temperature": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bd",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "time_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_a1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a9",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_a2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "aa",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a8",
+      "begin": 1,
+      "end": null
+     }
+    ]
+   }
+  },
+  "F2000": {
+   "outer": "plain",
+   "telemetry": [
+    "402",
+    "300",
+    "405"
+   ],
+   "snapshot": [],
+   "status": null,
+   "subscribe": null,
+   "commands": [],
+   "properties": {
+    "ac_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "af",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b0",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_power_out_sockets": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_to_battery": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_health": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c3",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_health_expansion": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c4",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c1",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_percentage_expansion": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c2",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "dc_1_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ac",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "dc_2_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ad",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "num_expansion": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "serial_number": [
+     {
+      "source": "stream",
+      "parse": "string",
+      "tag": "d0",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "software_version": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b3",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "software_version_controller": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ba",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "software_version_expansion": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b9",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ae",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "temperature": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bd",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "temperature_expansion": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "be",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "time_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_a1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "aa",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_a2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ab",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a8",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c3_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a9",
+      "begin": 1,
+      "end": null
+     }
+    ]
+   }
+  },
+  "F2000Legacy": {
+   "outer": "plain",
+   "telemetry": [
+    "402",
+    "300",
+    "405"
+   ],
+   "snapshot": [],
+   "status": null,
+   "subscribe": null,
+   "commands": [
+    {
+     "method": "connect",
+     "cmd": "101",
+     "fields": {},
+     "arguments": {}
+    },
+    {
+     "method": "get_status_update",
+     "cmd": "101",
+     "fields": {},
+     "arguments": {}
+    },
+    {
+     "method": "set_ac_charging_power",
+     "cmd": "280",
+     "fields": {},
+     "arguments": {
+      "value": null,
+      "length": 2
+     }
+    },
+    {
+     "method": "set_ac_charging_power",
+     "cmd": "101",
+     "fields": {},
+     "arguments": {}
+    },
+    {
+     "method": "set_ac_timer",
+     "cmd": "202",
+     "fields": {},
+     "arguments": {
+      "value": null,
+      "length": 4
+     }
+    },
+    {
+     "method": "set_dc_timer",
+     "cmd": "203",
+     "fields": {},
+     "arguments": {
+      "value": null,
+      "length": 4
+     }
+    },
+    {
+     "method": "set_display_mode",
+     "cmd": "288",
+     "fields": {},
+     "arguments": {
+      "value": null,
+      "length": 1
+     }
+    },
+    {
+     "method": "set_display_mode",
+     "cmd": "101",
+     "fields": {},
+     "arguments": {}
+    },
+    {
+     "method": "set_display_timeout",
+     "cmd": "282",
+     "fields": {},
+     "arguments": {
+      "value": null,
+      "length": 2
+     }
+    },
+    {
+     "method": "set_display_timeout",
+     "cmd": "101",
+     "fields": {},
+     "arguments": {}
+    },
+    {
+     "method": "set_light_mode",
+     "cmd": "28b",
+     "fields": {},
+     "arguments": {
+      "value": null,
+      "length": 1
+     }
+    },
+    {
+     "method": "set_light_mode",
+     "cmd": "101",
+     "fields": {},
+     "arguments": {}
+    },
+    {
+     "method": "turn_ac_off",
+     "cmd": "286",
+     "fields": {},
+     "arguments": {
+      "value": 0,
+      "length": 1
+     }
+    },
+    {
+     "method": "turn_ac_on",
+     "cmd": "286",
+     "fields": {},
+     "arguments": {
+      "value": 1,
+      "length": 1
+     }
+    },
+    {
+     "method": "turn_dc_off",
+     "cmd": "287",
+     "fields": {},
+     "arguments": {
+      "value": 0,
+      "length": 1
+     }
+    },
+    {
+     "method": "turn_dc_on",
+     "cmd": "287",
+     "fields": {},
+     "arguments": {
+      "value": 1,
+      "length": 1
+     }
+    },
+    {
+     "method": "turn_power_saving_mode_off",
+     "cmd": "28a",
+     "fields": {},
+     "arguments": {
+      "value": 0,
+      "length": 1
+     }
+    },
+    {
+     "method": "turn_power_saving_mode_off",
+     "cmd": "101",
+     "fields": {},
+     "arguments": {}
+    },
+    {
+     "method": "turn_power_saving_mode_on",
+     "cmd": "28a",
+     "fields": {},
+     "arguments": {
+      "value": 1,
+      "length": 1
+     }
+    },
+    {
+     "method": "turn_power_saving_mode_on",
+     "cmd": "101",
+     "fields": {},
+     "arguments": {}
+    }
+   ],
+   "properties": {
+    "ac_charging_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 101,
+      "end": 103
+     }
+    ],
+    "ac_output": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 63,
+      "end": 64
+     }
+    ],
+    "ac_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 19,
+      "end": 21
+     }
+    ],
+    "ac_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 21,
+      "end": 23
+     }
+    ],
+    "battery_health": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 72,
+      "end": 73
+     }
+    ],
+    "battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 70,
+      "end": 71
+     }
+    ],
+    "battery_percentage_expansion": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 71,
+      "end": 72
+     }
+    ],
+    "charging_status": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 68,
+      "end": 69
+     }
+    ],
+    "days_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 18,
+      "end": 19
+     }
+    ],
+    "dc_1_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 33,
+      "end": 35
+     }
+    ],
+    "dc_2_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 35,
+      "end": 37
+     }
+    ],
+    "dc_output_1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 80,
+      "end": 81
+     }
+    ],
+    "dc_output_2": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 81,
+      "end": 82
+     }
+    ],
+    "dc_timer_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 13,
+      "end": 15
+     }
+    ],
+    "display_mode": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 115,
+      "end": 116
+     }
+    ],
+    "display_timeout": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 105,
+      "end": 107
+     }
+    ],
+    "hours_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 17,
+      "end": 18
+     }
+    ],
+    "light": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 117,
+      "end": 118
+     }
+    ],
+    "power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 39,
+      "end": 41
+     }
+    ],
+    "power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 41,
+      "end": 43
+     }
+    ],
+    "power_saving_mode_enabled": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 117,
+      "end": 118
+     }
+    ],
+    "serial_number": [
+     {
+      "source": "stream",
+      "parse": "string",
+      "tag": null,
+      "begin": 85,
+      "end": 101
+     }
+    ],
+    "solar_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 37,
+      "end": 39
+     }
+    ],
+    "temperature": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 66,
+      "end": 67
+     }
+    ],
+    "temperature_expansion": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 67,
+      "end": 68
+     }
+    ],
+    "temperature_unit": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 119,
+      "end": 120
+     }
+    ],
+    "usb_a1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 29,
+      "end": 31
+     }
+    ],
+    "usb_a2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 31,
+      "end": 33
+     }
+    ],
+    "usb_c1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 23,
+      "end": 25
+     }
+    ],
+    "usb_c2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 25,
+      "end": 27
+     }
+    ],
+    "usb_c3_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 27,
+      "end": 29
+     }
+    ],
+    "usb_port_a1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 78,
+      "end": 79
+     }
+    ],
+    "usb_port_a2": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 79,
+      "end": 80
+     }
+    ],
+    "usb_port_c1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 75,
+      "end": 76
+     }
+    ],
+    "usb_port_c2": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 76,
+      "end": 77
+     }
+    ],
+    "usb_port_c3": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": null,
+      "begin": 77,
+      "end": 78
+     }
+    ]
+   }
+  },
+  "F2600": {
+   "outer": "plain",
+   "telemetry": [
+    "402",
+    "300",
+    "405"
+   ],
+   "snapshot": [],
+   "status": [
+    "040",
+    "840"
+   ],
+   "subscribe": null,
+   "commands": [
+    {
+     "method": "get_status_update",
+     "cmd": "040",
+     "fields": {
+      "a1": "21"
+     },
+     "arguments": {}
+    },
+    {
+     "method": "set_ac_charging_power",
+     "cmd": "044",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "watts": null
+     }
+    },
+    {
+     "method": "set_ac_timer",
+     "cmd": "042",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "seconds": null
+     }
+    },
+    {
+     "method": "set_dc_timer",
+     "cmd": "043",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "seconds": null
+     }
+    },
+    {
+     "method": "set_display_mode",
+     "cmd": "04c",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "mode": null
+     }
+    },
+    {
+     "method": "set_display_timeout",
+     "cmd": "046",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "time": null
+     }
+    },
+    {
+     "method": "set_light_mode",
+     "cmd": "04f",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "mode": null
+     }
+    },
+    {
+     "method": "turn_ac_off",
+     "cmd": "04a",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_ac_on",
+     "cmd": "04a",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_dc_off",
+     "cmd": "04b",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_dc_on",
+     "cmd": "04b",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_display_off",
+     "cmd": "052",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_display_on",
+     "cmd": "052",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_power_saving_mode_off",
+     "cmd": "04e",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_power_saving_mode_on",
+     "cmd": "04e",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    }
+   ],
+   "properties": {
+    "ac_charging_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "d1",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_output": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bb",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_power_out_sockets": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_timer_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a2",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_to_battery": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_health": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c3",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_health_expansion": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c4",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c1",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_percentage_expansion": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c2",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "charging_status": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bc",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "dc_1_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ac",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "dc_2_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ad",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "dc_output": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "cb",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "dc_timer_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "display_mode": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "d9",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "display_timeout": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "d3",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "is_display_on": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "de",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "light": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "cf",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "num_expansion": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "af",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b0",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "power_saving_mode_enabled": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "db",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "serial_number": [
+     {
+      "source": "stream",
+      "parse": "string",
+      "tag": "d0",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "software_version": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b3",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "software_version_controller": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ba",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "software_version_expansion": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b9",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_port": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bf",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ae",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "temperature": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bd",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "temperature_expansion": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "be",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "time_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_a1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "aa",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_a2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ab",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a8",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c3_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a9",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_a1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c9",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_a2": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ca",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_c1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c6",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_c2": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c7",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_c3": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c8",
+      "begin": 1,
+      "end": null
+     }
+    ]
+   }
+  },
+  "F3800": {
+   "outer": "plain",
+   "telemetry": [
+    "402",
+    "300",
+    "405"
+   ],
+   "snapshot": [],
+   "status": null,
+   "subscribe": null,
+   "commands": [
+    {
+     "method": "turn_ac_off",
+     "cmd": "04a",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_ac_on",
+     "cmd": "04a",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_dc_off",
+     "cmd": "04b",
+     "fields": {
+      "a1": "21",
+      "a2": 0
+     },
+     "arguments": {}
+    },
+    {
+     "method": "turn_dc_on",
+     "cmd": "04b",
+     "fields": {
+      "a1": "21",
+      "a2": 1
+     },
+     "arguments": {}
+    }
+   ],
+   "properties": {
+    "ac_output": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bc",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_charge_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b1",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_discharge_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b4",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ad",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_percentage_aggregate": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c0",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "charging_status": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bd",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "dc_output": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ac",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "display_timeout": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "cf",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "max_battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c1",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b2",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "serial_number": [
+     {
+      "source": "stream",
+      "parse": "string",
+      "tag": "cc",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "software_version": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "software_version_expansion": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ba",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ae",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_pv_1_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "af",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_pv_2_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b0",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "temperature": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "be",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "time_remaining": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_a1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "aa",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_a2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ab",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a8",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_c3_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a9",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_a1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_a2": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c6",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_c1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c2",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_c2": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c3",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_port_c3": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c4",
+      "begin": 1,
+      "end": null
+     }
+    ]
+   }
+  },
+  "Generic": {
+   "outer": "plain",
+   "telemetry": [
+    "402",
+    "300",
+    "405"
+   ],
+   "snapshot": [],
+   "status": null,
+   "subscribe": null,
+   "commands": [],
+   "properties": {}
+  },
+  "MagGo3in1": {
+   "outer": "encrypted",
+   "telemetry": [
+    "300"
+   ],
+   "snapshot": [],
+   "status": null,
+   "subscribe": "200",
+   "commands": [
+    {
+     "method": "connect",
+     "cmd": "200",
+     "fields": {
+      "a1": "21"
+     },
+     "arguments": {}
+    }
+   ],
+   "properties": {
+    "pad_1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a2",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "pad_1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a2",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "pad_2": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "pad_2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "pad_3": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "pad_3_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 6,
+      "end": 8
+     }
+    ]
+   }
+  },
+  "PrimeCharger160w": {
+   "outer": "encrypted",
+   "telemetry": [
+    "402",
+    "300",
+    "405"
+   ],
+   "snapshot": [],
+   "status": null,
+   "subscribe": null,
+   "commands": [
+    {
+     "method": "set_timer_usb_c1",
+     "cmd": "209",
+     "fields": {
+      "a1": "21",
+      "a2": 0,
+      "a3": null
+     },
+     "arguments": {
+      "port": 1,
+      "seconds": null
+     }
+    },
+    {
+     "method": "set_timer_usb_c2",
+     "cmd": "209",
+     "fields": {
+      "a1": "21",
+      "a2": 1,
+      "a3": null
+     },
+     "arguments": {
+      "port": 2,
+      "seconds": null
+     }
+    },
+    {
+     "method": "set_timer_usb_c3",
+     "cmd": "209",
+     "fields": {
+      "a1": "21",
+      "a2": 2,
+      "a3": null
+     },
+     "arguments": {
+      "port": 3,
+      "seconds": null
+     }
+    },
+    {
+     "method": "turn_usb_c1_off",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 0,
+      "a3": 0
+     },
+     "arguments": {
+      "port": 1,
+      "on": false
+     }
+    },
+    {
+     "method": "turn_usb_c1_on",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 0,
+      "a3": 1
+     },
+     "arguments": {
+      "port": 1,
+      "on": true
+     }
+    },
+    {
+     "method": "turn_usb_c2_off",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 1,
+      "a3": 0
+     },
+     "arguments": {
+      "port": 2,
+      "on": false
+     }
+    },
+    {
+     "method": "turn_usb_c2_on",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 1,
+      "a3": 1
+     },
+     "arguments": {
+      "port": 2,
+      "on": true
+     }
+    },
+    {
+     "method": "turn_usb_c3_off",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 2,
+      "a3": 0
+     },
+     "arguments": {
+      "port": 3,
+      "on": false
+     }
+    },
+    {
+     "method": "turn_usb_c3_on",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 2,
+      "a3": 1
+     },
+     "arguments": {
+      "port": 3,
+      "on": true
+     }
+    }
+   ],
+   "properties": {
+    "usb_c1_current": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 4,
+      "end": 6
+     }
+    ],
+    "usb_c1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "usb_c1_voltage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "usb_c2_current": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 4,
+      "end": 6
+     }
+    ],
+    "usb_c2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "usb_c2_voltage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "usb_c3_current": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 4,
+      "end": 6
+     }
+    ],
+    "usb_c3_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "usb_c3_voltage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "usb_port_c1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_c2": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_c3": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 1,
+      "end": 2
+     }
+    ]
+   }
+  },
+  "PrimeCharger250w": {
+   "outer": "encrypted",
+   "telemetry": [
+    "303"
+   ],
+   "snapshot": [
+    "a00"
+   ],
+   "status": null,
+   "subscribe": null,
+   "commands": [
+    {
+     "method": "connect",
+     "cmd": "200",
+     "fields": {
+      "a1": "21"
+     },
+     "arguments": {}
+    },
+    {
+     "method": "connect",
+     "cmd": "20b",
+     "fields": {
+      "a1": "21"
+     },
+     "arguments": {}
+    },
+    {
+     "method": "set_schedule_usb_a1_a2",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 4,
+      "a3": 1,
+      "a4": null
+     },
+     "arguments": {
+      "port": 5,
+      "trigger": 1,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_usb_a1_a2",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 4,
+      "a3": 0,
+      "a4": null
+     },
+     "arguments": {
+      "port": 5,
+      "trigger": 0,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_usb_c1",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 0,
+      "a3": 1,
+      "a4": null
+     },
+     "arguments": {
+      "port": 1,
+      "trigger": 1,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_usb_c1",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 0,
+      "a3": 0,
+      "a4": null
+     },
+     "arguments": {
+      "port": 1,
+      "trigger": 0,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_usb_c2",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 1,
+      "a3": 1,
+      "a4": null
+     },
+     "arguments": {
+      "port": 2,
+      "trigger": 1,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_usb_c2",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 1,
+      "a3": 0,
+      "a4": null
+     },
+     "arguments": {
+      "port": 2,
+      "trigger": 0,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_usb_c3",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 2,
+      "a3": 1,
+      "a4": null
+     },
+     "arguments": {
+      "port": 3,
+      "trigger": 1,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_usb_c3",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 2,
+      "a3": 0,
+      "a4": null
+     },
+     "arguments": {
+      "port": 3,
+      "trigger": 0,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_usb_c4",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 3,
+      "a3": 1,
+      "a4": null
+     },
+     "arguments": {
+      "port": 4,
+      "trigger": 1,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_usb_c4",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 3,
+      "a3": 0,
+      "a4": null
+     },
+     "arguments": {
+      "port": 4,
+      "trigger": 0,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_timer_usb_a1_a2",
+     "cmd": "209",
+     "fields": {
+      "a1": "21",
+      "a2": 4,
+      "a3": null
+     },
+     "arguments": {
+      "port": 5,
+      "seconds": null
+     }
+    },
+    {
+     "method": "set_timer_usb_c1",
+     "cmd": "209",
+     "fields": {
+      "a1": "21",
+      "a2": 0,
+      "a3": null
+     },
+     "arguments": {
+      "port": 1,
+      "seconds": null
+     }
+    },
+    {
+     "method": "set_timer_usb_c2",
+     "cmd": "209",
+     "fields": {
+      "a1": "21",
+      "a2": 1,
+      "a3": null
+     },
+     "arguments": {
+      "port": 2,
+      "seconds": null
+     }
+    },
+    {
+     "method": "set_timer_usb_c3",
+     "cmd": "209",
+     "fields": {
+      "a1": "21",
+      "a2": 2,
+      "a3": null
+     },
+     "arguments": {
+      "port": 3,
+      "seconds": null
+     }
+    },
+    {
+     "method": "set_timer_usb_c4",
+     "cmd": "209",
+     "fields": {
+      "a1": "21",
+      "a2": 3,
+      "a3": null
+     },
+     "arguments": {
+      "port": 4,
+      "seconds": null
+     }
+    },
+    {
+     "method": "turn_usb_a1_a2_off",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 4,
+      "a3": 0
+     },
+     "arguments": {
+      "port": 5,
+      "on": false
+     }
+    },
+    {
+     "method": "turn_usb_a1_a2_on",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 4,
+      "a3": 1
+     },
+     "arguments": {
+      "port": 5,
+      "on": true
+     }
+    },
+    {
+     "method": "turn_usb_c1_off",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 0,
+      "a3": 0
+     },
+     "arguments": {
+      "port": 1,
+      "on": false
+     }
+    },
+    {
+     "method": "turn_usb_c1_on",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 0,
+      "a3": 1
+     },
+     "arguments": {
+      "port": 1,
+      "on": true
+     }
+    },
+    {
+     "method": "turn_usb_c2_off",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 1,
+      "a3": 0
+     },
+     "arguments": {
+      "port": 2,
+      "on": false
+     }
+    },
+    {
+     "method": "turn_usb_c2_on",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 1,
+      "a3": 1
+     },
+     "arguments": {
+      "port": 2,
+      "on": true
+     }
+    },
+    {
+     "method": "turn_usb_c3_off",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 2,
+      "a3": 0
+     },
+     "arguments": {
+      "port": 3,
+      "on": false
+     }
+    },
+    {
+     "method": "turn_usb_c3_on",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 2,
+      "a3": 1
+     },
+     "arguments": {
+      "port": 3,
+      "on": true
+     }
+    },
+    {
+     "method": "turn_usb_c4_off",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 3,
+      "a3": 0
+     },
+     "arguments": {
+      "port": 4,
+      "on": false
+     }
+    },
+    {
+     "method": "turn_usb_c4_on",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 3,
+      "a3": 1
+     },
+     "arguments": {
+      "port": 4,
+      "on": true
+     }
+    }
+   ],
+   "properties": {
+    "software_version": [
+     {
+      "source": "snapshot",
+      "parse": "int",
+      "tag": "a2",
+      "begin": 1,
+      "end": 3
+     }
+    ],
+    "usb_a1_a2_schedule": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "ae",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "usb_a1_a2_timer": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "ae",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "usb_a1_current": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 4,
+      "end": 6
+     }
+    ],
+    "usb_a1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "usb_a1_voltage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "usb_a2_current": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 4,
+      "end": 6
+     }
+    ],
+    "usb_a2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "usb_a2_voltage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "usb_c1_current": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a2",
+      "begin": 4,
+      "end": 6
+     }
+    ],
+    "usb_c1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a2",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "usb_c1_schedule": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "aa",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "usb_c1_timer": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "aa",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "usb_c1_voltage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a2",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "usb_c2_current": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 4,
+      "end": 6
+     }
+    ],
+    "usb_c2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "usb_c2_schedule": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "ab",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "usb_c2_timer": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "ab",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "usb_c2_voltage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "usb_c3_current": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 4,
+      "end": 6
+     }
+    ],
+    "usb_c3_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "usb_c3_schedule": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "ac",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "usb_c3_timer": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "ac",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "usb_c3_voltage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "usb_c4_current": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 4,
+      "end": 6
+     }
+    ],
+    "usb_c4_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "usb_c4_schedule": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "ad",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "usb_c4_timer": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "ad",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "usb_c4_voltage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "usb_port_a1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_a2": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_c1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a2",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_c2": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_c3": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_c4": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 1,
+      "end": 2
+     }
+    ]
+   }
+  },
+  "PrimeChargingStation240w": {
+   "outer": "plain",
+   "telemetry": [
+    "303"
+   ],
+   "snapshot": [
+    "a00"
+   ],
+   "status": null,
+   "subscribe": null,
+   "commands": [
+    {
+     "method": "connect",
+     "cmd": "200",
+     "fields": {
+      "a1": "21"
+     },
+     "arguments": {}
+    },
+    {
+     "method": "connect",
+     "cmd": "20b",
+     "fields": {
+      "a1": "21"
+     },
+     "arguments": {}
+    },
+    {
+     "method": "set_ac_light_mode",
+     "cmd": "214",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "light_mode": null
+     }
+    },
+    {
+     "method": "set_charging_mode",
+     "cmd": "206",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "mode": null,
+      "submode": null
+     }
+    },
+    {
+     "method": "set_clock_format",
+     "cmd": "210",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "clock_format": null
+     }
+    },
+    {
+     "method": "set_display_brightness",
+     "cmd": "204",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "brightness": null
+     }
+    },
+    {
+     "method": "set_display_theme",
+     "cmd": "205",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "display": null
+     }
+    },
+    {
+     "method": "set_display_timeout",
+     "cmd": "203",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "timeout": null
+     }
+    },
+    {
+     "method": "set_schedule_ac_1",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 0,
+      "a3": 1,
+      "a4": null
+     },
+     "arguments": {
+      "port": 0,
+      "trigger": 1,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_ac_1",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 0,
+      "a3": 0,
+      "a4": null
+     },
+     "arguments": {
+      "port": 0,
+      "trigger": 0,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_ac_2",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 1,
+      "a3": 1,
+      "a4": null
+     },
+     "arguments": {
+      "port": 1,
+      "trigger": 1,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_ac_2",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 1,
+      "a3": 0,
+      "a4": null
+     },
+     "arguments": {
+      "port": 1,
+      "trigger": 0,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_usb_c1",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 2,
+      "a3": 1,
+      "a4": null
+     },
+     "arguments": {
+      "port": 2,
+      "trigger": 1,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_usb_c1",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 2,
+      "a3": 0,
+      "a4": null
+     },
+     "arguments": {
+      "port": 2,
+      "trigger": 0,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_usb_c2",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 3,
+      "a3": 1,
+      "a4": null
+     },
+     "arguments": {
+      "port": 3,
+      "trigger": 1,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_usb_c2",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 3,
+      "a3": 0,
+      "a4": null
+     },
+     "arguments": {
+      "port": 3,
+      "trigger": 0,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_usb_c3",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 4,
+      "a3": 1,
+      "a4": null
+     },
+     "arguments": {
+      "port": 4,
+      "trigger": 1,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_usb_c3",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 4,
+      "a3": 0,
+      "a4": null
+     },
+     "arguments": {
+      "port": 4,
+      "trigger": 0,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_usb_c4",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 5,
+      "a3": 1,
+      "a4": null
+     },
+     "arguments": {
+      "port": 5,
+      "trigger": 1,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_schedule_usb_c4",
+     "cmd": "208",
+     "fields": {
+      "a1": "21",
+      "a2": 5,
+      "a3": 0,
+      "a4": null
+     },
+     "arguments": {
+      "port": 5,
+      "trigger": 0,
+      "switch": null,
+      "hour": null,
+      "minute": null,
+      "weekdays": null
+     }
+    },
+    {
+     "method": "set_timer_ac_1",
+     "cmd": "209",
+     "fields": {
+      "a1": "21",
+      "a2": 0,
+      "a3": null
+     },
+     "arguments": {
+      "port": 0,
+      "seconds": null
+     }
+    },
+    {
+     "method": "set_timer_ac_2",
+     "cmd": "209",
+     "fields": {
+      "a1": "21",
+      "a2": 1,
+      "a3": null
+     },
+     "arguments": {
+      "port": 1,
+      "seconds": null
+     }
+    },
+    {
+     "method": "set_timer_usb_c1",
+     "cmd": "209",
+     "fields": {
+      "a1": "21",
+      "a2": 2,
+      "a3": null
+     },
+     "arguments": {
+      "port": 2,
+      "seconds": null
+     }
+    },
+    {
+     "method": "set_timer_usb_c2",
+     "cmd": "209",
+     "fields": {
+      "a1": "21",
+      "a2": 3,
+      "a3": null
+     },
+     "arguments": {
+      "port": 3,
+      "seconds": null
+     }
+    },
+    {
+     "method": "set_timer_usb_c3",
+     "cmd": "209",
+     "fields": {
+      "a1": "21",
+      "a2": 4,
+      "a3": null
+     },
+     "arguments": {
+      "port": 4,
+      "seconds": null
+     }
+    },
+    {
+     "method": "set_timer_usb_c4",
+     "cmd": "209",
+     "fields": {
+      "a1": "21",
+      "a2": 5,
+      "a3": null
+     },
+     "arguments": {
+      "port": 5,
+      "seconds": null
+     }
+    },
+    {
+     "method": "turn_ac_1_off",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 0,
+      "a3": 0
+     },
+     "arguments": {
+      "port": 0,
+      "on": false
+     }
+    },
+    {
+     "method": "turn_ac_1_on",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 0,
+      "a3": 1
+     },
+     "arguments": {
+      "port": 0,
+      "on": true
+     }
+    },
+    {
+     "method": "turn_ac_2_off",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 1,
+      "a3": 0
+     },
+     "arguments": {
+      "port": 1,
+      "on": false
+     }
+    },
+    {
+     "method": "turn_ac_2_on",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 1,
+      "a3": 1
+     },
+     "arguments": {
+      "port": 1,
+      "on": true
+     }
+    },
+    {
+     "method": "turn_display_off",
+     "cmd": "205",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "display": null
+     }
+    },
+    {
+     "method": "turn_display_on",
+     "cmd": "205",
+     "fields": {
+      "a1": "21",
+      "a2": null
+     },
+     "arguments": {
+      "display": null
+     }
+    },
+    {
+     "method": "turn_usb_c1_off",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 2,
+      "a3": 0
+     },
+     "arguments": {
+      "port": 2,
+      "on": false
+     }
+    },
+    {
+     "method": "turn_usb_c1_on",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 2,
+      "a3": 1
+     },
+     "arguments": {
+      "port": 2,
+      "on": true
+     }
+    },
+    {
+     "method": "turn_usb_c2_off",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 3,
+      "a3": 0
+     },
+     "arguments": {
+      "port": 3,
+      "on": false
+     }
+    },
+    {
+     "method": "turn_usb_c2_on",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 3,
+      "a3": 1
+     },
+     "arguments": {
+      "port": 3,
+      "on": true
+     }
+    },
+    {
+     "method": "turn_usb_c3_off",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 4,
+      "a3": 0
+     },
+     "arguments": {
+      "port": 4,
+      "on": false
+     }
+    },
+    {
+     "method": "turn_usb_c3_on",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 4,
+      "a3": 1
+     },
+     "arguments": {
+      "port": 4,
+      "on": true
+     }
+    },
+    {
+     "method": "turn_usb_c4_off",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 5,
+      "a3": 0
+     },
+     "arguments": {
+      "port": 5,
+      "on": false
+     }
+    },
+    {
+     "method": "turn_usb_c4_on",
+     "cmd": "207",
+     "fields": {
+      "a1": "21",
+      "a2": 5,
+      "a3": 1
+     },
+     "arguments": {
+      "port": 5,
+      "on": true
+     }
+    }
+   ],
+   "properties": {
+    "ac_light_mode": [
+     {
+      "source": "snapshot",
+      "parse": "int",
+      "tag": "b5",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "ac_output_1": [
+     {
+      "source": "snapshot",
+      "parse": "int",
+      "tag": "aa",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "ac_output_1_schedule": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "aa",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "ac_output_1_timer": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "aa",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "ac_output_2": [
+     {
+      "source": "snapshot",
+      "parse": "int",
+      "tag": "ab",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "ac_output_2_schedule": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "ab",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "ac_output_2_timer": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "ab",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "charging_mode": [
+     {
+      "source": "snapshot",
+      "parse": "int",
+      "tag": "ae",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "charging_submode": [
+     {
+      "source": "snapshot",
+      "parse": "int",
+      "tag": "ae",
+      "begin": 2,
+      "end": 3
+     }
+    ],
+    "clock_format": [
+     {
+      "source": "snapshot",
+      "parse": "int",
+      "tag": "b4",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "display_brightness": [
+     {
+      "source": "snapshot",
+      "parse": "int",
+      "tag": "ad",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "display_theme": [
+     {
+      "source": "snapshot",
+      "parse": "int",
+      "tag": "ac",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "display_timeout": [
+     {
+      "source": "snapshot",
+      "parse": "int",
+      "tag": "ad",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "is_display_on": [
+     {
+      "source": "snapshot",
+      "parse": "int",
+      "tag": "ac",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "software_version": [
+     {
+      "source": "snapshot",
+      "parse": "int",
+      "tag": "a2",
+      "begin": 1,
+      "end": 3
+     }
+    ],
+    "usb_a1_current": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 4,
+      "end": 6
+     }
+    ],
+    "usb_a1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "usb_a1_voltage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "usb_a2_current": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 4,
+      "end": 6
+     }
+    ],
+    "usb_a2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "usb_a2_voltage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "usb_c1_current": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a2",
+      "begin": 4,
+      "end": 6
+     }
+    ],
+    "usb_c1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a2",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "usb_c1_schedule": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "b0",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "usb_c1_timer": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "b0",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "usb_c1_voltage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a2",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "usb_c2_current": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 4,
+      "end": 6
+     }
+    ],
+    "usb_c2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "usb_c2_schedule": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "b1",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "usb_c2_timer": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "b1",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "usb_c2_voltage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "usb_c3_current": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 4,
+      "end": 6
+     }
+    ],
+    "usb_c3_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "usb_c3_schedule": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "b2",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "usb_c3_timer": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "b2",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "usb_c3_voltage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "usb_c4_current": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 4,
+      "end": 6
+     }
+    ],
+    "usb_c4_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "usb_c4_schedule": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "b3",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "usb_c4_timer": [
+     {
+      "source": "snapshot",
+      "parse": "record",
+      "tag": "b3",
+      "begin": null,
+      "end": null
+     }
+    ],
+    "usb_c4_voltage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "usb_port_a1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_a2": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_c1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a2",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_c2": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_c3": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a4",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_c4": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 1,
+      "end": 2
+     }
+    ]
+   }
+  },
+  "PrimePowerBank20k": {
+   "outer": "encrypted",
+   "telemetry": [
+    "402",
+    "300",
+    "405"
+   ],
+   "snapshot": [],
+   "status": null,
+   "subscribe": null,
+   "commands": [],
+   "properties": {
+    "battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a2",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "temperature": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "af",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usb_a1_current": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ac",
+      "begin": 4,
+      "end": 6
+     }
+    ],
+    "usb_a1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ac",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "usb_a1_voltage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ac",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "usb_c1_current": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a8",
+      "begin": 4,
+      "end": 6
+     }
+    ],
+    "usb_c1_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a8",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "usb_c1_voltage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a8",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "usb_c2_current": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a9",
+      "begin": 4,
+      "end": 6
+     }
+    ],
+    "usb_c2_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a9",
+      "begin": 6,
+      "end": 8
+     }
+    ],
+    "usb_c2_voltage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a9",
+      "begin": 2,
+      "end": 4
+     }
+    ],
+    "usb_port_a1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ac",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_c1": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a8",
+      "begin": 1,
+      "end": 2
+     }
+    ],
+    "usb_port_c2": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a9",
+      "begin": 1,
+      "end": 2
+     }
+    ]
+   }
+  },
+  "Solarbank2": {
+   "outer": "plain",
+   "telemetry": [
+    "402",
+    "300",
+    "405"
+   ],
+   "snapshot": [],
+   "status": null,
+   "subscribe": null,
+   "commands": [],
+   "properties": {
+    "ac_power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ac",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "ac_power_out_sockets": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c8",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_charge_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b0",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_discharge_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b7",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_heating": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "e8",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a3",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_percentage_aggregate": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ad",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "charged_energy": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b2",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "consumed_energy": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c9",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "error_code": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "grid_export_energy": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bf",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "grid_import_energy": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "be",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "grid_status": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "e0",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "grid_to_home_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bc",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "home_load_preset": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c7",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "house_demand": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c4",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "input_cutoff_data": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b6",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "light_mode": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "d2",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "light_on": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "e1",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "lowpower_input_data": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "max_load": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c2",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "output_cutoff_data": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b4",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "output_energy": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b3",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "d3",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "pv_to_grid_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bd",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "pv_yield": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b1",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "serial_number": [
+     {
+      "source": "stream",
+      "parse": "string",
+      "tag": "a2",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "software_version": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "software_version_controller": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "software_version_expansion": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a8",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ab",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_pv_1_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ca",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_pv_2_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "cb",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_pv_3_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "cc",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_pv_4_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "cd",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "temperature": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "aa",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "temperature_unit": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a9",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "usage_mode": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c6",
+      "begin": 1,
+      "end": null
+     }
+    ]
+   }
+  },
+  "Solarbank3": {
+   "outer": "plain",
+   "telemetry": [
+    "402",
+    "300",
+    "405"
+   ],
+   "snapshot": [],
+   "status": null,
+   "subscribe": null,
+   "commands": [],
+   "properties": {
+    "battery_health": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a6",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_percentage": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a7",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_percentage_aggregate": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "a5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "battery_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b6",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "charged_energy": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b7",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "discharged_energy": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b8",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "grid_export_energy": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bf",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "grid_import_energy": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "be",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "grid_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "bd",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "grid_to_home_power": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "d5",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "house_consumption": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b2",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "house_demand": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "b1",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "power_out": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "d3",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "pv_yield": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ac",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "serial_number": [
+     {
+      "source": "stream",
+      "parse": "string",
+      "tag": "a2",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ab",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_pv_1_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c7",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_pv_2_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c8",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_pv_3_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "c9",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "solar_pv_4_power_in": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "ca",
+      "begin": 1,
+      "end": null
+     }
+    ],
+    "temperature": [
+     {
+      "source": "stream",
+      "parse": "int",
+      "tag": "cc",
+      "begin": 1,
+      "end": null
+     }
+    ]
+   }
+  }
+ }
+}

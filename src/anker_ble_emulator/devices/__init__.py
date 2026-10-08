@@ -24,6 +24,7 @@ from .base import (
     Unset,
     register,
 )
+from .generated import MAP_BUILT
 
 
 __all__ = [
@@ -40,6 +41,7 @@ __all__ = [
     "AS220",
     "COMPANY_ID",
     "DEFAULT_MAC",
+    "MAP_BUILT",
     "PROFILES",
     "SERVICE_UUID",
     "UNSET",

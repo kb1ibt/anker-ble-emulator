@@ -280,6 +280,9 @@ class Layout:
     ) -> tuple[dict[int, dict[str, Any]], dict[int, bytes]] | None:
         """Return the command a request is and its settings; None if it doesn't walk.
 
+        An opcode with one variant per port picks the variant whose selector
+        field's default the request carries; a selector none has matches none.
+
         Raises:
             LayoutError: If the layout has no such command.
 
@@ -292,15 +295,34 @@ class Layout:
         except FieldError:
             return None
         commands = self.commands[msgtype]
-        for command in commands:
-            settings = {
-                tag: fields[tag]
-                for tag in command
-                if tag in fields and tag not in FRAME_TAGS
-            }
-            if settings:
+        walked = [
+            (command, settings)
+            for command in commands
+            if (
+                settings := {
+                    tag: fields[tag]
+                    for tag in command
+                    if tag in fields and tag not in FRAME_TAGS
+                }
+            )
+        ]
+        if not walked:
+            return commands[0], {}
+        selectors = {
+            tag
+            for command in commands
+            for tag in command
+            if len({str(variant.get(tag, {}).get("default")) for variant in commands})
+            > 1
+        }
+        for command, settings in walked:
+            if all(
+                _value(settings[tag]) == command[tag].get("default")
+                for tag in selectors
+                if tag in settings and tag in command
+            ):
                 return command, settings
-        return commands[0], {}
+        return None
 
     def _message(self, msgtype: int) -> tuple[Field, ...]:
         if msgtype not in self.messages:

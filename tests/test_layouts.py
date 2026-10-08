@@ -129,6 +129,29 @@ def test_a_converted_value_outside_its_table_sets_nothing() -> None:
     assert Layout(data).state_changes(0x04C, bytes.fromhex("a10121a2020107")) == {}
 
 
+@pytest.mark.parametrize(
+    ("port", "state"),
+    [(0, "usbc_1_switch"), (1, "usbc_2_switch"), (4, "usba_switch")],
+)
+def test_a_shared_opcode_picks_the_variant_its_selector_names(
+    port: int, state: str
+) -> None:
+    layout = Layout.load("A2345")
+    assert layout is not None
+    request = bytes.fromhex(f"a10121a20201{port:02x}a3020101")
+
+    assert layout.state_changes(0x207, request) == {state: 1}
+
+
+def test_a_selector_no_variant_names_is_refused() -> None:
+    layout = Layout.load("A2345")
+    assert layout is not None
+
+    assert layout.check(0x207, bytes.fromhex("a10121a2020107a3020101")) == (
+        STATUS_REJECTED
+    )
+
+
 def test_locate_finds_fields_and_parts() -> None:
     layout = Layout(LAYOUT)
 
