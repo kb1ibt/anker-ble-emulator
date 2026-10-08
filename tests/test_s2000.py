@@ -54,7 +54,9 @@ def test_as220_map_offsets_read_the_values_the_pr_verified() -> None:
     assert a6[plug.offset] == 1
     assert int.from_bytes(a6[total.offset : total.offset + 2], "little") == 55
     device.set_values(input_power_total=1129)
-    pushed = decode_fields(device.mcu.push(0x421, values=device.module.values).payload)
+    pushed = decode_fields(
+        device.mcu.push(0x421, values=device.negotiated_module.values).payload
+    )
     assert pushed[A6][1 + 11 : 1 + 13] == (1129).to_bytes(2, "little")
 
 
@@ -64,7 +66,7 @@ def test_as220_telemetry_takes_the_fields_its_map_types() -> None:
     device.set_values(msg_timestamp=0x01020304)
 
     for msgtype in (0x421, 0x900):
-        frame = device.mcu.respond(0x100, values=device.module.values)
+        frame = device.mcu.respond(0x100, values=device.negotiated_module.values)
         payload = next(f.payload for f in frame if f.cmd.msgtype == msgtype)
         start = payload[:1] if msgtype == 0x900 else b""
         assert decode_fields(payload[len(start) :])[0xFE] == bytes.fromhex("0304030201")

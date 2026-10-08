@@ -36,7 +36,7 @@ async def test_a91b2_negotiates_in_clear_and_authorizes_at_the_key_exchange() ->
         assert replies[0x803].fields[0xA5] == b"\x00"
         assert not replies[0x821].frame.cmd.encrypted
         assert replies[0x822].frame.cmd.encrypted
-        assert device.module.authorized
+        assert device.negotiated_module.authorized
 
 
 async def test_a91b2_snapshot_arrives_whole_and_the_keepalive_starts_the_stream() -> (
@@ -51,7 +51,7 @@ async def test_a91b2_snapshot_arrives_whole_and_the_keepalive_starts_the_stream(
         snapshot = await link.send(0x200, [(0xA1, b"\x21")], SESSION)
         keepalive = await link.send(0x20B, [(0xA1, b"\x21")], SESSION)
 
-    script = device.module.mcu
+    script = device.negotiated_module.mcu
     assert [cmd_hex(reply.frame) for reply in snapshot] == ["4a00"]
     assert snapshot[0].plaintext == script.respond(0x200)[0].payload
     assert all(len(data) <= 253 for data in link.raw)
@@ -81,13 +81,15 @@ async def test_a2345_grants_by_button_then_sends_a_fragmented_snapshot() -> None
         replies = await link.negotiate(TOKEN)
         device.press_button()
         await settle()
-        authorized = device.module.authorized
+        authorized = device.negotiated_module.authorized
         snapshot = await link.send(0x200, [(0xA1, b"\x21")], SESSION)
 
     assert replies[0x827].status == 0x09
     assert authorized
     assert cmd_hex(snapshot[0].frame) == "4a00"
-    assert snapshot[0].plaintext == device.module.mcu.respond(0x200)[0].payload
+    assert (
+        snapshot[0].plaintext == device.negotiated_module.mcu.respond(0x200)[0].payload
+    )
     assert sum(1 for data in link.raw if len(data) == 253) >= 1
 
 
@@ -100,7 +102,7 @@ async def test_a2345_also_accepts_the_plain_outer() -> None:
         replies = await link.negotiate(TOKEN)
 
         assert replies[0x801].status == 0
-        assert device.module.authorized
+        assert device.negotiated_module.authorized
 
 
 def test_a2345_advertises_a_prime_style_name() -> None:

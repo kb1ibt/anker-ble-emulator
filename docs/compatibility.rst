@@ -63,6 +63,41 @@ Cloud mode (no BLE link)        ✅        ✅        ✅        ✅        ✅ 
   ``c405`` telemetry in three fragments and a ``0409`` status; it answers no
   recorded request, and its legacy (no account) handshake isn't emulated.
 
+Legacy transport products
+-------------------------
+
+``Transport.LEGACY`` speaks an unencrypted, fixed-offset protocol with no
+negotiation: GATT service ``014bf5da`` (advertised as ``00001780``), write
+characteristic ``7777``, notify characteristic ``8888``. See
+:mod:`anker_ble_emulator.legacy`.
+
+=============================== =========
+Feature                         F2000
+                                 (A1780)
+=============================== =========
+Telemetry poll (``0101``)       ✅
+AC output control               ✅
+DC/car-socket output control    ✅
+Power saving mode control       ✅
+Light bar mode control          ✅
+StateAck (physical button)      ✅
+Display mode / timeout control  ❌
+AC charging power control       ❌
+Timer control                   ❌
+=============================== =========
+
+- The baseline telemetry frames are a real captured unit's (serial
+  anonymized), from SolixBLE PR #64. Field offsets and command bytes are
+  flip-dots/SolixBLEF2000's ``f2000_alt.py``, cross-checked against both an
+  HCI snoop of the official Anker app and that project's own live-hardware
+  tests.
+- A control command draws no reply; its effect shows on the next poll.
+- ``press_button()`` emits a StateAck of the module's current AC/DC/power
+  saving/light state. Which physical button press maps to which state
+  change isn't confirmed on real hardware, so nothing is assumed about it.
+- Display mode, display timeout, AC charging power, and timers have no
+  confirmed command bytes yet, so they aren't emulated.
+
 Map-built products
 ------------------
 

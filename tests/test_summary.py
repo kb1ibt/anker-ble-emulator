@@ -37,7 +37,9 @@ def test_named_values_reach_the_summary() -> None:
         pack_soc=555, pack_current_a=-3, cell_voltage=b"\x01\x02", output_power_total=86
     )
 
-    post = summary.read(device.mcu.push(0x490, values=device.module.values).payload)
+    post = summary.read(
+        device.mcu.push(0x490, values=device.negotiated_module.values).payload
+    )
     assert post["pack_soc"] == 555
     assert post["pack_current_a"] == -3
     assert post["cell_voltage"] == b"\x01\x02".ljust(CELL_BYTES, b"\x00")
@@ -82,7 +84,9 @@ def test_a_model_without_an_expansion_zeroes_the_expansion_entries(
     assert summary is not None
     recorded = summary.read(A1783().mcu.push(0x490).payload)
 
-    post = summary.read(device.mcu.push(0x490, values=device.module.values).payload)
+    post = summary.read(
+        device.mcu.push(0x490, values=device.negotiated_module.values).payload
+    )
 
     zeroed = {
         name: bytes(len(value)) if isinstance(value, bytes) else 0
@@ -96,4 +100,4 @@ def test_a_model_without_an_expansion_zeroes_the_expansion_entries(
 def test_the_a1783_keeps_its_recorded_expansion() -> None:
     device = A1783()
 
-    assert device.module.values == {}
+    assert device.negotiated_module.values == {}

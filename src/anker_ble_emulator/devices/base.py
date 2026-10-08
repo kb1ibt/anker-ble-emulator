@@ -16,16 +16,19 @@ from construct import Bytes, Int8ub, Optional, Struct
 from anker_ble_emulator.clock import MonotonicClock
 from anker_ble_emulator.frame import CHANNEL_SESSION, RESPONSE
 from anker_ble_emulator.layouts import Layout, LayoutError
+from anker_ble_emulator.legacy import LegacyModule, LegacyProfile
 from anker_ble_emulator.mcu import McuScript, mcu_frame
 from anker_ble_emulator.module import (
     TIMER_PERIOD,
     AuthMode,
+    DeviceModule,
     Module,
     ModuleConfig,
     Output,
     Versions,
 )
 from anker_ble_emulator.products import (
+    GATT_LAYOUTS,
     PRODUCTS,
     ModuleBuild,
     Outer,
@@ -46,7 +49,10 @@ if TYPE_CHECKING:
 DEFAULT_MAC = "AA:12:DE:AD:BE:EF"
 #: The manufacturer-data company id Anker advertises under.
 COMPANY_ID = 0xFFFF
-SERVICE_UUID = "0000ff09-0000-1000-8000-00805f9b34fb"
+#: The negotiated transport's advertised service; every transport's layout
+#: (served and advertised service, command and telemetry characteristics)
+#: lives in ``anker_ble_emulator.products.GATT_LAYOUTS``.
+SERVICE_UUID = GATT_LAYOUTS[Transport.NEGOTIATED].advertised
 MAC_LEN = 6
 
 
@@ -262,11 +268,18 @@ def data_resource(name: str) -> dict[str, Any]:
 
 #: Emulation profiles by product; each product module registers its own.
 PROFILES: dict[Product, Profile] = {}
+#: Legacy-transport emulation profiles by product (``Transport.LEGACY``).
+LEGACY_PROFILES: dict[Product, LegacyProfile] = {}
 
 
 def register(pn: Product, profile: Profile) -> None:
-    """Make ``pn`` emulatable with ``profile``."""
+    """Make ``pn`` emulatable with ``profile`` on the negotiated transport."""
     PROFILES[pn] = profile
+
+
+def register_legacy(pn: Product, profile: LegacyProfile) -> None:
+    """Make ``pn`` emulatable with ``profile`` on the legacy transport."""
+    LEGACY_PROFILES[pn] = profile
 
 
 def parse_mac(mac: str) -> bytes:
@@ -285,6 +298,16 @@ def parse_mac(mac: str) -> bytes:
 
 class EmulatedDevice:
     """One emulated device; a backend connects bleak clients to it."""
+
+    #: The product's profile; its concrete type is the transport's.
+    profile: Profile | LegacyProfile
+    #: The provisioned serial; None for none.
+    serial: str | None
+    #: The product's layout from anker-solix-api's maps; None where it has none,
+    #: which is every transport but the negotiated one.
+    layout: Layout | None
+    #: What answers writes and generates notifications; the transport's module.
+    module: DeviceModule
 
     def __init__(  # noqa: PLR0913  # the identity plus the four protocol choices
         self,
@@ -314,26 +337,42 @@ class EmulatedDevice:
 
         Raises:
             NotImplementedError: If the product or a chosen option isn't emulated.
-            TypeError: If both ``outer`` and ``module`` are given.
+            TypeError: If both ``outer`` and ``module`` are given, or ``outer``,
+                ``path``, ``module``, or a non-default ``serial`` is given for a
+                product on the legacy transport (none of them apply to it).
 
         """
         if outer is not None and module is not None:
             msg = "pass outer or module, not both"
             raise TypeError(msg)
+        self.pn = pn
+        self.mac = parse_mac(mac)
+        self.transport = transport or PRODUCTS[pn].transport
+        gatt = GATT_LAYOUTS.get(self.transport)
+        if gatt is None:
+            msg = f"{self.transport} transport: not emulated yet"
+            raise NotImplementedError(msg)
+        self.gatt = gatt
+        #: Seconds between runs of the module's authorize timer; unused outside
+        #: the negotiated transport, which is the only one with such a timer.
+        self.timer_period = TIMER_PERIOD
+        #: On WiFi to the cloud, with no BLE link (``set_cloud``).
+        self.cloud = False
+        self._listener: Callable[[Output], None] | None = None
+        if self.transport == Transport.LEGACY:
+            self._init_legacy(pn, serial, outer, path, module)
+            return
         profile = PROFILES.get(pn)
         if profile is None:
             msg = f"{pn} has no emulation profile yet"
             raise NotImplementedError(msg)
-        self.pn = pn
         self.profile = profile
         self.serial = profile.serial if serial is UNSET else serial
-        self.mac = parse_mac(mac)
-        self.transport = transport or PRODUCTS[pn].transport
         self.outer = outer or profile.outer
         self.path = path or profile.path
         self.module_build = module or profile.module_build
-        if self.transport != Transport.NEGOTIATED or self.path != Path.ECDH:
-            msg = f"{self.transport} transport, {self.path} path: not emulated yet"
+        if self.path != Path.ECDH:
+            msg = f"{self.path} path: not emulated yet"
             raise NotImplementedError(msg)
         config = ModuleConfig(
             mac=self.mac,
@@ -356,11 +395,50 @@ class EmulatedDevice:
         self.module = Module(config, script, clock or MonotonicClock())
         if script.summary is not None and not profile.expansion:
             self.module.values.update(script.summary.without_expansion())
-        #: Seconds between runs of the module's authorize timer.
-        self.timer_period = TIMER_PERIOD
-        #: On WiFi to the cloud, with no BLE link (``set_cloud``).
-        self.cloud = False
-        self._listener: Callable[[Output], None] | None = None
+
+    def _init_legacy(
+        self,
+        pn: Product,
+        serial: str | Unset | None,
+        outer: Outer | None,
+        path: Path | None,
+        module: ModuleBuild | None,
+    ) -> None:
+        """Build a legacy-transport device; see ``__init__``.
+
+        Raises:
+            NotImplementedError: If the product has no legacy emulation profile.
+            TypeError: If ``outer``, ``path``, ``module``, or a non-default
+                ``serial`` is given; none of them apply to this transport.
+
+        """
+        if outer is not None or path is not None or module is not None:
+            msg = "outer/path/module choose the negotiated transport's options"
+            raise TypeError(msg)
+        if serial is not UNSET:
+            msg = f"{pn}'s serial is fixed in its captured telemetry"
+            raise TypeError(msg)
+        legacy_profile = LEGACY_PROFILES.get(pn)
+        if legacy_profile is None:
+            msg = f"{pn} has no legacy emulation profile yet"
+            raise NotImplementedError(msg)
+        self.profile = legacy_profile
+        self.serial = legacy_profile.serial_number
+        self.layout = None
+        self.module = LegacyModule(legacy_profile)
+
+    @property
+    def negotiated_module(self) -> Module:
+        """The module, narrowed to the negotiated ``ff09`` transport's.
+
+        Raises:
+            NotImplementedError: If this device's transport has no MCU script.
+
+        """
+        if not isinstance(self.module, Module):
+            msg = f"{self.pn} speaks {self.transport}, which has no MCU script"
+            raise NotImplementedError(msg)
+        return self.module
 
     def set_values(self, **values: Value) -> None:
         """Set telemetry values by field name in every later frame that carries them.
@@ -386,16 +464,16 @@ class EmulatedDevice:
             if not known:
                 msg = f"{self.pn} sends no typed field {name!r}"
                 raise LayoutError(msg)
-        self.module.values.update(values)
+        self.negotiated_module.values.update(values)
 
     @property
     def mcu(self) -> McuScript:
         """What the MCU answers and pushes."""
-        return self.module.mcu
+        return self.negotiated_module.mcu
 
     def use_mcu(self, script: McuScript) -> None:
         """Replace what the MCU answers and pushes (``McuScript()`` for a quiet one)."""
-        self.module.mcu = script
+        self.negotiated_module.mcu = script
 
     def set_reply(self, request: int, *replies: tuple[int, bytes]) -> None:
         """Make the MCU answer ``request`` with these frames, in order.
@@ -405,7 +483,7 @@ class EmulatedDevice:
             replies: ``(msgtype, cleartext)`` of each frame; none for silence.
 
         """
-        script = self.module.mcu
+        script = self.negotiated_module.mcu
         frames = tuple(
             mcu_frame(msgtype, cleartext, script.channel)
             for msgtype, cleartext in replies
@@ -414,7 +492,7 @@ class EmulatedDevice:
 
     def set_push(self, msgtype: int, cleartext: bytes) -> None:
         """Make the MCU push ``cleartext`` as ``msgtype`` (sent by ``push``)."""
-        script = self.module.mcu
+        script = self.negotiated_module.mcu
         frame = mcu_frame(msgtype, cleartext, script.channel)
         self.use_mcu(replace(script, pushes={**script.pushes, msgtype: frame}))
 
@@ -426,6 +504,8 @@ class EmulatedDevice:
     @property
     def local_name(self) -> str | None:
         """The advertised name: the profile's, or ``<model>_<last 2 MAC bytes>``."""
+        if isinstance(self.profile, LegacyProfile):
+            return self.profile.local_name
         advert = self.profile.advert
         if not advert.prime_name:
             return advert.local_name
@@ -439,12 +519,17 @@ class EmulatedDevice:
     @property
     def advertisement_data(self) -> AdvertisementData:
         """The advertisement a scan would report."""
-        record = self.profile.advert.manufacturer_data(self.mac)
+        if isinstance(self.profile, LegacyProfile):
+            #: This transport advertises no manufacturer record, only the MAC
+            #: reversed under the Anker company id (observed on the wire).
+            record: bytes | None = bytes(reversed(self.mac))
+        else:
+            record = self.profile.advert.manufacturer_data(self.mac)
         return AdvertisementData(
             local_name=self.local_name,
             manufacturer_data={} if record is None else {COMPANY_ID: record},
             service_data={},
-            service_uuids=[SERVICE_UUID],
+            service_uuids=[self.gatt.advertised],
             tx_power=None,
             rssi=-60,
             platform_data=(),
@@ -460,7 +545,7 @@ class EmulatedDevice:
 
     def push(self, msgtype: int) -> None:
         """Make the MCU push its recorded frame of ``msgtype``."""
-        self._emit(self.module.push(msgtype))
+        self._emit(self.negotiated_module.push(msgtype))
 
     def notify(self, frames: list[bytes]) -> None:
         """Send raw bytes to the connected client as notifications, in order."""

@@ -33,8 +33,8 @@ def test_a1783_defaults() -> None:
     assert device.transport == Transport.NEGOTIATED
     assert device.outer == Outer.ENCRYPTED
     assert device.path == Path.ECDH
-    assert device.module.config.enforce
-    assert device.module.config.serial == b"APCDKKE0000000001"
+    assert device.negotiated_module.config.enforce
+    assert device.negotiated_module.config.serial == b"APCDKKE0000000001"
 
 
 def test_product_constructor_builds_the_same_device() -> None:
@@ -63,14 +63,14 @@ def test_no_serial_leaves_it_out_of_the_module() -> None:
     device = A1783(serial=None)
 
     assert device.serial is None
-    assert device.module.config.serial is None
+    assert device.negotiated_module.config.serial is None
 
 
 def test_plain_outer_drops_the_enforcement() -> None:
     device = A1783(outer=Outer.PLAIN)
 
     assert device.module_build is ModuleBuild.V0_3_3_0
-    assert not device.module.config.enforce
+    assert not device.negotiated_module.config.enforce
 
 
 def test_outer_and_module_are_exclusive() -> None:
@@ -82,17 +82,31 @@ def test_outer_and_module_are_exclusive() -> None:
     ("pn", "transport", "path", "reason"),
     [
         pytest.param(
-            Product.A1780, None, None, "no emulation profile", id="no profile"
+            Product.A1781, None, None, "no legacy emulation profile", id="no profile"
         ),
         pytest.param(
             Product.A1783,
             Transport.LEGACY,
             None,
-            "not emulated yet",
+            "no legacy emulation profile",
             id="legacy transport",
         ),
         pytest.param(
             Product.A1783, None, Path.LEGACY, "not emulated yet", id="legacy path"
+        ),
+        pytest.param(
+            Product.A1783,
+            Transport.T2215,
+            None,
+            "not emulated yet",
+            id="unimplemented transport",
+        ),
+        pytest.param(
+            Product.A1780,
+            Transport.NEGOTIATED,
+            None,
+            "no emulation profile",
+            id="legacy product forced negotiated",
         ),
     ],
 )
@@ -165,7 +179,7 @@ def test_ble_device_carries_the_device() -> None:
 
 
 def test_recorded_replies_and_pushes_are_scripted() -> None:
-    script = A1783().module.mcu
+    script = A1783().mcu
 
     assert [frame.cmd.msgtype for frame in script.respond(0x100)] == [0x900, 0x421]
     assert [frame.cmd.msgtype for frame in script.respond(0x057)] == [0x857]
@@ -179,7 +193,7 @@ def test_recorded_replies_and_pushes_are_scripted() -> None:
 
 
 def test_recorded_identity_fields_are_the_synthetic_ones() -> None:
-    script = A1783().module.mcu
+    script = A1783().mcu
     status = script.respond(0x100)[0].payload
 
     assert b"APCDKKE0000000001" in status

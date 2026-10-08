@@ -7,7 +7,7 @@ import pytest
 from bleak import BleakClient
 
 from anker_ble_emulator import EmulatedBleakBackend, Outer, Product
-from anker_ble_emulator.devices import MAP_BUILT, PROFILES, EmulatedDevice
+from anker_ble_emulator.devices import MAP_BUILT, PROFILES, EmulatedDevice, Profile
 from anker_ble_emulator.layouts import NUMERIC_SIZES, Layout
 from anker_ble_emulator.tlv import decode_fields
 from tests.fixtures.client import SESSION, AppClient, BleakLink, settle
@@ -39,6 +39,7 @@ async def test_a_map_built_product_connects_and_sends_its_built_telemetry(
 ) -> None:
     device = EmulatedDevice(pn)
     profile = device.profile
+    assert isinstance(profile, Profile)
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
         link = BleakLink(
             client, AppClient(encrypted_outer=device.outer == Outer.ENCRYPTED)
@@ -68,6 +69,7 @@ def test_a_map_built_product_takes_values_by_its_map_names(pn: Product) -> None:
     device = EmulatedDevice(pn)
     assert device.layout is not None
     layout = device.layout
+    assert isinstance(device.profile, Profile)
     telemetry = device.profile.pushes[0]
     kinds: dict[str, set[int]] = {}
     for fields in layout.messages.values():
@@ -83,7 +85,7 @@ def test_a_map_built_product_takes_values_by_its_map_names(pn: Product) -> None:
 
     device.set_values(**{name: 1})
 
-    payload = device.mcu.push(telemetry, values=device.module.values).payload
+    payload = device.mcu.push(telemetry, values=device.negotiated_module.values).payload
     assert decode_fields(payload)[field.tag][1:] == (1).to_bytes(field.size, "little")
 
 
@@ -109,7 +111,7 @@ def test_a_field_the_map_leaves_untyped_is_typed_from_solixble_s_read() -> None:
 
     device.set_values(ac_input_power=55, device_sn=b"A1753SYNTHETIC01")
 
-    payload = device.mcu.push(0x402, values=device.module.values).payload
+    payload = device.mcu.push(0x402, values=device.negotiated_module.values).payload
     fields = decode_fields(payload)
     assert fields[0xA5] == b"\x03" + (55).to_bytes(4, "little")
     assert fields[0xD0] == b"\x00A1753SYNTHETIC01"

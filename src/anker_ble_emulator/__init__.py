@@ -15,6 +15,7 @@ from .devices import (
     A1761,
     A1763,
     A1765,
+    A1780,
     A1783,
     A1785,
     A2345,
@@ -25,10 +26,13 @@ from .devices import (
     EmulatedDevice,
 )
 from .frame import FrameError, decode, encode, make_frame
+from .legacy import LegacyModule, LegacyProfile
 from .mcu import McuScript, mcu_frame
-from .module import AuthMode, Module, ModuleConfig, Output, Versions
+from .module import AuthMode, DeviceModule, Module, ModuleConfig, Output, Versions
 from .products import (
+    GATT_LAYOUTS,
     PRODUCTS,
+    GattLayout,
     ModuleBuild,
     Outer,
     Path,
@@ -45,6 +49,7 @@ __all__ = [
     "A1761",
     "A1763",
     "A1765",
+    "A1780",
     "A1783",
     "A1785",
     "A2345",
@@ -52,15 +57,20 @@ __all__ = [
     "AS220",
     "COMMAND_UUID",
     "DEFAULT_MAC",
+    "GATT_LAYOUTS",
     "GATT_SERVICE_UUID",
     "PRODUCTS",
     "TELEMETRY_UUID",
     "UNSET",
     "AuthMode",
     "Clock",
+    "DeviceModule",
     "EmulatedBleakBackend",
     "EmulatedDevice",
     "FrameError",
+    "GattLayout",
+    "LegacyModule",
+    "LegacyProfile",
     "ManualClock",
     "McuScript",
     "Module",

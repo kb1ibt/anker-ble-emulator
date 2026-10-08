@@ -7,6 +7,7 @@ from .a1722 import A1722
 from .a1761 import A1761
 from .a1763 import A1763
 from .a1765 import A1765
+from .a1780 import A1780
 from .a1783 import A1783
 from .a1785 import A1785
 from .a2345 import A2345
@@ -15,6 +16,7 @@ from .as220 import AS220
 from .base import (
     COMPANY_ID,
     DEFAULT_MAC,
+    LEGACY_PROFILES,
     PROFILES,
     SERVICE_UUID,
     UNSET,
@@ -23,6 +25,7 @@ from .base import (
     Profile,
     Unset,
     register,
+    register_legacy,
 )
 from .generated import MAP_BUILT
 
@@ -34,6 +37,7 @@ __all__ = [
     "A1761",
     "A1763",
     "A1765",
+    "A1780",
     "A1783",
     "A1785",
     "A2345",
@@ -41,6 +45,7 @@ __all__ = [
     "AS220",
     "COMPANY_ID",
     "DEFAULT_MAC",
+    "LEGACY_PROFILES",
     "MAP_BUILT",
     "PROFILES",
     "SERVICE_UUID",
@@ -50,4 +55,5 @@ __all__ = [
     "Profile",
     "Unset",
     "register",
+    "register_legacy",
 ]

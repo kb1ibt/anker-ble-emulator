@@ -12,6 +12,7 @@ from bleak.backends.service import BleakGATTService, BleakGATTServiceCollection
 from bleak.exc import BleakError
 
 from .devices import EmulatedDevice
+from .products import GATT_LAYOUTS, Transport
 
 
 if TYPE_CHECKING:
@@ -22,11 +23,15 @@ if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
 
     from .module import Output
+    from .products import GattLayout
 
-#: The GATT service holding both characteristics; ``ff09`` is only advertised.
-GATT_SERVICE_UUID = "8c850001-0302-41c5-b46e-cf057c562025"
-COMMAND_UUID = "8c850002-0302-41c5-b46e-cf057c562025"
-TELEMETRY_UUID = "8c850003-0302-41c5-b46e-cf057c562025"
+#: The negotiated transport's GATT layout, kept as names for every caller that
+#: already imports it directly; every transport's layout lives in
+#: ``anker_ble_emulator.products.GATT_LAYOUTS``.
+_NEGOTIATED_GATT = GATT_LAYOUTS[Transport.NEGOTIATED]
+GATT_SERVICE_UUID = _NEGOTIATED_GATT.service
+COMMAND_UUID = _NEGOTIATED_GATT.command
+TELEMETRY_UUID = _NEGOTIATED_GATT.telemetry
 SERVICE_HANDLE = 15
 TELEMETRY_HANDLE = 17
 COMMAND_HANDLE = 20
@@ -34,13 +39,13 @@ COMMAND_HANDLE = 20
 ATT_MTU = 256
 
 
-def _services(payload_cap: int) -> BleakGATTServiceCollection:
+def _services(gatt: GattLayout, payload_cap: int) -> BleakGATTServiceCollection:
     services = BleakGATTServiceCollection()
-    service = BleakGATTService(None, SERVICE_HANDLE, GATT_SERVICE_UUID)
+    service = BleakGATTService(None, SERVICE_HANDLE, gatt.service)
     services.add_service(service)
     characteristics: tuple[tuple[int, str, list[CharacteristicPropertyName]], ...] = (
-        (TELEMETRY_HANDLE, TELEMETRY_UUID, ["notify"]),
-        (COMMAND_HANDLE, COMMAND_UUID, ["write-without-response", "write"]),
+        (TELEMETRY_HANDLE, gatt.telemetry, ["notify"]),
+        (COMMAND_HANDLE, gatt.command, ["write-without-response", "write"]),
     )
     for handle, uuid, properties in characteristics:
         services.add_characteristic(
@@ -101,7 +106,7 @@ class EmulatedBleakBackend(BaseBleakClient):
             raise BleakError(msg)
         self.device.module.connect()
         self.device.listen(self._deliver)
-        self.services = _services(self.device.module.config.fragment_cap)
+        self.services = _services(self.device.gatt, self.device.module.fragment_cap)
         self._connected = True
         self._timer = asyncio.get_running_loop().create_task(self._run_timer())
 
@@ -162,7 +167,7 @@ class EmulatedBleakBackend(BaseBleakClient):
         if not self._connected:
             msg = "Not connected"
             raise BleakError(msg)
-        if characteristic.uuid != COMMAND_UUID:
+        if characteristic.uuid != self.device.gatt.command:
             msg = f"{characteristic.uuid} is not writable"
             raise BleakError(msg)
         self._deliver(self.device.module.write(bytes(data)))
@@ -191,7 +196,7 @@ class EmulatedBleakBackend(BaseBleakClient):
             BleakError: If the characteristic doesn't notify.
 
         """
-        if characteristic.uuid != TELEMETRY_UUID:
+        if characteristic.uuid != self.device.gatt.telemetry:
             msg = f"{characteristic.uuid} does not notify"
             raise BleakError(msg)
         self._notify = callback

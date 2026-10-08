@@ -19,7 +19,7 @@ OPEN_4001 = AppClient().request(0x001, [(0xA1, TIMESTAMP)])
 
 async def test_establish_connection_returns_a_connected_client() -> None:
     device = A1783()
-    device.module.enrolled.add(TOKEN)
+    device.negotiated_module.enrolled.add(TOKEN)
     async with EmulatedConnection(device, CONSUMER_TARGET) as emulated:
         client = await connect(device.ble_device, ignore_disconnect)
         link = BleakLink(client, AppClient())

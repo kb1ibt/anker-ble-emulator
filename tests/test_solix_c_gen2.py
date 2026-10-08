@@ -16,7 +16,7 @@ from anker_ble_emulator import (
     EmulatedBleakBackend,
     ModuleBuild,
 )
-from anker_ble_emulator.devices import COMPANY_ID, solix_c_gen2
+from anker_ble_emulator.devices import COMPANY_ID, Profile, solix_c_gen2
 from tests.fixtures.client import SESSION, AppClient, BleakLink, cmd_hex, settle
 
 
@@ -80,14 +80,14 @@ def test_each_model_advertises_its_own_identity(
     assert device.local_name == name
     assert device.serial == serial
     assert device.advertisement_data.manufacturer_data[COMPANY_ID].hex() == record
-    assert pn in device.module.mcu.respond(0x100)[0].payload
+    assert pn in device.negotiated_module.mcu.respond(0x100)[0].payload
 
 
 @pytest.mark.parametrize(("model", "name", "record", "serial", "pn"), IDENTITIES)
 def test_status_frames_carry_the_model_serial(
     model: Model, name: str, record: str, serial: str, pn: bytes
 ) -> None:
-    script = model().module.mcu
+    script = model().negotiated_module.mcu
 
     for frame in [*script.respond(0x100), script.push(0x421)]:
         assert serial.encode() in frame.payload
@@ -95,7 +95,7 @@ def test_status_frames_carry_the_model_serial(
 
 @pytest.mark.parametrize("model", MODELS)
 def test_every_model_answers_the_line_s_commands(model: Model) -> None:
-    script = model().module.mcu
+    script = model().negotiated_module.mcu
 
     for request, replies in solix_c_gen2.REPLIES.items():
         assert [frame.cmd.msgtype for frame in script.respond(request)] == list(
@@ -105,7 +105,7 @@ def test_every_model_answers_the_line_s_commands(model: Model) -> None:
 
 @pytest.mark.parametrize("model", MODELS)
 def test_every_model_pushes_the_series_summary(model: Model) -> None:
-    summary = model().module.mcu.push(0x490)
+    summary = model().negotiated_module.mcu.push(0x490)
 
     assert summary.cmd.msgtype == 0x490
     assert summary.payload.endswith(b"charging_pps_series_c_0009\x00")
@@ -114,10 +114,11 @@ def test_every_model_pushes_the_series_summary(model: Model) -> None:
 @pytest.mark.parametrize("model", MODELS)
 def test_recorded_frames_are_routed_to_ble(model: Model) -> None:
     device = model()
-    script = device.module.mcu
+    script = device.negotiated_module.mcu
     frames = [
         frame for request in solix_c_gen2.REPLIES for frame in script.respond(request)
     ]
+    assert isinstance(device.profile, Profile)
     frames += [script.push(msgtype) for msgtype in device.profile.pushes]
 
     assert all(
@@ -132,7 +133,7 @@ def test_only_module_v0_3_3_0_enforces(model: Model, build: ModuleBuild) -> None
     device = model(module=build)
 
     assert device.module_build is build
-    assert device.module.config.enforce is (build is ModuleBuild.V0_3_3_0)
+    assert device.negotiated_module.config.enforce is (build is ModuleBuild.V0_3_3_0)
     assert model().module_build is ModuleBuild.V0_3_3_0
 
 
@@ -143,7 +144,7 @@ async def test_a1763_on_module_v0_3_0_6_negotiates_in_clear() -> None:
         await link.start()
         await link.negotiate(TOKEN)
 
-        authorized = device.module.authorized
+        authorized = device.negotiated_module.authorized
         status = await link.send(0x100, [(0xA1, b"\x21")], SESSION)
         setter = await link.send(0x101, [(0xA1, b"\x21")], SESSION)
 
@@ -183,7 +184,7 @@ async def test_a1783_version_read_matches_the_recorded_reply() -> None:
 
 @pytest.mark.parametrize("build", list(ModuleBuild))
 def test_version_read_reports_the_chosen_module_build(build: ModuleBuild) -> None:
-    versions = A1785(module=build).module.config.versions
+    versions = A1785(module=build).negotiated_module.config.versions
 
     assert versions is not None
     assert versions.module == build.value.encode()
@@ -191,7 +192,7 @@ def test_version_read_reports_the_chosen_module_build(build: ModuleBuild) -> Non
 
 
 def test_recorded_module_replies_come_only_with_their_build() -> None:
-    replies = A1783().module.config.session_replies
+    replies = A1783().negotiated_module.config.session_replies
 
     assert set(replies) == {
         0x020,
@@ -207,8 +208,11 @@ def test_recorded_module_replies_come_only_with_their_build() -> None:
     assert replies[0x022] == bytes.fromhex("00a10109")
     assert replies[0x027] == bytes.fromhex("00a10100a20100")
     assert set(replies) | {0x030} <= ModuleBuild.V0_3_3_0.session_ops
-    assert A1783(module=ModuleBuild.V0_3_0_6).module.config.session_replies == {}
-    assert A1763().module.config.session_replies == {}
+    assert (
+        A1783(module=ModuleBuild.V0_3_0_6).negotiated_module.config.session_replies
+        == {}
+    )
+    assert A1763().negotiated_module.config.session_replies == {}
 
 
 def test_each_module_build_lists_the_session_ops_it_answers() -> None:

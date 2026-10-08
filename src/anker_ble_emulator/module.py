@@ -7,7 +7,7 @@ import logging
 import secrets
 from dataclasses import asdict, dataclass, field
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from cryptography.exceptions import InvalidTag
 
@@ -189,6 +189,33 @@ class Output:
     disconnect: bool = False
 
 
+class DeviceModule(Protocol):
+    """What ``EmulatedDevice``/``EmulatedBleakBackend`` need from a module."""
+
+    @property
+    def connected(self) -> bool:
+        """Whether a link is up."""
+
+    @property
+    def fragment_cap(self) -> int:
+        """The largest frame the link carries."""
+
+    def connect(self) -> None:
+        """Bring a link up with fresh state."""
+
+    def disconnect(self) -> None:
+        """Drop the link."""
+
+    def write(self, data: bytes) -> Output:
+        """Handle one write from the client."""
+
+    def check_timers(self) -> Output:
+        """Run the module's own timers once, if it has any."""
+
+    def press_button(self) -> Output:
+        """Simulate a press of the device's physical button."""
+
+
 @dataclass
 class _Link:
     """State of one connection."""
@@ -276,6 +303,11 @@ class Module:
     def authorized(self) -> bool:
         """Whether the current link may reach the MCU."""
         return self._link is not None and self._link.authorized
+
+    @property
+    def fragment_cap(self) -> int:
+        """The largest frame the link carries (ATT MTU - 3)."""
+        return self.config.fragment_cap
 
     def connect(self) -> None:
         """Bring a link up with fresh state."""

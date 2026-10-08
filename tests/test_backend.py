@@ -65,12 +65,12 @@ async def test_new_owner_is_granted_by_the_button_then_streams() -> None:
         assert replies[0x827].status == 0x09
         assert pattern_hex(link.replies[-1].frame) == "030101"
         assert link.replies[-1].status == 0
-        assert device.module.authorized
+        assert device.negotiated_module.authorized
 
 
 async def test_status_request_draws_the_recorded_status_and_telemetry() -> None:
     device = A1783()
-    device.module.enrolled.add(TOKEN)
+    device.negotiated_module.enrolled.add(TOKEN)
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
         link = BleakLink(client, AppClient())
         await link.start()
@@ -79,7 +79,7 @@ async def test_status_request_draws_the_recorded_status_and_telemetry() -> None:
         replies = await link.send(0x100, [(0xA1, b"\x21")], SESSION)
 
     status, telemetry = replies
-    script = device.module.mcu
+    script = device.negotiated_module.mcu
     assert cmd_hex(status.frame) == "4900"
     assert status.plaintext == script.respond(0x100)[0].payload
     assert cmd_hex(telemetry.frame) == "4421"
@@ -97,7 +97,7 @@ async def test_status_request_draws_the_recorded_status_and_telemetry() -> None:
 )
 async def test_recorded_acks(request_type: int, reply_types: list[str]) -> None:
     device = A1783()
-    device.module.enrolled.add(TOKEN)
+    device.negotiated_module.enrolled.add(TOKEN)
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
         link = BleakLink(client, AppClient())
         await link.start()
@@ -111,7 +111,7 @@ async def test_recorded_acks(request_type: int, reply_types: list[str]) -> None:
 
 async def test_device_push_reaches_the_client() -> None:
     device = A1783()
-    device.module.enrolled.add(TOKEN)
+    device.negotiated_module.enrolled.add(TOKEN)
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
         link = BleakLink(client, AppClient())
         await link.start()
@@ -121,12 +121,14 @@ async def test_device_push_reaches_the_client() -> None:
         await settle()
 
     assert cmd_hex(link.replies[-1].frame) == "4490"
-    assert link.replies[-1].plaintext == device.module.mcu.push(0x490).payload
+    assert (
+        link.replies[-1].plaintext == device.negotiated_module.mcu.push(0x490).payload
+    )
 
 
 async def test_reconnect_with_an_enrolled_token_needs_no_button() -> None:
     device = A1783()
-    device.module.enrolled.add(TOKEN)
+    device.negotiated_module.enrolled.add(TOKEN)
     for _ in range(2):
         async with BleakClient(
             device.ble_device, backend=EmulatedBleakBackend
@@ -178,7 +180,7 @@ async def test_authorize_timer_drops_an_unauthorized_link() -> None:
 
 async def test_stop_notify_silences_the_device() -> None:
     device = A1783()
-    device.module.enrolled.add(TOKEN)
+    device.negotiated_module.enrolled.add(TOKEN)
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
         link = BleakLink(client, AppClient())
         await link.start()

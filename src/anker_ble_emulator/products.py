@@ -15,8 +15,49 @@ class Transport(StrEnum):
     NEGOTIATED = "negotiated"
     #: Service ``2215``: ``ff09`` frames and negotiation on other characteristics.
     T2215 = "2215"
-    #: Service ``1780``: no negotiation.
+    #: Advertises ``1780``, GATT service ``014bf5da``: fixed-offset frames,
+    #: no negotiation or encryption.
     LEGACY = "legacy"
+
+
+@dataclass(frozen=True)
+class GattLayout:
+    """The GATT service and characteristics a transport's module exposes.
+
+    Attributes:
+        service: The primary GATT service UUID a client discovers.
+        command: The write characteristic UUID.
+        telemetry: The notify characteristic UUID.
+        advertised_service: The service UUID a scan reports; None where it's
+            the same as ``service``.
+
+    """
+
+    service: str
+    command: str
+    telemetry: str
+    advertised_service: str | None = None
+
+    @property
+    def advertised(self) -> str:
+        """The service UUID a scan reports."""
+        return self.advertised_service or self.service
+
+
+GATT_LAYOUTS: dict[Transport, GattLayout] = {
+    Transport.NEGOTIATED: GattLayout(
+        service="8c850001-0302-41c5-b46e-cf057c562025",
+        command="8c850002-0302-41c5-b46e-cf057c562025",
+        telemetry="8c850003-0302-41c5-b46e-cf057c562025",
+        advertised_service="0000ff09-0000-1000-8000-00805f9b34fb",
+    ),
+    Transport.LEGACY: GattLayout(
+        service="014bf5da-0000-1000-8000-00805f9b34fb",
+        command="00007777-0000-1000-8000-00805f9b34fb",
+        telemetry="00008888-0000-1000-8000-00805f9b34fb",
+        advertised_service="00001780-0000-1000-8000-00805f9b34fb",
+    ),
+}
 
 
 class Outer(StrEnum):

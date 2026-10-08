@@ -30,9 +30,11 @@ def test_a_telemetry_value_set_by_name_reaches_the_recorded_frame() -> None:
 
     device.set_values(battery_soc=55)
 
-    push = device.module.mcu.push(0x421, values=device.module.values)
+    push = device.negotiated_module.mcu.push(
+        0x421, values=device.negotiated_module.values
+    )
     assert decode_fields(push.payload)[0xA5][BATTERY_SOC_OFFSET] == 55
-    recorded = device.module.mcu.push(0x421)
+    recorded = device.negotiated_module.mcu.push(0x421)
     assert decode_fields(recorded.payload)[0xA5][BATTERY_SOC_OFFSET] != 55
 
 
@@ -43,8 +45,8 @@ def test_a_value_set_on_the_device_reaches_every_message_that_carries_it() -> No
 
     device.set_values(battery_soc=55)
 
-    status, telemetry = script.respond(0x100, values=device.module.values)
-    post = script.push(0x490, values=device.module.values)
+    status, telemetry = script.respond(0x100, values=device.negotiated_module.values)
+    post = script.push(0x490, values=device.negotiated_module.values)
     assert decode_fields(status.payload[1:])[0xA5][BATTERY_SOC_OFFSET] == 55
     assert decode_fields(telemetry.payload)[0xA5][BATTERY_SOC_OFFSET] == 55
     assert summary.read(post.payload)["battery_soc"] == 55
@@ -55,9 +57,9 @@ def test_a_part_past_offset_nine_lands_at_its_decimal_offset() -> None:
 
     device.set_values(display_timeout_seconds=300)
 
-    a4 = decode_fields(device.mcu.push(0x421, values=device.module.values).payload)[
-        0xA4
-    ]
+    a4 = decode_fields(
+        device.mcu.push(0x421, values=device.negotiated_module.values).payload
+    )[0xA4]
     assert a4[1 + 15 : 1 + 17] == (300).to_bytes(2, "little")
 
 
