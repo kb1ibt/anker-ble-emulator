@@ -105,6 +105,7 @@ class Product(StrEnum):
     A2345 = "A2345"
     A2687 = "A2687"
     A91B2 = "A91B2"
+    AS220 = "AS220"
 
 
 @dataclass(frozen=True)
@@ -147,4 +148,6 @@ PRODUCTS: dict[Product, ProductInfo] = {
     Product.A91B2: ProductInfo(
         "Prime Charging Station 240W", "PrimeChargingStation240w", "charger"
     ),
+    #: SolixBLE's ``AS220`` is in PR #65, not yet merged.
+    Product.AS220: ProductInfo("SOLIX S2000", "AS220", "pps"),
 }

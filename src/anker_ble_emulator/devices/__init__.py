@@ -11,6 +11,7 @@ from .a1783 import A1783
 from .a1785 import A1785
 from .a2345 import A2345
 from .a2687 import A2687
+from .as220 import AS220
 from .base import (
     COMPANY_ID,
     DEFAULT_MAC,
@@ -36,6 +37,7 @@ __all__ = [
     "A1785",
     "A2345",
     "A2687",
+    "AS220",
     "COMPANY_ID",
     "DEFAULT_MAC",
     "PROFILES",

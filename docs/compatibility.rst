@@ -7,29 +7,29 @@ product doesn't do it.
 Emulated products
 -----------------
 
-=============================== ========= ========= ========= ========= ========= ========= ========= ========= ========= =========
-Feature                         C300      C1000     C1000 G2  C1000X G2 C2000 G2  C2000X G2 SB2 Pro   160W      250W      240W
-                                (A1722)   (A1761)   (A1763)   (A1765)   (A1783)   (A1785)   (A17C1)   (A2687)   (A2345)   (A91B2)
-=============================== ========= ========= ========= ========= ========= ========= ========= ========= ========= =========
-Advertisement                   ❌        ❌        ✅        ✅        ✅        ✅        ❌        ❌        ✅        ✅
-Encrypted outer (GCM session)   ❌        ❌        ✅        ✅        ✅        ✅        ❌        ✅        ✅        N/A
-Plain outer (CBC session)       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ❌        ✅        ✅
-ECDH key exchange               ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Legacy AES key exchange         ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌
-Owner confirmation by button    ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        N/A
-Module builds (``module=``)     ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Version read (``0030``)         ✅        ✅        ✅        ✅        ✅        ✅        ❌        ❌        ✅        ✅
-Recorded module ops (``0020``…) ❌        ❌        ❌        ❌        ✅        ❌        ❌        ❌        ❌        ❌
-Request routing by ``a1``       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Fragmented frames               ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Recorded status reply           ❌        ❌        ✅        ✅        ✅        ✅        ❌        ✅        ✅        ✅
-Recorded telemetry pushes       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Summary push (``c490``)         N/A       N/A       ✅        ✅        ✅        ✅        N/A       N/A       N/A       N/A
-Summary fields by name          N/A       N/A       ✅        ✅        ✅        ✅        N/A       N/A       N/A       N/A
-Expansion battery attached      N/A       ❌        ❌        ❌        ✅        ❌        ❌        N/A       N/A       N/A
-Custom replies and pushes       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Cloud mode (no BLE link)        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-=============================== ========= ========= ========= ========= ========= ========= ========= ========= ========= =========
+=============================== ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= =========
+Feature                         C300      C1000     C1000 G2  C1000X G2 C2000 G2  C2000X G2 S2000     SB2 Pro   160W      250W      240W
+                                (A1722)   (A1761)   (A1763)   (A1765)   (A1783)   (A1785)   (AS220)   (A17C1)   (A2687)   (A2345)   (A91B2)
+=============================== ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= =========
+Advertisement                   ❌        ❌        ✅        ✅        ✅        ✅        ❌        ❌        ❌        ✅        ✅
+Encrypted outer (GCM session)   ❌        ❌        ✅        ✅        ✅        ✅        ✅        ❌        ✅        ✅        N/A
+Plain outer (CBC session)       ✅        ✅        ✅        ✅        ✅        ✅        ❌        ✅        ❌        ✅        ✅
+ECDH key exchange               ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Legacy AES key exchange         ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌
+Owner confirmation by button    ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        N/A
+Module builds (``module=``)     ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Version read (``0030``)         ✅        ✅        ✅        ✅        ✅        ✅        ❌        ❌        ❌        ✅        ✅
+Recorded module ops (``0020``…) ❌        ❌        ❌        ❌        ✅        ❌        ❌        ❌        ❌        ❌        ❌
+Request routing by ``a1``       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Fragmented frames               ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Recorded status reply           ❌        ❌        ✅        ✅        ✅        ✅        ✅        ❌        ✅        ✅        ✅
+Recorded telemetry pushes       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Summary push (``c490``)         N/A       N/A       ✅        ✅        ✅        ✅        ❌        N/A       N/A       N/A       N/A
+Summary fields by name          N/A       N/A       ✅        ✅        ✅        ✅        ❌        N/A       N/A       N/A       N/A
+Expansion battery attached      N/A       ❌        ❌        ❌        ✅        ❌        ❌        ❌        N/A       N/A       N/A
+Custom replies and pushes       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Cloud mode (no BLE link)        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+=============================== ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= =========
 
 - **Recorded** replies and pushes are sanitized frames from real units
   (:doc:`device-sources`). The C Gen 2 models share one display-board build,
@@ -44,16 +44,21 @@ Cloud mode (no BLE link)        ✅        ✅        ✅        ✅        ✅ 
   ``device.use_mcu`` replace what the MCU sends, for frames no recording has.
 - The A91B2 runs auth mode 0: it negotiates in the clear and authorizes at the
   key exchange, so it has no confirmation step.
-- **Not recorded** for the C300, the C1000, the Solarbank 2 and the 160W: no
-  advertisement record is recorded for any of them, so they advertise only the
-  ``ff09`` service and no manufacturer data. The C300, C1000 and Solarbank 2
-  are recorded on the plain outer and the 160W on the encrypted one; their
-  module builds don't enforce either, so the emulator takes both. The C300 and C1000 answer
+- **Not recorded** for the C300, the C1000, the S2000, the Solarbank 2 and the
+  160W: no advertisement record is recorded for any of them, so they advertise
+  only the ``ff09`` service and no manufacturer data. The C300, C1000 and
+  Solarbank 2 are recorded on the plain outer and the S2000 and 160W on the
+  encrypted one; their module builds don't enforce either, so the emulator
+  takes both. The S2000's ``4100`` subscribe draws its recorded ``c900`` and a
+  ``c421`` that is the same telemetry without the status byte, as on the
+  C Gen 2; its setter acks were recorded over MQTT. Whether it posts a
+  ``c490`` isn't recorded, and its telemetry is sent whole, since its fragment
+  size isn't recorded. The C300 and C1000 answer
   ``4040`` with their recorded ``c402`` telemetry behind a ``00`` status byte,
   as replies carry one; their ``c840`` itself isn't recorded. Their setters get
   the map's checked ack (the C1000's ``404a`` ack is recorded); whether they
-  answer a refused value ``04`` isn't recorded. The Solarbank 2 and the 160W
-  have no recorded ``0830``, so ``0030`` goes unanswered. The 160W's MCU
+  answer a refused value ``04`` isn't recorded. The S2000, the Solarbank 2 and
+  the 160W have no recorded ``0830``, so ``0030`` goes unanswered. The 160W's MCU
   frames travel on channel ``11`` (``030111``). The Solarbank 2 pushes its
   ``c405`` telemetry in three fragments and a ``0409`` status; it answers no
   recorded request, and its legacy (no account) handshake isn't emulated.
