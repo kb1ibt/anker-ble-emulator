@@ -41,9 +41,13 @@ Cloud mode (no BLE link)        ✅       ✅        ✅       ✅        ✅   
 Commands and telemetry
 ----------------------
 
-Measured against the commands each product is known to have: its MCU
-firmware's command table, with anything anker-solix-api maps or a recording
-answers. Generated from the package at build time.
+Measured against the commands each product is known to have, generated from the
+package at build time. MCU commands (``0x40`` and up, relayed to the device's
+MCU) are its firmware's command table, with anything anker-solix-api maps or a
+recording answers. Module commands (below ``0x40``) are the session requests the
+comms module answers itself, per module build: 14 on the C-series module, 6 on
+the Prime module, counted on each product's default build. The handshake
+commands (``0001``-``0029``) are all emulated.
 
 .. include:: _generated/command_coverage.rst
 

@@ -31,7 +31,7 @@ EMULATED = (
     Product.A91B2,
 )
 COMMAND_ROWS = (
-    "Known commands",
+    "MCU commands known",
     "Answered",
     "Answered from recordings",
     "Answered by a map ack",
@@ -39,7 +39,10 @@ COMMAND_ROWS = (
     "Change telemetry",
     "Telemetry they change",
     "Telemetry fields typed",
+    "Module commands answered",
 )
+#: The module answers its version read on every build.
+BUILT_SESSION_OPS = frozenset({0x030})
 
 
 def map_fields(pn: str) -> list[dict[str, str]]:
@@ -91,6 +94,9 @@ def command_column(pn: Product) -> list[str]:
     shown = {msgtype for msgtype, targets in changes.items() if targets}
     targets = sorted(set().union(*changes.values()))
     typed = sum(len(fields) for fields in layout.messages.values())
+    build = profile.module_build
+    module_ops = build.session_ops
+    module_answered = set(profile.session_replies(build)) | BUILT_SESSION_OPS
     return [
         str(len(known)),
         share(len(known & (recorded | mapped)), len(known)),
@@ -100,6 +106,7 @@ def command_column(pn: Product) -> list[str]:
         share(len(known & shown), len(known)),
         ", ".join(f"``{target:04x}``" for target in targets) or "none",
         share(typed, len(map_fields(pn))),
+        share(len(module_ops & module_answered), len(module_ops)),
     ]
 
 

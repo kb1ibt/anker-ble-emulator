@@ -36,7 +36,7 @@ PROFILE = Profile(
     version_names=solix_c_gen2.version_names("A1783"),
     known_commands=solix_c_gen2.KNOWN_COMMANDS,
     module_replies={
-        ModuleBuild.V0_3_3_0: (0x820, 0x828, 0x82E, 0x82F, 0x836, 0x838),
+        ModuleBuild.V0_3_3_0: (0x820, 0x822, 0x828, 0x82E, 0x82F, 0x836, 0x838),
     },
 )
 register(Product.A1783, PROFILE)

@@ -48,6 +48,22 @@ class ModuleBuild(StrEnum):
         """Whether the build enforces the auth mode against the client."""
         return self is ModuleBuild.V0_3_3_0
 
+    @property
+    def session_ops(self) -> frozenset[int]:
+        """The session requests (below ``0x40``) the module answers itself."""
+        if self is ModuleBuild.V0_2_9_7:
+            return PRIME_SESSION_OPS
+        return C_SESSION_OPS
+
+
+#: Session ops the C-series module answers on fid ``0x0f``: its inline split,
+#: and the WiFi handler's ``0x22``-``0x25``.
+C_SESSION_OPS = frozenset(
+    {0x20, 0x22, 0x23, 0x24, 0x25, 0x27, 0x28, 0x2D, 0x2E, 0x2F, 0x30, 0x35, 0x36, 0x38}
+)
+#: Session ops the Prime module (v0.2.9.7) answers on fid ``0x0f``.
+PRIME_SESSION_OPS = frozenset({0x20, 0x28, 0x2D, 0x2F, 0x30, 0x36})
+
 
 class Product(StrEnum):
     """Anker part numbers with a known BLE client class."""
