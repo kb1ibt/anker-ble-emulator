@@ -102,6 +102,7 @@ def test_sub_fields_keep_their_offsets_and_sequences() -> None:
     assert mode["bytes"] == [
         {"name": "mode", "type": "01", "offset": 0},
         {"name": "x", "offset": 1},
+        {"name": "tenth", "offset": 10},
     ]
     assert pack["sequence"] == [
         {"name": "pack_sn", "type": "00"},

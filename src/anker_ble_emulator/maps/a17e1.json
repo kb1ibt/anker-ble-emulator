@@ -1,6 +1,6 @@
 {
  "pn": "A17E1",
- "source": "anker-solix-api 29eece3 2026-10-06",
+ "source": "anker-solix-api 3eb4ba9 2026-10-08",
  "messages": {
   "0405": {
    "topic": "param_info",
@@ -237,37 +237,37 @@
       {
        "name": "unknown_exp_1_17",
        "type": "01",
-       "offset": 23
+       "offset": 17
       },
       {
        "name": "unknown_exp_1_21",
        "type": "01",
-       "offset": 33
+       "offset": 21
       },
       {
        "name": "exp_1_id",
        "type": "01",
-       "offset": 37
+       "offset": 25
       },
       {
        "name": "exp_1_temperature",
        "type": "01",
-       "offset": 38
+       "offset": 26
       },
       {
        "name": "exp_1_battery_status",
        "type": "01",
-       "offset": 39
+       "offset": 27
       },
       {
        "name": "exp_1_soc",
        "type": "01",
-       "offset": 40
+       "offset": 28
       },
       {
        "name": "exp_1_soh",
        "type": "01",
-       "offset": 41
+       "offset": 29
       }
      ]
     },
@@ -284,37 +284,37 @@
       {
        "name": "unknown_exp_2_17",
        "type": "01",
-       "offset": 23
+       "offset": 17
       },
       {
        "name": "unknown_exp_2_21",
        "type": "01",
-       "offset": 33
+       "offset": 21
       },
       {
        "name": "exp_2_id",
        "type": "01",
-       "offset": 37
+       "offset": 25
       },
       {
        "name": "exp_2_temperature",
        "type": "01",
-       "offset": 38
+       "offset": 26
       },
       {
        "name": "exp_2_battery_status",
        "type": "01",
-       "offset": 39
+       "offset": 27
       },
       {
        "name": "exp_2_soc",
        "type": "01",
-       "offset": 40
+       "offset": 28
       },
       {
        "name": "exp_2_soh",
        "type": "01",
-       "offset": 41
+       "offset": 29
       }
      ]
     },
@@ -331,37 +331,37 @@
       {
        "name": "unknown_exp_3_17",
        "type": "01",
-       "offset": 23
+       "offset": 17
       },
       {
        "name": "unknown_exp_3_21",
        "type": "01",
-       "offset": 33
+       "offset": 21
       },
       {
        "name": "exp_3_id",
        "type": "01",
-       "offset": 37
+       "offset": 25
       },
       {
        "name": "exp_3_temperature",
        "type": "01",
-       "offset": 38
+       "offset": 26
       },
       {
        "name": "exp_3_battery_status",
        "type": "01",
-       "offset": 39
+       "offset": 27
       },
       {
        "name": "exp_3_soc",
        "type": "01",
-       "offset": 40
+       "offset": 28
       },
       {
        "name": "exp_3_soh",
        "type": "01",
-       "offset": 41
+       "offset": 29
       }
      ]
     },
@@ -378,37 +378,37 @@
       {
        "name": "unknown_exp_4_17",
        "type": "01",
-       "offset": 23
+       "offset": 17
       },
       {
        "name": "unknown_exp_4_21",
        "type": "01",
-       "offset": 33
+       "offset": 21
       },
       {
        "name": "exp_4_id",
        "type": "01",
-       "offset": 37
+       "offset": 25
       },
       {
        "name": "exp_4_temperature",
        "type": "01",
-       "offset": 38
+       "offset": 26
       },
       {
        "name": "exp_4_battery_status",
        "type": "01",
-       "offset": 39
+       "offset": 27
       },
       {
        "name": "exp_4_soc",
        "type": "01",
-       "offset": 40
+       "offset": 28
       },
       {
        "name": "exp_4_soh",
        "type": "01",
-       "offset": 41
+       "offset": 29
       }
      ]
     },
@@ -425,37 +425,37 @@
       {
        "name": "unknown_exp_5_17",
        "type": "01",
-       "offset": 23
+       "offset": 17
       },
       {
        "name": "unknown_exp_5_21",
        "type": "01",
-       "offset": 33
+       "offset": 21
       },
       {
        "name": "exp_5_id",
        "type": "01",
-       "offset": 37
+       "offset": 25
       },
       {
        "name": "exp_5_temperature",
        "type": "01",
-       "offset": 38
+       "offset": 26
       },
       {
        "name": "exp_5_battery_status",
        "type": "01",
-       "offset": 39
+       "offset": 27
       },
       {
        "name": "exp_5_soc",
        "type": "01",
-       "offset": 40
+       "offset": 28
       },
       {
        "name": "exp_5_soh",
        "type": "01",
-       "offset": 41
+       "offset": 29
       }
      ]
     },

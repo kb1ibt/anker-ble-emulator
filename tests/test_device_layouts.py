@@ -50,6 +50,17 @@ def test_a_value_set_on_the_device_reaches_every_message_that_carries_it() -> No
     assert summary.read(post.payload)["battery_soc"] == 55
 
 
+def test_a_part_past_offset_nine_lands_at_its_decimal_offset() -> None:
+    device = A1783()
+
+    device.set_values(display_timeout_seconds=300)
+
+    a4 = decode_fields(device.mcu.push(0x421, values=device.module.values).payload)[
+        0xA4
+    ]
+    assert a4[1 + 15 : 1 + 17] == (300).to_bytes(2, "little")
+
+
 def test_an_mcu_without_a_layout_sends_its_frames_as_recorded() -> None:
     script = A1783().mcu
     quiet = McuScript(pushes=script.pushes)

@@ -1,6 +1,6 @@
 {
  "pn": "A1790P",
- "source": "anker-solix-api 29eece3 2026-10-06",
+ "source": "anker-solix-api 3eb4ba9 2026-10-08",
  "messages": {
   "0405": {
    "topic": "param_info",
@@ -375,23 +375,23 @@
       {
        "name": "exp_1_temperature",
        "type": "01",
-       "offset": 25
+       "offset": 19
       },
       {
        "name": "exp_1_soc",
        "type": "01",
-       "offset": 33
+       "offset": 21
       },
       {
        "name": "exp_1_soh",
        "type": "01",
-       "offset": 34
+       "offset": 22
       },
       {
        "name": "exp_1_type",
        "type": "00",
        "length": 10,
-       "offset": 40
+       "offset": 28
       }
      ]
     },
@@ -408,23 +408,23 @@
       {
        "name": "exp_2_temperature",
        "type": "01",
-       "offset": 25
+       "offset": 19
       },
       {
        "name": "exp_2_soc",
        "type": "01",
-       "offset": 33
+       "offset": 21
       },
       {
        "name": "exp_2_soh",
        "type": "01",
-       "offset": 34
+       "offset": 22
       },
       {
        "name": "exp_2_type",
        "type": "00",
        "length": 10,
-       "offset": 40
+       "offset": 28
       }
      ]
     },
@@ -441,23 +441,23 @@
       {
        "name": "exp_3_temperature",
        "type": "01",
-       "offset": 25
+       "offset": 19
       },
       {
        "name": "exp_3_soc",
        "type": "01",
-       "offset": 33
+       "offset": 21
       },
       {
        "name": "exp_3_soh",
        "type": "01",
-       "offset": 34
+       "offset": 22
       },
       {
        "name": "exp_3_type",
        "type": "00",
        "length": 10,
-       "offset": 40
+       "offset": 28
       }
      ]
     },
@@ -474,23 +474,23 @@
       {
        "name": "exp_4_temperature",
        "type": "01",
-       "offset": 25
+       "offset": 19
       },
       {
        "name": "exp_4_soc",
        "type": "01",
-       "offset": 33
+       "offset": 21
       },
       {
        "name": "exp_4_soh",
        "type": "01",
-       "offset": 34
+       "offset": 22
       },
       {
        "name": "exp_4_type",
        "type": "00",
        "length": 10,
-       "offset": 40
+       "offset": 28
       }
      ]
     },
@@ -507,23 +507,23 @@
       {
        "name": "exp_5_temperature",
        "type": "01",
-       "offset": 25
+       "offset": 19
       },
       {
        "name": "exp_5_soc",
        "type": "01",
-       "offset": 33
+       "offset": 21
       },
       {
        "name": "exp_5_soh",
        "type": "01",
-       "offset": 34
+       "offset": 22
       },
       {
        "name": "exp_5_type",
        "type": "00",
        "length": 10,
-       "offset": 40
+       "offset": 28
       }
      ]
     },
@@ -540,23 +540,23 @@
       {
        "name": "exp_6_temperature",
        "type": "01",
-       "offset": 25
+       "offset": 19
       },
       {
        "name": "exp_6_soc",
        "type": "01",
-       "offset": 33
+       "offset": 21
       },
       {
        "name": "exp_6_soh",
        "type": "01",
-       "offset": 34
+       "offset": 22
       },
       {
        "name": "exp_6_type",
        "type": "00",
        "length": 10,
-       "offset": 40
+       "offset": 28
       }
      ]
     },
@@ -597,12 +597,12 @@
       {
        "name": "device_1_soc",
        "type": "01",
-       "offset": 25
+       "offset": 19
       },
       {
        "name": "device_1_temperature",
        "type": "01",
-       "offset": 32
+       "offset": 20
       }
      ]
     },
@@ -619,12 +619,12 @@
       {
        "name": "device_2_soc",
        "type": "01",
-       "offset": 25
+       "offset": 19
       },
       {
        "name": "device_2_temperature",
        "type": "01",
-       "offset": 32
+       "offset": 20
       }
      ]
     },

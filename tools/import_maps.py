@@ -245,7 +245,7 @@ def field_layout(desc: Desc, tag: str, learned: Learned, keys: ModuleType) -> De
     sub = spec.get(keys.BYTES)
     if isinstance(sub, dict):
         layout["bytes"] = [
-            _sub_field(part, keys) | {"offset": int(offset, 16)}
+            _sub_field(part, keys) | {"offset": int(offset)}
             for offset, parts in sub.items()
             for part in (parts if isinstance(parts, list) else [parts])
         ]

@@ -42,7 +42,14 @@ TELEMETRY: dict[str, Any] = {
     "a3": {"name": "ac_power"},
     "a4": {"name": "fixed_power", "type": b"\x02"},
     "a5": {"name": "never_recorded"},
-    "a6": {"bytes": {"00": {"name": "mode", "type": b"\x01"}, "01": [{"name": "x"}]}},
+    # Byte offsets are decimal strings: "10" is offset 10.
+    "a6": {
+        "bytes": {
+            "00": {"name": "mode", "type": b"\x01"},
+            "01": [{"name": "x"}],
+            "10": {"name": "tenth"},
+        }
+    },
     "a7": {
         "bytes": [
             {"name": "pack_sn", "type": b"\x00"},

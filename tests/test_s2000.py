@@ -11,6 +11,8 @@ from tests.fixtures.client import SESSION, AppClient, BleakLink, settle
 TOKEN = b"a5220000-5011-4000-b000-000000000001"
 #: The subscribe SolixBLE's AS220 sends to start the stream.
 SUBSCRIBE = [(0xA1, b"\x21"), (0xA2, b"\x04\x01")]
+#: The power block; PR#65 verified its AC input plug status and input total.
+A6 = 0xA6
 
 
 async def test_as220_grants_by_button_then_streams_on_subscribe() -> None:
@@ -34,6 +36,26 @@ async def test_as220_grants_by_button_then_streams_on_subscribe() -> None:
     assert [reply.plaintext for reply in setter] == [bytes.fromhex("00a10131")]
     assert version == []
     assert device.advertisement_data.manufacturer_data == {}
+
+
+def test_as220_map_offsets_read_the_values_the_pr_verified() -> None:
+    device = AS220()
+    assert device.layout is not None
+    parts = {
+        part.name: part
+        for field in device.layout.messages[0x421]
+        if field.tag == A6
+        for part in field.parts
+    }
+    a6 = decode_fields(device.mcu.push(0x421).payload)[A6][1:]
+
+    plug, total = parts["ac_input_plug_status"], parts["input_power_total"]
+    assert (plug.offset, total.offset) == (10, 11)
+    assert a6[plug.offset] == 1
+    assert int.from_bytes(a6[total.offset : total.offset + 2], "little") == 55
+    device.set_values(input_power_total=1129)
+    pushed = decode_fields(device.mcu.push(0x421, values=device.module.values).payload)
+    assert pushed[A6][1 + 11 : 1 + 13] == (1129).to_bytes(2, "little")
 
 
 def test_as220_telemetry_takes_the_fields_its_map_types() -> None:

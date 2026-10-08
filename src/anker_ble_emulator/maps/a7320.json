@@ -1,6 +1,6 @@
 {
  "pn": "A7320",
- "source": "anker-solix-api 29eece3 2026-10-06",
+ "source": "anker-solix-api 3eb4ba9 2026-10-08",
  "messages": {
   "0405": {
    "topic": "param_info",
@@ -64,17 +64,17 @@
       {
        "name": "tbd_0405_aa_u32_04?",
        "type": "03",
-       "offset": 18
+       "offset": 12
       },
       {
        "name": "tbd_0405_aa_u16_05?",
        "type": "02",
-       "offset": 22
+       "offset": 16
       },
       {
        "name": "tbd_0405_aa_u16_06?",
        "type": "02",
-       "offset": 24
+       "offset": 18
       }
      ]
     },
@@ -85,27 +85,27 @@
       {
        "name": "tbd_0405_ac_u32_01?",
        "type": "03",
-       "offset": 64
+       "offset": 40
       },
       {
        "name": "lpg_remaining_percent",
        "type": "02",
-       "offset": 68
+       "offset": 44
       },
       {
        "name": "tbd_0405_ac_u32_03?",
        "type": "03",
-       "offset": 72
+       "offset": 48
       },
       {
        "name": "lpg_remaining_lb",
        "type": "02",
-       "offset": 82
+       "offset": 52
       },
       {
        "name": "lpg_full_lb",
        "type": "02",
-       "offset": 86
+       "offset": 56
       }
      ]
     },

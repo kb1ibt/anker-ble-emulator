@@ -1,6 +1,6 @@
 {
  "pn": "A91B2",
- "source": "anker-solix-api 29eece3 2026-10-06",
+ "source": "anker-solix-api 3eb4ba9 2026-10-08",
  "messages": {
   "0302": {
    "topic": null,
@@ -459,12 +459,12 @@
       {
        "name": "ac_1_timer_seconds",
        "type": "03",
-       "offset": 16
+       "offset": 10
       },
       {
        "name": "ac_1_timer_remaining_seconds",
        "type": "03",
-       "offset": 20
+       "offset": 14
       }
      ]
     },
@@ -528,12 +528,12 @@
       {
        "name": "ac_2_timer_seconds",
        "type": "03",
-       "offset": 16
+       "offset": 10
       },
       {
        "name": "ac_2_timer_remaining_seconds",
        "type": "03",
-       "offset": 20
+       "offset": 14
       }
      ]
     },
@@ -597,12 +597,12 @@
       {
        "name": "usbc_1_timer_seconds",
        "type": "03",
-       "offset": 16
+       "offset": 10
       },
       {
        "name": "usbc_1_timer_remaining_seconds",
        "type": "03",
-       "offset": 20
+       "offset": 14
       }
      ]
     },
@@ -666,12 +666,12 @@
       {
        "name": "usbc_2_timer_seconds",
        "type": "03",
-       "offset": 16
+       "offset": 10
       },
       {
        "name": "usbc_2_timer_remaining_seconds",
        "type": "03",
-       "offset": 20
+       "offset": 14
       }
      ]
     },
@@ -735,12 +735,12 @@
       {
        "name": "usbc_3_timer_seconds",
        "type": "03",
-       "offset": 16
+       "offset": 10
       },
       {
        "name": "usbc_3_timer_remaining_seconds",
        "type": "03",
-       "offset": 20
+       "offset": 14
       }
      ]
     },
@@ -804,12 +804,12 @@
       {
        "name": "usbc_4_timer_seconds",
        "type": "03",
-       "offset": 16
+       "offset": 10
       },
       {
        "name": "usbc_4_timer_remaining_seconds",
        "type": "03",
-       "offset": 20
+       "offset": 14
       }
      ]
     },

@@ -1,6 +1,6 @@
 {
  "pn": "AS200",
- "source": "anker-solix-api 29eece3 2026-10-06",
+ "source": "anker-solix-api 3eb4ba9 2026-10-08",
  "messages": {
   "0421": {
    "topic": null,
@@ -17,7 +17,7 @@
       {
        "name": "device_pn",
        "type": "00",
-       "offset": 32
+       "offset": 20
       }
      ]
     },
@@ -84,22 +84,22 @@
       {
        "name": "active_device_timeout_minutes",
        "type": "02",
-       "offset": 17
+       "offset": 11
       },
       {
        "name": "temp_unit_fahrenheit",
        "type": "01",
-       "offset": 19
+       "offset": 13
       },
       {
        "name": "device_timeout_minutes",
        "type": "02",
-       "offset": 22
+       "offset": 16
       },
       {
        "name": "device_timeout_switch",
        "type": "01",
-       "offset": 24
+       "offset": 18
       }
      ]
     },
@@ -130,42 +130,42 @@
       {
        "name": "reverse_power_limit_min",
        "type": "02",
-       "offset": 16
+       "offset": 10
       },
       {
        "name": "reverse_power_limit_max",
        "type": "02",
-       "offset": 18
+       "offset": 12
       },
       {
        "name": "charge_voltage_limit_min",
        "type": "02",
-       "offset": 20
+       "offset": 14
       },
       {
        "name": "charge_voltage_limit_max",
        "type": "02",
-       "offset": 22
+       "offset": 16
       },
       {
        "name": "battery_voltage",
        "type": "02",
-       "offset": 24
+       "offset": 18
       },
       {
        "name": "unknown_device_1_a6_24",
        "type": "01",
-       "offset": 36
+       "offset": 24
       },
       {
        "name": "device_1_output_power",
        "type": "02",
-       "offset": 37
+       "offset": 25
       },
       {
        "name": "xt60i_cable",
        "type": "01",
-       "offset": 39
+       "offset": 27
       }
      ]
     },
@@ -211,12 +211,12 @@
       {
        "name": "device_1_sn",
        "type": "00",
-       "offset": 17
+       "offset": 11
       },
       {
        "name": "device_1_pn",
        "type": "00",
-       "offset": 41
+       "offset": 29
       }
      ]
     },
@@ -227,17 +227,17 @@
       {
        "name": "unknown_pps_f9_24",
        "type": "02",
-       "offset": 36
+       "offset": 24
       },
       {
        "name": "unknown_pps_f9_25",
        "type": "02",
-       "offset": 37
+       "offset": 25
       },
       {
        "name": "unknown_pps_f9_26",
        "type": "01",
-       "offset": 38
+       "offset": 26
       }
      ]
     },
@@ -281,7 +281,7 @@
       {
        "name": "device_pn",
        "type": "00",
-       "offset": 32
+       "offset": 20
       }
      ]
     },
@@ -348,22 +348,22 @@
       {
        "name": "active_device_timeout_minutes",
        "type": "02",
-       "offset": 17
+       "offset": 11
       },
       {
        "name": "temp_unit_fahrenheit",
        "type": "01",
-       "offset": 19
+       "offset": 13
       },
       {
        "name": "device_timeout_minutes",
        "type": "02",
-       "offset": 22
+       "offset": 16
       },
       {
        "name": "device_timeout_switch",
        "type": "01",
-       "offset": 24
+       "offset": 18
       }
      ]
     },
@@ -394,42 +394,42 @@
       {
        "name": "reverse_power_limit_min",
        "type": "02",
-       "offset": 16
+       "offset": 10
       },
       {
        "name": "reverse_power_limit_max",
        "type": "02",
-       "offset": 18
+       "offset": 12
       },
       {
        "name": "charge_voltage_limit_min",
        "type": "02",
-       "offset": 20
+       "offset": 14
       },
       {
        "name": "charge_voltage_limit_max",
        "type": "02",
-       "offset": 22
+       "offset": 16
       },
       {
        "name": "battery_voltage",
        "type": "02",
-       "offset": 24
+       "offset": 18
       },
       {
        "name": "unknown_device_1_a6_24",
        "type": "01",
-       "offset": 36
+       "offset": 24
       },
       {
        "name": "device_1_output_power",
        "type": "02",
-       "offset": 37
+       "offset": 25
       },
       {
        "name": "xt60i_cable",
        "type": "01",
-       "offset": 39
+       "offset": 27
       }
      ]
     },
@@ -475,12 +475,12 @@
       {
        "name": "device_1_sn",
        "type": "00",
-       "offset": 17
+       "offset": 11
       },
       {
        "name": "device_1_pn",
        "type": "00",
-       "offset": 41
+       "offset": 29
       }
      ]
     },
@@ -491,17 +491,17 @@
       {
        "name": "unknown_pps_f9_24",
        "type": "02",
-       "offset": 36
+       "offset": 24
       },
       {
        "name": "unknown_pps_f9_25",
        "type": "02",
-       "offset": 37
+       "offset": 25
       },
       {
        "name": "unknown_pps_f9_26",
        "type": "01",
-       "offset": 38
+       "offset": 26
       }
      ]
     },
