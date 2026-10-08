@@ -23,6 +23,7 @@ SOURCES = ("recorded", "map", "name", "untyped")
 LAYOUT_HEADER = ("Product", "Recorded", "Map", "Name", "Untyped", "Commands")
 #: The emulated products, in the compatibility table's column order.
 EMULATED = (
+    Product.A1722,
     Product.A1761,
     Product.A1763,
     Product.A1765,

@@ -7,29 +7,29 @@ product doesn't do it.
 Emulated products
 -----------------
 
-=============================== ========= ========= ========= ========= ========= ========= ========= =========
-Feature                         C1000     C1000 G2  C1000X G2 C2000 G2  C2000X G2 160W      250W      240W
-                                (A1761)   (A1763)   (A1765)   (A1783)   (A1785)   (A2687)   (A2345)   (A91B2)
-=============================== ========= ========= ========= ========= ========= ========= ========= =========
-Advertisement                   ❌        ✅        ✅        ✅        ✅        ❌        ✅        ✅
-Encrypted outer (GCM session)   ❌        ✅        ✅        ✅        ✅        ✅        ✅        N/A
-Plain outer (CBC session)       ✅        ✅        ✅        ✅        ✅        ❌        ✅        ✅
-ECDH key exchange               ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Legacy AES key exchange         ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌
-Owner confirmation by button    ✅        ✅        ✅        ✅        ✅        ✅        ✅        N/A
-Module builds (``module=``)     ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Version read (``0030``)         ✅        ✅        ✅        ✅        ✅        ❌        ✅        ✅
-Recorded module ops (``0020``…) ❌        ❌        ❌        ✅        ❌        ❌        ❌        ❌
-Request routing by ``a1``       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Fragmented frames               ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Recorded status reply           ❌        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Recorded telemetry pushes       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Summary push (``c490``)         N/A       ✅        ✅        ✅        ✅        N/A       N/A       N/A
-Summary fields by name          N/A       ✅        ✅        ✅        ✅        N/A       N/A       N/A
-Expansion battery attached      ❌        ❌        ❌        ✅        ❌        N/A       N/A       N/A
-Custom replies and pushes       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Cloud mode (no BLE link)        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-=============================== ========= ========= ========= ========= ========= ========= ========= =========
+=============================== ========= ========= ========= ========= ========= ========= ========= ========= =========
+Feature                         C300      C1000     C1000 G2  C1000X G2 C2000 G2  C2000X G2 160W      250W      240W
+                                (A1722)   (A1761)   (A1763)   (A1765)   (A1783)   (A1785)   (A2687)   (A2345)   (A91B2)
+=============================== ========= ========= ========= ========= ========= ========= ========= ========= =========
+Advertisement                   ❌        ❌        ✅        ✅        ✅        ✅        ❌        ✅        ✅
+Encrypted outer (GCM session)   ❌        ❌        ✅        ✅        ✅        ✅        ✅        ✅        N/A
+Plain outer (CBC session)       ✅        ✅        ✅        ✅        ✅        ✅        ❌        ✅        ✅
+ECDH key exchange               ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Legacy AES key exchange         ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌
+Owner confirmation by button    ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        N/A
+Module builds (``module=``)     ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Version read (``0030``)         ✅        ✅        ✅        ✅        ✅        ✅        ❌        ✅        ✅
+Recorded module ops (``0020``…) ❌        ❌        ❌        ❌        ✅        ❌        ❌        ❌        ❌
+Request routing by ``a1``       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Fragmented frames               ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Recorded status reply           ❌        ❌        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Recorded telemetry pushes       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Summary push (``c490``)         N/A       N/A       ✅        ✅        ✅        ✅        N/A       N/A       N/A
+Summary fields by name          N/A       N/A       ✅        ✅        ✅        ✅        N/A       N/A       N/A
+Expansion battery attached      N/A       ❌        ❌        ❌        ✅        ❌        N/A       N/A       N/A
+Custom replies and pushes       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Cloud mode (no BLE link)        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+=============================== ========= ========= ========= ========= ========= ========= ========= ========= =========
 
 - **Recorded** replies and pushes are sanitized frames from real units
   (:doc:`device-sources`). The C Gen 2 models share one display-board build,
@@ -44,15 +44,17 @@ Cloud mode (no BLE link)        ✅        ✅        ✅        ✅        ✅ 
   ``device.use_mcu`` replace what the MCU sends, for frames no recording has.
 - The A91B2 runs auth mode 0: it negotiates in the clear and authorizes at the
   key exchange, so it has no confirmation step.
-- **Not recorded** for the C1000 and the 160W: neither's advertisement record
-  is recorded, so they advertise only the ``ff09`` service and no
-  manufacturer data. The C1000 is recorded on the plain outer and the 160W on
-  the encrypted one; their module builds don't enforce either, so the emulator
-  takes both. The C1000 answers ``4040`` with its recorded ``c402`` telemetry
-  behind a ``00`` status byte, as replies carry one; its ``c840`` itself isn't
-  recorded. Its setters get the map's checked ack; whether the C1000 answers a
-  refused value ``04`` isn't recorded either. The 160W has no recorded ``0830``, so ``0030`` goes unanswered, and
-  its MCU frames travel on channel ``11`` (``030111``).
+- **Not recorded** for the C300, the C1000 and the 160W: no advertisement
+  record is recorded for any of them, so they advertise only the ``ff09``
+  service and no manufacturer data. The C300 and C1000 are recorded on the
+  plain outer and the 160W on the encrypted one; their module builds don't
+  enforce either, so the emulator takes both. The C300 and C1000 answer
+  ``4040`` with their recorded ``c402`` telemetry behind a ``00`` status byte,
+  as replies carry one; their ``c840`` itself isn't recorded. Their setters get
+  the map's checked ack (the C1000's ``404a`` ack is recorded); whether they
+  answer a refused value ``04`` isn't recorded. The 160W has no recorded
+  ``0830``, so ``0030`` goes unanswered, and its MCU frames travel on channel
+  ``11`` (``030111``).
 
 Commands and telemetry
 ----------------------

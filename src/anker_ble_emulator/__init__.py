@@ -10,6 +10,7 @@ from .backend import (
 from .clock import Clock, ManualClock, MonotonicClock
 from .devices import (
     A91B2,
+    A1722,
     A1761,
     A1763,
     A1765,
@@ -37,6 +38,7 @@ from .products import (
 
 __all__ = [
     "A91B2",
+    "A1722",
     "A1761",
     "A1763",
     "A1765",

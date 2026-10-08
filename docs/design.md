@@ -22,6 +22,7 @@ An emulated Anker Solix BLE device (the comms module and the device MCU behind i
 
 | product | advert (name, productType, sku) | outer | auth mode | default module build | device fw | session | recorded MCU replies |
 |---|---|---|---|---|---|---|---|
+| `A1722` SOLIX C300 | not recorded | plain | 2 (button) | v0.2.9.8 | v1.0.5.7 | CBC | `4040` → `4840` (the `c402` telemetry behind a `00` status); push `c402`; mapped setters get the map's ack |
 | `A1761` SOLIX C1000 | not recorded | plain | 2 (button) | v0.2.3.1 | v1.5.9 | CBC | `4040` → `4840` (the `c402` telemetry behind a `00` status); push `c402`; mapped setters get the map's ack |
 | `A1763` SOLIX C1000 Gen 2 | `SOLIX C1000 Gen 2`, `b118`, `DK96` | encrypted | 2 (button) | v0.3.3.0 | v1.2.1.6 | GCM | the C Gen 2 set; pushes `c421`, `4489`, `c490` |
 | `A1765` SOLIX C1000X Gen 2 | `SOLIX C1000X Gen 2`, `b119`, `DK96` | encrypted | 2 (button) | v0.3.3.0 | v1.2.1.6 | GCM | the A1763's |

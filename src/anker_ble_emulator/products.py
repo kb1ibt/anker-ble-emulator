@@ -45,6 +45,8 @@ class ModuleBuild(StrEnum):
     V0_2_3_1 = "v0.2.3.1"
     #: The Prime line's module.
     V0_2_9_7 = "v0.2.9.7"
+    #: The C300 module.
+    V0_2_9_8 = "v0.2.9.8"
     V0_3_0_6 = "v0.3.0.6"
     #: Refuses a cleartext connect and a non-ECDH method, and gates ``0027``.
     V0_3_3_0 = "v0.3.3.0"
@@ -72,6 +74,7 @@ SESSION_OPS = {
     ModuleBuild.CHARGING_0_0_5_0: frozenset[int](),
     ModuleBuild.V0_2_3_1: frozenset({0x30}),
     ModuleBuild.V0_2_9_7: PRIME_SESSION_OPS,
+    ModuleBuild.V0_2_9_8: frozenset({0x30}),
     ModuleBuild.V0_3_0_6: C_SESSION_OPS,
     ModuleBuild.V0_3_3_0: C_SESSION_OPS,
 }
