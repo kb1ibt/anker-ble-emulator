@@ -185,8 +185,19 @@ def test_version_read_reports_the_chosen_module_build(build: ModuleBuild) -> Non
 def test_recorded_module_replies_come_only_with_their_build() -> None:
     replies = A1783().module.config.session_replies
 
-    assert set(replies) == {0x020, 0x022, 0x028, 0x02E, 0x02F, 0x036, 0x038}
+    assert set(replies) == {
+        0x020,
+        0x022,
+        0x027,
+        0x028,
+        0x02E,
+        0x02F,
+        0x035,
+        0x036,
+        0x038,
+    }
     assert replies[0x022] == bytes.fromhex("00a10109")
+    assert replies[0x027] == bytes.fromhex("00a10100a20100")
     assert set(replies) | {0x030} <= ModuleBuild.V0_3_3_0.session_ops
     assert A1783(module=ModuleBuild.V0_3_0_6).module.config.session_replies == {}
     assert A1763().module.config.session_replies == {}

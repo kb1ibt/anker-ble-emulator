@@ -54,8 +54,9 @@ commands (``0001``-``0029``) are all emulated.
 - **Answered**: from a recording, or, for a command anker-solix-api maps that
   no recording answers, by an ack: ``00`` when its values are ones the map
   accepts and ``04`` when not.
-- **Values checked**: the map gives the command's accepted values; the reply's
-  status is the check, recorded reply or not.
+- **Values checked**: the map gives the command's accepted values. A setting
+  outside them is never applied. The Prime MCUs answer it ``04``; the C Gen 2
+  display board acks every setter ``00`` (``fid0f_ack_reply``), applied or not.
 - **Change telemetry**: an accepted command sets the telemetry fields the map
   links it to (``state_name``) in every message that carries them. Settings the
   map scales by a divider or ties to another setting stay unlinked.

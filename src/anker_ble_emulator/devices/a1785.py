@@ -36,6 +36,7 @@ PROFILE = Profile(
     device_version=solix_c_gen2.DEVICE_VERSION,
     version_names=solix_c_gen2.version_names("A1783"),
     known_commands=solix_c_gen2.KNOWN_COMMANDS,
+    rejects=False,
 )
 register(Product.A1785, PROFILE)
 

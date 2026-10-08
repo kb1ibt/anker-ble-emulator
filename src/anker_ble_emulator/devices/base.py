@@ -135,6 +135,8 @@ class Profile:
             build they were recorded on.
         known_commands: The MCU firmware's command table: every request it
             handles, emulated or not.
+        rejects: The MCU answers a setting it refuses with ``04``; otherwise
+            it acks ``00`` and leaves the setting unapplied.
 
     """
 
@@ -151,6 +153,7 @@ class Profile:
     version_names: tuple[str, str, str]
     module_replies: Mapping[ModuleBuild, tuple[int, ...]] = field(default_factory=dict)
     known_commands: frozenset[int] = frozenset()
+    rejects: bool = True
 
     def frames(self) -> dict[int, bytes]:
         """Return the recorded cleartext payloads by msgtype."""
@@ -199,6 +202,7 @@ class Profile:
                 msgtype: mcu_frame(msgtype, frames[msgtype]) for msgtype in self.pushes
             },
             layout=layout,
+            rejects=self.rejects,
         )
 
 

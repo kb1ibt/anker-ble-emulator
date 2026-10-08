@@ -35,19 +35,23 @@ def _with_status(frame: Frame, status: int) -> Frame:
 class McuScript:
     """What the MCU answers, by request msgtype, and what it can push.
 
-    A command the layout maps but nothing recorded answers gets an ack whose
-    status is the layout's check of its values.
+    A command the layout maps but nothing recorded answers gets an ack. An MCU
+    that rejects answers a setting the layout refuses with ``04``; one that
+    doesn't acks it ``00`` and leaves it unapplied.
 
     Attributes:
         replies: Cleartext frames sent in order for a request msgtype.
         pushes: Cleartext frames by push msgtype, sent on demand.
         layout: The product's layout, for command acks and named values.
+        rejects: The MCU answers a refused setting ``04`` (the Prime MCUs),
+            not ``00`` (the C Gen 2 display board's acks).
 
     """
 
     replies: Mapping[int, Sequence[Frame]] = field(default_factory=dict)
     pushes: Mapping[int, Frame] = field(default_factory=dict)
     layout: Layout | None = None
+    rejects: bool = True
 
     def respond(
         self,
@@ -59,8 +63,8 @@ class McuScript:
         """Return the frames answering a request; none for an unknown one.
 
         A listed request answers with its frames, an empty list being silence.
-        Where the layout maps the command, the reply's status is the layout's
-        check of the request's values.
+        Where the layout maps the command and the MCU rejects, the reply's
+        status is the layout's check of the request's values.
 
         Args:
             msgtype: The request's 12-bit message type.
@@ -79,7 +83,7 @@ class McuScript:
             frames = [mcu_frame(msgtype | RESPONSE, ack)]
         else:
             return []
-        if layout is not None and mapped:
+        if layout is not None and mapped and self.rejects:
             status = layout.check(msgtype, request)
             frames = [
                 _with_status(frame, status)

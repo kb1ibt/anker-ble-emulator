@@ -97,8 +97,9 @@ def test_replies_and_pushes_can_be_set_and_silenced() -> None:
     assert device.mcu.push(0x421).payload == bytes.fromhex("a10131a20101")
     device.set_reply(0x100)
     assert device.mcu.respond(0x100) == []
-    device.set_reply(0x101, (0x901, b"\xa1\x01\x31"))
-    assert device.mcu.respond(0x101)[0].payload == b"\xa1\x01\x31"
+    prime = A2345()
+    prime.set_reply(0x207, (0xA07, b"\xa1\x01\x31"))
+    assert prime.mcu.respond(0x207)[0].payload == b"\xa1\x01\x31"
     device.use_mcu(McuScript())
     assert device.mcu.respond(0x057) == []
     with pytest.raises(KeyError):
@@ -116,16 +117,18 @@ async def test_an_accepted_setter_shows_in_the_telemetry_after_it() -> None:
         on = await link.send(0x101, [(0xA1, b"\x21"), (0xA2, b"\x01\x01")], SESSION)
         off = await link.send(0x101, [(0xA1, b"\x21"), (0xA2, b"\x01\x00")], SESSION)
         bad = await link.send(0x101, [(0xA1, b"\x21"), (0xA2, b"\x01\x02")], SESSION)
+        untyped = await link.send(0x101, [(0xA1, b"\x21"), (0xA2, b"\x01")], SESSION)
 
     switch = [
         decode_fields(reply.plaintext)[0xA7][AC_SWITCH_OFFSET]
-        for reply in (*on, *off, *bad)
+        for reply in (*on, *off, *bad, *untyped)
         if cmd_hex(reply.frame) == "4421"
     ]
     assert [cmd_hex(reply.frame) for reply in on] == ["4901", "4421"]
-    assert switch == [1, 0, 0]
-    assert on[0].plaintext[0] == 0x00
-    assert bad[0].plaintext[0] == 0x04
+    assert switch == [1, 0, 0, 0]
+    assert [reply.plaintext for reply in (on[0], bad[0], untyped[0])] == [
+        bytes.fromhex("00a10131")
+    ] * 3
 
 
 async def test_going_on_the_cloud_drops_the_link_and_refuses_connects() -> None:
