@@ -31,11 +31,12 @@ PROFILE = Profile(
     ),
     data=("a1783.json", solix_c_gen2.DATA),
     replies=solix_c_gen2.REPLIES,
-    pushes=(*solix_c_gen2.PUSHES, 0x490, 0x425),
+    pushes=(*solix_c_gen2.PUSHES, 0x425),
     device_version=solix_c_gen2.DEVICE_VERSION,
     version_names=solix_c_gen2.version_names("A1783"),
     known_commands=solix_c_gen2.KNOWN_COMMANDS,
     rejects=False,
+    summary=solix_c_gen2.SUMMARY,
     module_replies={
         ModuleBuild.V0_3_3_0: (
             0x820,

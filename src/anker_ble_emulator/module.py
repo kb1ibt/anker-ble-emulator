@@ -240,8 +240,8 @@ class Module:
         self.mcu = mcu
         self.clock = clock
         self.enrolled: set[bytes] = set()
-        #: Telemetry values set by name, by the msgtype of the frames they go into.
-        self.values: dict[int, dict[str, Value]] = {}
+        #: The device's telemetry values by name, set in every frame that carries them.
+        self.values: dict[str, Value] = {}
         self._key_pair_factory = key_pair_factory
         self._link: _Link | None = None
 
@@ -556,11 +556,8 @@ class Module:
     def _apply(self, msgtype: int, plaintext: bytes) -> None:
         """Show an accepted command's settings in the telemetry that carries them."""
         layout = self.mcu.layout
-        if layout is None:
-            return
-        for name, value in layout.state_changes(msgtype, plaintext).items():
-            for target in layout.locate(name):
-                self.values.setdefault(target, {})[name] = value
+        if layout is not None:
+            self.values.update(layout.state_changes(msgtype, plaintext))
 
     def _relay(self, link: _Link, frames: list[Frame]) -> Output:
         """Encrypt the MCU's cleartext frames for the session and send them."""

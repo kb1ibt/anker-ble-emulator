@@ -104,6 +104,14 @@ def test_every_model_answers_the_line_s_commands(model: Model) -> None:
 
 
 @pytest.mark.parametrize("model", MODELS)
+def test_every_model_pushes_the_series_summary(model: Model) -> None:
+    summary = model().module.mcu.push(0x490)
+
+    assert summary.cmd.msgtype == 0x490
+    assert summary.payload.endswith(b"charging_pps_series_c_0009\x00")
+
+
+@pytest.mark.parametrize("model", MODELS)
 def test_recorded_frames_are_routed_to_ble(model: Model) -> None:
     device = model()
     script = device.module.mcu

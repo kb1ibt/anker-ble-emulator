@@ -238,15 +238,19 @@ class Layout:
                 changes[state] = value
         return changes
 
+    def names(self, msgtype: int) -> frozenset[str]:
+        """Return the names of a message's typed fields and parts; none if unmapped."""
+        return frozenset(
+            name
+            for field in self.messages.get(msgtype, ())
+            for name in (field.name, *(part.name for part in field.parts))
+            if name
+        )
+
     def locate(self, name: str) -> tuple[int, ...]:
         """Return the messages with a typed field or part called ``name``."""
         return tuple(
-            msgtype
-            for msgtype, fields in self.messages.items()
-            if any(
-                field.name == name or any(part.name == name for part in field.parts)
-                for field in fields
-            )
+            msgtype for msgtype in self.messages if name in self.names(msgtype)
         )
 
     def _accepted(

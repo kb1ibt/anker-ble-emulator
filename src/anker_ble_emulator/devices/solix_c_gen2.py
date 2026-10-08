@@ -2,18 +2,23 @@
 """The SOLIX C Gen 2 line (A1763, A1765, A1783, A1785): one display-board build.
 
 The display board answers the same commands on every model, so the MCU replies
-are shared; frames that name the unit (``0421``, ``0900``, ``0490``, ``0425``)
-come from each model's own recording.
+and the ``0490`` summary (schema ``charging_pps_series_c``) are shared; frames
+that name the unit (``0421``, ``0900``, ``0425``) come from each model's own
+recording. The summary was recorded with an expansion attached; a model
+without one zeroes the expansion's entries.
 """
 
 #: Recordings of the line's identity-free MCU replies and pushes.
 DATA = "solix_c_gen2.json"
+#: The ``0490`` summary's field names.
+SUMMARY = "c490_fields.json"
 
 #: Reply msgtypes by request msgtype; every setter is followed by a ``0421``.
 REPLIES = {
     0x057: (0x857,),
     0x05E: (0x85E, 0x421),
     0x063: (0x863,),
+    0x072: (0x872,),
     0x089: (0x889,),
     0x090: (0x890, 0x421),
     0x091: (0x891, 0x421),
@@ -26,7 +31,7 @@ REPLIES = {
 }
 
 #: Pushes every model can send.
-PUSHES = (0x421, 0x489)
+PUSHES = (0x421, 0x489, 0x490)
 #: The display board's fid ``0x0f`` command table (every handled request).
 KNOWN_COMMANDS = frozenset(
     {0x051, 0x057, 0x059, 0x05E, 0x063, 0x064, 0x065, 0x066, 0x072, 0x089}

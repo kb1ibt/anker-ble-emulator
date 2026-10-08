@@ -24,7 +24,9 @@ Request routing by ``a1``       ✅       ✅        ✅       ✅        ✅   
 Fragmented frames               ✅       ✅        ✅       ✅        ✅       ✅
 Recorded status reply           ✅       ✅        ✅       ✅        ✅       ✅
 Recorded telemetry pushes       ✅       ✅        ✅       ✅        ✅       ✅
-Summary push (``c490``)         ❌       ❌        ✅       ❌        N/A      N/A
+Summary push (``c490``)         ✅       ✅        ✅       ✅        N/A      N/A
+Summary fields by name          ✅       ✅        ✅       ✅        N/A      N/A
+Expansion battery attached      ❌       ❌        ✅       ❌        N/A      N/A
 Custom replies and pushes       ✅       ✅        ✅       ✅        ✅       ✅
 Cloud mode (no BLE link)        ✅       ✅        ✅       ✅        ✅       ✅
 =============================== ======== ========= ======== ========= ======== ========
@@ -33,6 +35,11 @@ Cloud mode (no BLE link)        ✅       ✅        ✅       ✅        ✅   
   (:doc:`device-sources`). The C Gen 2 models share one display-board build,
   so they answer the same commands; frames that name the unit come from each
   model's own recording.
+- **Summary fields by name**: the ``c490`` summary's fields (schema
+  ``charging_pps_series_c_0009``) are set by name like the TLV telemetry's.
+  It was recorded on an A1783 with an expansion attached; the models without
+  one send the expansion's pack entries and SoC as zeros, as the display board
+  does.
 - **Custom replies and pushes**: ``device.set_reply``, ``device.set_push`` and
   ``device.use_mcu`` replace what the MCU sends, for frames no recording has.
 - The A91B2 runs auth mode 0: it negotiates in the clear and authorizes at the
@@ -62,7 +69,8 @@ commands (``0001``-``0029``) are all emulated.
   map scales by a divider or ties to another setting stay unlinked.
 - **Telemetry fields typed**: share of the product's mapped telemetry fields
   whose type is known, so they can be set by name
-  (``device.set_values(0x421, battery_soc=55)``) and built.
+  (``device.set_values(battery_soc=55)``, in every message that carries the
+  field) and built.
 
 Layouts
 -------

@@ -28,7 +28,7 @@ def test_every_device_loads_its_layout() -> None:
 def test_a_telemetry_value_set_by_name_reaches_the_recorded_frame() -> None:
     device = A1783()
 
-    device.set_values(0x421, battery_soc=55)
+    device.set_values(battery_soc=55)
 
     push = device.module.mcu.push(0x421, values=device.module.values)
     assert decode_fields(push.payload)[0xA5][BATTERY_SOC_OFFSET] == 55
@@ -36,19 +36,42 @@ def test_a_telemetry_value_set_by_name_reaches_the_recorded_frame() -> None:
     assert decode_fields(recorded.payload)[0xA5][BATTERY_SOC_OFFSET] != 55
 
 
+def test_a_value_set_on_the_device_reaches_every_message_that_carries_it() -> None:
+    device = A1783()
+    script, summary = device.mcu, device.mcu.summary
+    assert summary is not None
+
+    device.set_values(battery_soc=55)
+
+    status, telemetry = script.respond(0x100, values=device.module.values)
+    post = script.push(0x490, values=device.module.values)
+    assert decode_fields(status.payload[1:])[0xA5][BATTERY_SOC_OFFSET] == 55
+    assert decode_fields(telemetry.payload)[0xA5][BATTERY_SOC_OFFSET] == 55
+    assert summary.read(post.payload)["battery_soc"] == 55
+
+
+def test_an_mcu_without_a_layout_sends_its_frames_as_recorded() -> None:
+    script = A1783().mcu
+    quiet = McuScript(pushes=script.pushes)
+
+    push = quiet.push(0x421, values={"battery_soc": 55})
+
+    assert push.payload == script.push(0x421).payload
+
+
 def test_a_value_the_layout_doesnt_type_is_refused() -> None:
     device = A1783()
 
     with pytest.raises(LayoutError):
-        device.set_values(0x421, no_such_field=1)
+        device.set_values(no_such_field=1)
 
 
-def test_a_device_without_a_layout_takes_no_values() -> None:
-    device = A1783()
+def test_a_device_without_a_layout_or_summary_takes_no_values() -> None:
+    device = A2345()
     device.layout = None
 
-    with pytest.raises(LayoutError, match="no layout"):
-        device.set_values(0x421, battery_soc=1)
+    with pytest.raises(LayoutError, match="sends no typed field"):
+        device.set_values(battery_soc=1)
 
 
 async def test_a_mapped_command_without_a_recording_gets_a_checked_ack() -> None:
@@ -72,7 +95,7 @@ async def test_a_mapped_command_without_a_recording_gets_a_checked_ack() -> None
 
 async def test_a_value_set_by_name_reaches_the_client() -> None:
     device = A1783()
-    device.set_values(0x421, battery_soc=42)
+    device.set_values(battery_soc=42)
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
         link = BleakLink(client, AppClient())
         await link.start()

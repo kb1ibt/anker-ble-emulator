@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from .frame import CHANNEL_SESSION, COMPOSER_SEND, RESPONSE, make_frame
 from .layouts import FIRST_TAG, STATUS_ACCEPTED
 from .messages import BLE_REPLY_ROUTE, ROUTE_FIELD
+from .summary import SUMMARY_MSGTYPE
 
 
 if TYPE_CHECKING:
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
 
     from .frame import Frame
     from .layouts import Layout, Value
+    from .summary import Summary
 
 
 def mcu_frame(msgtype: int, cleartext: bytes) -> Frame:
@@ -43,6 +45,7 @@ class McuScript:
         replies: Cleartext frames sent in order for a request msgtype.
         pushes: Cleartext frames by push msgtype, sent on demand.
         layout: The product's layout, for command acks and named values.
+        summary: The ``c490`` summary's named fields, where the MCU posts one.
         rejects: The MCU answers a refused setting ``04`` (the Prime MCUs),
             not ``00`` (the C Gen 2 display board's acks).
 
@@ -51,6 +54,7 @@ class McuScript:
     replies: Mapping[int, Sequence[Frame]] = field(default_factory=dict)
     pushes: Mapping[int, Frame] = field(default_factory=dict)
     layout: Layout | None = None
+    summary: Summary | None = None
     rejects: bool = True
 
     def respond(
@@ -58,7 +62,7 @@ class McuScript:
         msgtype: int,
         *,
         request: bytes = b"",
-        values: Mapping[int, Mapping[str, Value]] | None = None,
+        values: Mapping[str, Value] | None = None,
     ) -> list[Frame]:
         """Return the frames answering a request; none for an unknown one.
 
@@ -69,7 +73,8 @@ class McuScript:
         Args:
             msgtype: The request's 12-bit message type.
             request: The request's cleartext fields, checked against the layout.
-            values: Telemetry values set by name, by frame msgtype.
+            values: The device's telemetry values by name, set in every frame
+                that carries them.
 
         """
         layout = self.layout
@@ -93,9 +98,7 @@ class McuScript:
             ]
         return [self._with_values(frame, values) for frame in frames]
 
-    def push(
-        self, msgtype: int, *, values: Mapping[int, Mapping[str, Value]] | None = None
-    ) -> Frame:
+    def push(self, msgtype: int, *, values: Mapping[str, Value] | None = None) -> Frame:
         """Return the scripted push of ``msgtype``.
 
         Raises:
@@ -104,11 +107,18 @@ class McuScript:
         """
         return self._with_values(self.pushes[msgtype], values)
 
-    def _with_values(
-        self, frame: Frame, values: Mapping[int, Mapping[str, Value]] | None
-    ) -> Frame:
-        named = (values or {}).get(frame.cmd.msgtype)
-        if not named or self.layout is None:
+    def _with_values(self, frame: Frame, values: Mapping[str, Value] | None) -> Frame:
+        msgtype = frame.cmd.msgtype
+        if not values:
             return frame
-        payload = self.layout.update(frame.cmd.msgtype, frame.payload, named)
-        return mcu_frame(frame.cmd.msgtype, payload)
+        if self.summary is not None and msgtype == SUMMARY_MSGTYPE:
+            payload = self.summary.update(frame.payload, values)
+        elif self.layout is not None:
+            names = self.layout.names(msgtype)
+            named = {name: value for name, value in values.items() if name in names}
+            if not named:
+                return frame
+            payload = self.layout.update(msgtype, frame.payload, named)
+        else:
+            return frame
+        return mcu_frame(msgtype, payload)

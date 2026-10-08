@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from importlib import resources
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
@@ -33,6 +33,7 @@ from anker_ble_emulator.products import (
     Product,
     Transport,
 )
+from anker_ble_emulator.summary import Summary
 
 
 if TYPE_CHECKING:
@@ -137,6 +138,9 @@ class Profile:
             handles, emulated or not.
         rejects: The MCU answers a setting it refuses with ``04``; otherwise
             it acks ``00`` and leaves the setting unapplied.
+        summary: The ``0490`` summary's field names in ``devices/data/``,
+            where the MCU posts one.
+        expansion: An expansion battery is attached.
 
     """
 
@@ -154,15 +158,15 @@ class Profile:
     module_replies: Mapping[ModuleBuild, tuple[int, ...]] = field(default_factory=dict)
     known_commands: frozenset[int] = frozenset()
     rejects: bool = True
+    summary: str | None = None
+    expansion: bool = True
 
     def frames(self) -> dict[int, bytes]:
         """Return the recorded cleartext payloads by msgtype."""
         frames: dict[int, bytes] = {}
         for name in reversed(self.data):
-            text = resources.files(__package__).joinpath("data", name).read_text()
             frames |= {
-                int(key, 16): bytes.fromhex(value)
-                for key, value in json.loads(text).items()
+                int(key, 16): bytes.fromhex(value) for key, value in _data(name).items()
             }
         return frames
 
@@ -202,8 +206,18 @@ class Profile:
                 msgtype: mcu_frame(msgtype, frames[msgtype]) for msgtype in self.pushes
             },
             layout=layout,
+            summary=None
+            if self.summary is None
+            else Summary.from_json(_data(self.summary)),
             rejects=self.rejects,
         )
+
+
+def _data(name: str) -> dict[str, Any]:
+    """Return a JSON resource in ``devices/data/``."""
+    text = resources.files(__package__).joinpath("data", name).read_text()
+    data: dict[str, Any] = json.loads(text)
+    return data
 
 
 #: Emulation profiles by product; each product module registers its own.
@@ -291,30 +305,41 @@ class EmulatedDevice:
         )
         #: The product's layout from anker-solix-api's maps, where it has one.
         self.layout = Layout.load(pn)
-        self.module = Module(
-            config, profile.script(self.layout), clock or MonotonicClock()
-        )
+        script = profile.script(self.layout)
+        self.module = Module(config, script, clock or MonotonicClock())
+        if script.summary is not None and not profile.expansion:
+            self.module.values.update(script.summary.without_expansion())
         #: Seconds between runs of the module's authorize timer.
         self.timer_period = TIMER_PERIOD
         #: On WiFi to the cloud, with no BLE link (``set_cloud``).
         self.cloud = False
         self._listener: Callable[[Output], None] | None = None
 
-    def set_values(self, msgtype: int, **values: Value) -> None:
-        """Set telemetry values by field name in every later frame of ``msgtype``.
+    def set_values(self, **values: Value) -> None:
+        """Set telemetry values by field name in every later frame that carries them.
 
-        Names are the product layout's (anker-solix-api's field names).
+        Names are the product layout's (anker-solix-api's field names) and the
+        ``0490`` summary's.
 
         Raises:
-            LayoutError: If the product has no layout, or ``msgtype`` no such
-                typed field.
+            LayoutError: If no message the device sends has a field so named.
+            TypeError: If a value doesn't fit its field.
 
         """
-        if self.layout is None:
-            msg = f"{self.pn} has no layout"
-            raise LayoutError(msg)
-        self.layout.build(msgtype, values)
-        self.module.values.setdefault(msgtype, {}).update(values)
+        layout, summary = self.layout, self.mcu.summary
+        for name, value in values.items():
+            known = False
+            if layout is not None:
+                for msgtype in layout.locate(name):
+                    layout.build(msgtype, {name: value})
+                    known = True
+            if summary is not None and name in summary.fields:
+                summary.check(name, value)
+                known = True
+            if not known:
+                msg = f"{self.pn} sends no typed field {name!r}"
+                raise LayoutError(msg)
+        self.module.values.update(values)
 
     @property
     def mcu(self) -> McuScript:
