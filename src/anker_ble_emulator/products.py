@@ -37,6 +37,11 @@ class Path(StrEnum):
 class ModuleBuild(StrEnum):
     """The comms module's firmware build."""
 
+    #: The Prime Charger 160W's module; its ``0830`` isn't recorded, so it's
+    #: named by its ``0829`` chip and library version.
+    CHARGING_0_0_5_0 = "Charging v0.0.5.0"
+    #: The C1000 (first generation) module.
+    V0_2_3_1 = "v0.2.3.1"
     #: The Prime line's module.
     V0_2_9_7 = "v0.2.9.7"
     V0_3_0_6 = "v0.3.0.6"
@@ -50,10 +55,8 @@ class ModuleBuild(StrEnum):
 
     @property
     def session_ops(self) -> frozenset[int]:
-        """The session requests (below ``0x40``) the module answers itself."""
-        if self is ModuleBuild.V0_2_9_7:
-            return PRIME_SESSION_OPS
-        return C_SESSION_OPS
+        """The session requests (below ``0x40``) the module is known to answer."""
+        return SESSION_OPS[self]
 
 
 #: Session ops the C-series module answers on fid ``0x0f``: its inline split,
@@ -63,6 +66,14 @@ C_SESSION_OPS = frozenset(
 )
 #: Session ops the Prime module (v0.2.9.7) answers on fid ``0x0f``.
 PRIME_SESSION_OPS = frozenset({0x20, 0x28, 0x2D, 0x2F, 0x30, 0x36})
+#: Session ops by build; an unrecorded build is known to answer only what was seen.
+SESSION_OPS = {
+    ModuleBuild.CHARGING_0_0_5_0: frozenset[int](),
+    ModuleBuild.V0_2_3_1: frozenset({0x30}),
+    ModuleBuild.V0_2_9_7: PRIME_SESSION_OPS,
+    ModuleBuild.V0_3_0_6: C_SESSION_OPS,
+    ModuleBuild.V0_3_3_0: C_SESSION_OPS,
+}
 
 
 class Product(StrEnum):

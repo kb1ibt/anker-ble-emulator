@@ -130,8 +130,15 @@ def test_advert_without_a_capability_ends_at_the_sku() -> None:
 
     record = advert.manufacturer_data(bytes.fromhex("aa12deadbeef"))
 
+    assert record is not None
     assert record.hex() == "01aa12deadbeef02b106373434"
     assert len(record) == 13
+
+
+def test_an_advert_without_a_recorded_record_sends_none() -> None:
+    advert = Advert(local_name=None)
+
+    assert advert.manufacturer_data(bytes.fromhex("aa12deadbeef")) is None
 
 
 def test_sku_length_follows_the_version_code() -> None:

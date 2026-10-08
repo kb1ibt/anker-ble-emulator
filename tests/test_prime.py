@@ -1,9 +1,9 @@
 # Copyright (c) 2026 Shawn Stricker
-"""The Prime devices (A2345, A91B2) through a real ``bleak.BleakClient``."""
+"""The Prime devices (A2345, A2687, A91B2) through a real ``bleak.BleakClient``."""
 
 from bleak import BleakClient
 
-from anker_ble_emulator import A91B2, A2345, EmulatedBleakBackend, Outer
+from anker_ble_emulator import A91B2, A2345, A2687, EmulatedBleakBackend, Outer
 from anker_ble_emulator.devices import COMPANY_ID
 from tests.fixtures.client import (
     SESSION,
@@ -11,6 +11,7 @@ from tests.fixtures.client import (
     AppClient,
     BleakLink,
     cmd_hex,
+    pattern_hex,
     settle,
 )
 
@@ -134,6 +135,42 @@ async def test_a2345_version_read_matches_the_recorded_reply() -> None:
 
     assert [cmd_hex(reply.frame) for reply in version] == ["4830"]
     assert version[0].plaintext == A2345_VERSIONS
+
+
+async def test_a2687_reports_its_module_and_answers_on_channel_11() -> None:
+    device = A2687()
+    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
+        link = BleakLink(client, AppClient())
+        await link.start()
+        replies = await link.negotiate(TOKEN)
+        device.press_button()
+        await settle()
+        status = await link.send(0x200, [(0xA1, b"\x21")], SESSION)
+        usb = await link.send(0x207, [(0xA1, b"\x21"), (0xA2, b"\x01\x01")], SESSION)
+        version = await link.send(0x030, [(0xA1, b"\x21")], SESSION)
+        device.push(0x300)
+        await settle()
+
+    info = replies[0x829].fields
+    assert info[0xA2] == b"Charging"
+    assert info[0xA3] == b"v0.0.5.0"
+    assert info[0xA5] == device.mac + b"00000000001"
+    assert replies[0x803].fields[0xA2] == (297).to_bytes(2, "little")
+    assert [cmd_hex(reply.frame) for reply in status] == ["4a00"]
+    assert status[0].plaintext == device.mcu.respond(0x200)[0].payload
+    assert [reply.plaintext for reply in usb] == [bytes.fromhex("00a10131")]
+    assert version == []
+    pushed = link.replies[-1]
+    assert cmd_hex(pushed.frame) == "4300"
+    assert {pattern_hex(reply.frame) for reply in [*status, *usb, pushed]} == {"030111"}
+
+
+def test_a2687_advertises_no_record() -> None:
+    device = A2687()
+
+    assert device.local_name is None
+    assert device.advertisement_data.manufacturer_data == {}
+    assert device.module_build.session_ops == frozenset()
 
 
 async def test_an_unnamed_device_reports_its_address_as_its_name() -> None:

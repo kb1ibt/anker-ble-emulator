@@ -137,6 +137,16 @@ class Layout:
             return None
         return cls(json.loads(text.read_text()))
 
+    def alias(self, aliases: Mapping[int, int]) -> None:
+        """Type each message in ``aliases`` by the message it names.
+
+        Raises:
+            LayoutError: If a named message isn't in the layout.
+
+        """
+        for msgtype, source in aliases.items():
+            self.messages[msgtype] = self._message(source)
+
     def build(self, msgtype: int, values: Mapping[str, Value] | None = None) -> bytes:
         """Return a telemetry payload of the message's typed fields, zero unless set.
 

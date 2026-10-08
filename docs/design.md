@@ -22,10 +22,12 @@ An emulated Anker Solix BLE device (the comms module and the device MCU behind i
 
 | product | advert (name, productType, sku) | outer | auth mode | default module build | device fw | session | recorded MCU replies |
 |---|---|---|---|---|---|---|---|
+| `A1761` SOLIX C1000 | not recorded | plain | 2 (button) | v0.2.3.1 | v1.5.9 | CBC | `4040` → `4840` (the `c402` telemetry behind a `00` status); push `c402`; mapped setters get the map's ack |
 | `A1763` SOLIX C1000 Gen 2 | `SOLIX C1000 Gen 2`, `b118`, `DK96` | encrypted | 2 (button) | v0.3.3.0 | v1.2.1.6 | GCM | the C Gen 2 set; pushes `c421`, `4489`, `c490` |
 | `A1765` SOLIX C1000X Gen 2 | `SOLIX C1000X Gen 2`, `b119`, `DK96` | encrypted | 2 (button) | v0.3.3.0 | v1.2.1.6 | GCM | the A1763's |
 | `A1783` SOLIX C2000 Gen 2 | `SOLIX C2000 Gen 2`, `b11a`, `DKKE` | encrypted | 2 (button) | v0.3.3.0 | v1.2.1.6 | GCM | the C Gen 2 set; pushes `c421`, `4489`, `c490`, `4425` |
 | `A1785` SOLIX C2000X Gen 2 | `SOLIX C2000X Gen 2`, `b11b`, `DKVP` | encrypted | 2 (button) | v0.3.3.0 | v1.2.1.6 | GCM | the C Gen 2 set; pushes `c421`, `4489`, `c490`, `4425` |
+| `A2687` Prime Charger 160W | not recorded | encrypted | 2 (button) | `Charging` v0.0.5.0 (`0829`; no `0830`) | not recorded | GCM | `4200` → `4a00`; `4205`/`4206`/`4207`/`420a` → `4a05`/`4a06`/`4a07`/`4a0a`; push `4300`; all on `030111`; `0829 a5` = MAC + the serial's last 11 characters; MTU cap 297 |
 | `A2345` Prime Charger 250W | `A2345_<MAC tail>`, `b402`, `QJB` | encrypted | 2 (button) | v0.2.9.7 | v2.1.1.6 | GCM | `4200` → `ca00` (fragmented); `420a` → `4a0a`; `420b` → `4a0b` + `4303`; push `4303` |
 | `A91B2` Prime Charging Station 240W | none, `b401`, `JTB` | plain | 0 | v0.2.9.7 | v1.1.2.4 | CBC | `4200` → `4a00` (250 B, whole); `420a` → `4a0a`; `420b` → `4a0b` + `4303`; push `4303` |
 

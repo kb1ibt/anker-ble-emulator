@@ -14,7 +14,7 @@ from bleak.backends.scanner import AdvertisementData
 from construct import Bytes, Int8ub, Optional, Struct
 
 from anker_ble_emulator.clock import MonotonicClock
-from anker_ble_emulator.frame import RESPONSE
+from anker_ble_emulator.frame import CHANNEL_SESSION, RESPONSE
 from anker_ble_emulator.layouts import Layout, LayoutError
 from anker_ble_emulator.mcu import McuScript, mcu_frame
 from anker_ble_emulator.module import (
@@ -79,13 +79,16 @@ UNSET = Unset.UNSET
 
 @dataclass(frozen=True)
 class Advert:
-    """The manufacturer record under company id ``0xffff``.
+    """The advertisement: the name and the manufacturer record under ``0xffff``.
+
+    A product whose record isn't recorded advertises none (``product_type``
+    None); it's still found by its service.
 
     Attributes:
         local_name: The advertised name, or None while the device has none.
         version_code: ``01`` with a 3-byte sku, ``02`` with a 4-byte one.
         bind_type: The device's binding state.
-        product_type: The model key, 2 bytes.
+        product_type: The model key, 2 bytes; None for no record.
         sku: The serial's sku substring.
         capability: The trailing capability byte; None where the family has none.
         prime_name: Name the device ``<model>_<last 2 MAC bytes>``, as the
@@ -94,15 +97,17 @@ class Advert:
     """
 
     local_name: str | None
-    version_code: int
-    bind_type: int
-    product_type: bytes
-    sku: bytes
+    version_code: int | None = None
+    bind_type: int | None = None
+    product_type: bytes | None = None
+    sku: bytes | None = None
     capability: int | None = None
     prime_name: bool = False
 
-    def manufacturer_data(self, mac: bytes) -> bytes:
-        """Return the record's bytes for a device with ``mac``."""
+    def manufacturer_data(self, mac: bytes) -> bytes | None:
+        """Return the record's bytes for a device with ``mac``; None for none."""
+        if self.product_type is None:
+            return None
         return ADVERT_LAYOUT.build(
             {
                 "version_code": self.version_code,
@@ -130,8 +135,10 @@ class Profile:
             holds a msgtype supplies it.
         replies: Reply msgtypes by request msgtype, in send order.
         pushes: Msgtypes the MCU can push.
-        device_version: The device MCU firmware ``0830`` reports.
-        version_names: ``0830`` ``a3``-``a5``: the model and component names.
+        device_version: The device MCU firmware ``0830`` reports; None where no
+            ``0830`` is recorded, which leaves ``0030`` unanswered.
+        version_names: ``0830`` ``a3``-``a5``: the model and component names;
+            None where the build reports none.
         module_replies: Msgtypes of recorded module session-op replies, by the
             build they were recorded on.
         known_commands: The MCU firmware's command table: every request it
@@ -141,6 +148,14 @@ class Profile:
         summary: The ``0490`` summary's field names in ``devices/data/``,
             where the MCU posts one.
         expansion: An expansion battery is attached.
+        layout_aliases: BLE msgtypes typed by another message of the layout
+            (anker-solix-api maps the MQTT message the BLE one equals).
+        chip: ``0829 a2``.
+        lib_version: ``0829 a3``.
+        serial_tail: How many of the serial's last characters ``0829 a5``
+            carries after the MAC.
+        fragment_cap: The largest frame the module sends (``0803`` MTU cap).
+        mcu_channel: The channel the MCU's frames travel on.
 
     """
 
@@ -153,13 +168,19 @@ class Profile:
     data: tuple[str, ...]
     replies: Mapping[int, tuple[int, ...]]
     pushes: tuple[int, ...]
-    device_version: str
-    version_names: tuple[str, str, str]
+    device_version: str | None
+    version_names: tuple[str, str, str] | None = None
     module_replies: Mapping[ModuleBuild, tuple[int, ...]] = field(default_factory=dict)
     known_commands: frozenset[int] = frozenset()
     rejects: bool = True
     summary: str | None = None
     expansion: bool = True
+    layout_aliases: Mapping[int, int] = field(default_factory=dict)
+    chip: bytes = b"ESP32"
+    lib_version: bytes = b"0.0.0.3"
+    serial_tail: int = 0
+    fragment_cap: int = 253
+    mcu_channel: int = CHANNEL_SESSION
 
     def frames(self) -> dict[int, bytes]:
         """Return the recorded cleartext payloads by msgtype."""
@@ -178,16 +199,15 @@ class Profile:
             for reply in self.module_replies.get(build, ())
         }
 
-    def versions(self, build: ModuleBuild) -> Versions:
-        """Return what ``0830`` reports on ``build``."""
+    def versions(self, build: ModuleBuild) -> Versions | None:
+        """Return what ``0830`` reports on ``build``; None if it isn't recorded."""
+        if self.device_version is None:
+            return None
+        versions = Versions(build.value.encode(), self.device_version.encode())
+        if self.version_names is None:
+            return versions
         model, mcu, esp32 = (name.encode() for name in self.version_names)
-        return Versions(
-            module=build.value.encode(),
-            device=self.device_version.encode(),
-            model=model,
-            mcu=mcu,
-            esp32=esp32,
-        )
+        return replace(versions, model=model, mcu=mcu, esp32=esp32)
 
     def script(self, layout: Layout | None = None) -> McuScript:
         """Return the MCU script built from the packaged recorded frames.
@@ -196,20 +216,24 @@ class Profile:
             layout: The product's layout, for command acks and named values.
 
         """
-        frames = self.frames()
+        frames, channel = self.frames(), self.mcu_channel
         return McuScript(
             replies={
-                request: tuple(mcu_frame(reply, frames[reply]) for reply in replies)
+                request: tuple(
+                    mcu_frame(reply, frames[reply], channel) for reply in replies
+                )
                 for request, replies in self.replies.items()
             },
             pushes={
-                msgtype: mcu_frame(msgtype, frames[msgtype]) for msgtype in self.pushes
+                msgtype: mcu_frame(msgtype, frames[msgtype], channel)
+                for msgtype in self.pushes
             },
             layout=layout,
             summary=None
             if self.summary is None
             else Summary.from_json(_data(self.summary)),
             rejects=self.rejects,
+            channel=channel,
         )
 
 
@@ -300,11 +324,17 @@ class EmulatedDevice:
             serial=None if self.serial is None else self.serial.encode(),
             auth_mode=profile.auth_mode,
             enforce=self.module_build.enforces and self.outer == Outer.ENCRYPTED,
+            fragment_cap=profile.fragment_cap,
+            chip=profile.chip,
+            lib_version=profile.lib_version,
+            serial_tail=profile.serial_tail,
             session_replies=profile.session_replies(self.module_build),
             versions=profile.versions(self.module_build),
         )
         #: The product's layout from anker-solix-api's maps, where it has one.
         self.layout = Layout.load(pn)
+        if self.layout is not None:
+            self.layout.alias(profile.layout_aliases)
         script = profile.script(self.layout)
         self.module = Module(config, script, clock or MonotonicClock())
         if script.summary is not None and not profile.expansion:
@@ -358,14 +388,17 @@ class EmulatedDevice:
             replies: ``(msgtype, cleartext)`` of each frame; none for silence.
 
         """
-        frames = tuple(mcu_frame(msgtype, cleartext) for msgtype, cleartext in replies)
         script = self.module.mcu
+        frames = tuple(
+            mcu_frame(msgtype, cleartext, script.channel)
+            for msgtype, cleartext in replies
+        )
         self.use_mcu(replace(script, replies={**script.replies, request: frames}))
 
     def set_push(self, msgtype: int, cleartext: bytes) -> None:
         """Make the MCU push ``cleartext`` as ``msgtype`` (sent by ``push``)."""
         script = self.module.mcu
-        frame = mcu_frame(msgtype, cleartext)
+        frame = mcu_frame(msgtype, cleartext, script.channel)
         self.use_mcu(replace(script, pushes={**script.pushes, msgtype: frame}))
 
     @property
@@ -389,10 +422,10 @@ class EmulatedDevice:
     @property
     def advertisement_data(self) -> AdvertisementData:
         """The advertisement a scan would report."""
-        advert = self.profile.advert
+        record = self.profile.advert.manufacturer_data(self.mac)
         return AdvertisementData(
             local_name=self.local_name,
-            manufacturer_data={COMPANY_ID: advert.manufacturer_data(self.mac)},
+            manufacturer_data={} if record is None else {COMPANY_ID: record},
             service_data={},
             service_uuids=[SERVICE_UUID],
             tx_power=None,

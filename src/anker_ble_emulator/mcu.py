@@ -20,9 +20,14 @@ if TYPE_CHECKING:
     from .summary import Summary
 
 
-def mcu_frame(msgtype: int, cleartext: bytes) -> Frame:
-    """Return a frame as the MCU hands it to the module: cleartext, on ``03010f``."""
-    return make_frame(COMPOSER_SEND, CHANNEL_SESSION, msgtype, cleartext)
+def mcu_frame(msgtype: int, cleartext: bytes, channel: int = CHANNEL_SESSION) -> Frame:
+    """Return a frame as the MCU hands it to the module: cleartext, on ``0301xx``."""
+    return make_frame(COMPOSER_SEND, channel, msgtype, cleartext)
+
+
+def _rebuilt(frame: Frame, payload: bytes) -> Frame:
+    """Return ``frame`` with another payload, on its own channel."""
+    return mcu_frame(frame.cmd.msgtype, payload, frame.pattern.channel)
 
 
 def _with_status(frame: Frame, status: int) -> Frame:
@@ -30,7 +35,7 @@ def _with_status(frame: Frame, status: int) -> Frame:
     payload = frame.payload
     if not payload or payload[0] >= FIRST_TAG:
         return frame
-    return mcu_frame(frame.cmd.msgtype, bytes([status]) + payload[1:])
+    return _rebuilt(frame, bytes([status]) + payload[1:])
 
 
 @dataclass(frozen=True)
@@ -48,6 +53,8 @@ class McuScript:
         summary: The ``c490`` summary's named fields, where the MCU posts one.
         rejects: The MCU answers a refused setting ``04`` (the Prime MCUs),
             not ``00`` (the C Gen 2 display board's acks).
+        channel: The channel the MCU's frames travel on: ``0f``, or ``11`` on
+            the Prime Charger 160W.
 
     """
 
@@ -56,6 +63,7 @@ class McuScript:
     layout: Layout | None = None
     summary: Summary | None = None
     rejects: bool = True
+    channel: int = CHANNEL_SESSION
 
     def respond(
         self,
@@ -85,7 +93,7 @@ class McuScript:
             ack = bytes([STATUS_ACCEPTED]) + ROUTE_FIELD.build(
                 {"route": BLE_REPLY_ROUTE}
             )
-            frames = [mcu_frame(msgtype | RESPONSE, ack)]
+            frames = [mcu_frame(msgtype | RESPONSE, ack, self.channel)]
         else:
             return []
         if layout is not None and mapped and self.rejects:
@@ -121,4 +129,4 @@ class McuScript:
             payload = self.layout.update(msgtype, frame.payload, named)
         else:
             return frame
-        return mcu_frame(msgtype, payload)
+        return _rebuilt(frame, payload)

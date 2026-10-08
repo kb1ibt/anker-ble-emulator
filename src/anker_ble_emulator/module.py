@@ -113,7 +113,8 @@ class Versions:
     Attributes:
         module: The module firmware (``v0.3.3.0``).
         device: The device MCU firmware.
-        model: The model, or its OTA type on the C Gen 2 line (``A1783_low``).
+        model: The model, or its OTA type on the C Gen 2 line (``A1783_low``);
+            None where the build reports no component names.
         mcu: The MCU component name.
         esp32: The module component name.
 
@@ -121,9 +122,9 @@ class Versions:
 
     module: bytes
     device: bytes
-    model: bytes
-    mcu: bytes
-    esp32: bytes
+    model: bytes | None = None
+    mcu: bytes | None = None
+    esp32: bytes | None = None
 
 
 @dataclass(frozen=True)
@@ -142,6 +143,8 @@ class ModuleConfig:
         fragment_cap: The largest frame the link carries (ATT MTU - 3).
         chip: ``0829 a2``.
         lib_version: ``0829 a3``.
+        serial_tail: How many of the serial's last characters ``0829 a5``
+            carries after the MAC.
         session_replies: Recorded cleartext replies to the module's own session
             ops (opcodes below ``0x40``), by request msgtype.
         versions: What ``0830`` reports; None leaves ``0030`` unanswered.
@@ -158,6 +161,7 @@ class ModuleConfig:
     fragment_cap: int = 253
     chip: bytes = b"ESP32"
     lib_version: bytes = b"0.0.0.3"
+    serial_tail: int = 0
     session_replies: Mapping[int, bytes] = field(default_factory=dict)
     versions: Versions | None = None
 
@@ -417,6 +421,7 @@ class Module:
         )
 
     def _device_info(self) -> _Reply:
+        serial, tail = self.config.serial or b"", self.config.serial_tail
         return _Reply(
             DEVICE_INFO_REPLY.build(
                 {
@@ -425,7 +430,7 @@ class Module:
                     "chip": self.config.chip,
                     "lib_version": self.config.lib_version,
                     "serial": self.config.serial,
-                    "mac": self.config.mac,
+                    "mac": self.config.mac + (serial[-tail:] if tail else b""),
                 },
             ),
         )

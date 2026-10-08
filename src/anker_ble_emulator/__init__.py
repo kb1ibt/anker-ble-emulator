@@ -5,11 +5,13 @@ from .backend import COMMAND_UUID, TELEMETRY_UUID, EmulatedBleakBackend
 from .clock import Clock, ManualClock, MonotonicClock
 from .devices import (
     A91B2,
+    A1761,
     A1763,
     A1765,
     A1783,
     A1785,
     A2345,
+    A2687,
     DEFAULT_MAC,
     UNSET,
     EmulatedDevice,
@@ -30,11 +32,13 @@ from .products import (
 
 __all__ = [
     "A91B2",
+    "A1761",
     "A1763",
     "A1765",
     "A1783",
     "A1785",
     "A2345",
+    "A2687",
     "COMMAND_UUID",
     "DEFAULT_MAC",
     "PRODUCTS",

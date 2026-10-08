@@ -116,14 +116,15 @@ CAPABILITY_REPLY = Struct(
     "auth_method" / Optional(field(0xA5, Int8ub)),
 )
 
-#: ``0829``: the serial is absent when the module has none.
+#: ``0829``: the serial is absent when the module has none; ``a5`` is the MAC,
+#: on some builds followed by the serial's tail.
 DEVICE_INFO_REPLY = Struct(
     "status" / Int8ub,
     "info_type" / field(0xA1, Int8ub),
     "chip" / field(0xA2, GreedyBytes),
     "lib_version" / field(0xA3, GreedyBytes),
     "serial" / Optional(field(0xA4, GreedyBytes)),
-    "mac" / field(0xA5, Bytes(6)),
+    "mac" / field(0xA5, GreedyBytes),
 )
 
 #: ``0821``: the device's public point, ``X || Y``.
@@ -135,12 +136,13 @@ BIND_REPLY = Struct("status" / Int8ub, "serial" / Optional(field(0xA1, GreedyByt
 #: ``0827 09``: confirmation pending; the window in seconds.
 AUTH_PENDING_REPLY = Struct("status" / Int8ub, "auth_timeout" / field(0xA1, Int16ul))
 
-#: ``0830``: module firmware, device firmware, then the three component names.
+#: ``0830``: module firmware, device firmware, then the three component names
+#: where the build reports them.
 VERSION_REPLY = Struct(
     "status" / Int8ub,
     "module" / field(0xA1, GreedyBytes),
     "device" / field(0xA2, GreedyBytes),
-    "model" / field(0xA3, GreedyBytes),
-    "mcu" / field(0xA4, GreedyBytes),
-    "esp32" / field(0xA5, GreedyBytes),
+    "model" / Optional(field(0xA3, GreedyBytes)),
+    "mcu" / Optional(field(0xA4, GreedyBytes)),
+    "esp32" / Optional(field(0xA5, GreedyBytes)),
 )

@@ -23,10 +23,12 @@ SOURCES = ("recorded", "map", "name", "untyped")
 LAYOUT_HEADER = ("Product", "Recorded", "Map", "Name", "Untyped", "Commands")
 #: The emulated products, in the compatibility table's column order.
 EMULATED = (
+    Product.A1761,
     Product.A1763,
     Product.A1765,
     Product.A1783,
     Product.A1785,
+    Product.A2687,
     Product.A2345,
     Product.A91B2,
 )
@@ -41,8 +43,8 @@ COMMAND_ROWS = (
     "Telemetry fields typed",
     "Module commands answered",
 )
-#: The module answers its version read on every build.
-BUILT_SESSION_OPS = frozenset({0x030})
+#: The module builds its version read wherever an ``0830`` is recorded.
+VERSION_READ = frozenset({0x030})
 
 
 def map_fields(pn: str) -> list[dict[str, str]]:
@@ -84,19 +86,19 @@ def command_column(pn: Product) -> list[str]:
     """Return one product's command and telemetry coverage, row by row."""
     profile = PROFILES[pn]
     layout = Layout.load(pn)
-    if layout is None:
-        msg = f"{pn} has no layout"
-        raise ValueError(msg)
-    mapped = set(layout.commands)
+    mapped = set() if layout is None else set(layout.commands)
     recorded = set(profile.replies)
     known = set(profile.known_commands) | mapped | recorded
-    changes = {msgtype: shown_in(layout, msgtype) for msgtype in mapped}
+    changes = {} if layout is None else {cmd: shown_in(layout, cmd) for cmd in mapped}
     shown = {msgtype for msgtype, targets in changes.items() if targets}
     targets = sorted(set().union(*changes.values()))
-    typed = sum(len(fields) for fields in layout.messages.values())
+    typed = 0 if layout is None else sum(map(len, layout.messages.values()))
+    fields = 0 if layout is None else len(map_fields(pn))
     build = profile.module_build
     module_ops = build.session_ops
-    module_answered = set(profile.session_replies(build)) | BUILT_SESSION_OPS
+    module_answered = set(profile.session_replies(build))
+    if profile.versions(build) is not None:
+        module_answered |= VERSION_READ
     return [
         str(len(known)),
         share(len(known & (recorded | mapped)), len(known)),
@@ -105,7 +107,7 @@ def command_column(pn: Product) -> list[str]:
         share(len(known & mapped), len(known)),
         share(len(known & shown), len(known)),
         ", ".join(f"``{target:04x}``" for target in targets) or "none",
-        share(typed, len(map_fields(pn))),
+        share(typed, fields),
         share(len(module_ops & module_answered), len(module_ops)),
     ]
 
