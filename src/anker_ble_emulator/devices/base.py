@@ -168,6 +168,8 @@ class Profile:
             untyped, typed from where SolixBLE's class decodes them.
         map_built: Nothing about the product is recorded: the profile comes
             from anker-solix-api's map and SolixBLE's device class.
+        retyped: Messages typed from a sibling product's recording instead of
+            the map: each replaces the map's typed fields.
 
     """
 
@@ -196,6 +198,7 @@ class Profile:
     built: tuple[int, ...] = ()
     fields: Mapping[int, tuple[Field, ...]] = field(default_factory=dict)
     map_built: bool = False
+    retyped: Mapping[int, tuple[Field, ...]] = field(default_factory=dict)
 
     def frames(self, layout: Layout | None = None) -> dict[int, bytes]:
         """Return the cleartext payloads by msgtype: recorded, then built."""
@@ -389,6 +392,7 @@ class EmulatedDevice:
         #: The product's layout from anker-solix-api's maps, where it has one.
         self.layout = Layout.load(pn)
         if self.layout is not None:
+            self.layout.retype(profile.retyped)
             self.layout.extend(profile.fields)
             self.layout.alias(profile.layout_aliases)
         script = profile.script(self.layout)

@@ -7,157 +7,91 @@
    "fields": [
     {
      "tag": "a2",
-     "name": "device_sn",
-     "type": "02",
-     "length": 3,
-     "from": "recorded"
+     "name": "device_sn"
     },
     {
      "tag": "a3",
-     "name": "main_battery_soc",
-     "type": "02",
-     "length": 3,
-     "from": "recorded"
+     "name": "main_battery_soc"
     },
     {
      "tag": "a4",
-     "name": "battery_status",
-     "type": "04",
-     "length": 8,
-     "from": "recorded"
+     "name": "battery_status"
     },
     {
      "tag": "a5",
-     "name": "temperature",
-     "type": "04",
-     "length": 8,
-     "from": "recorded"
+     "name": "temperature"
     },
     {
      "tag": "a6",
-     "name": "battery_soc",
-     "type": "04",
-     "length": 8,
-     "from": "recorded"
+     "name": "battery_soc"
     },
     {
      "tag": "a7",
-     "name": "sw_version",
-     "type": "04",
-     "length": 8,
-     "from": "recorded"
+     "name": "sw_version"
     },
     {
      "tag": "a8",
-     "name": "sw_controller?",
-     "type": "04",
-     "length": 8,
-     "from": "recorded"
+     "name": "sw_controller?"
     },
     {
      "tag": "a9",
-     "name": "sw_expansion",
-     "type": "04",
-     "length": 8,
-     "from": "recorded"
+     "name": "sw_expansion"
     },
     {
      "tag": "ab",
-     "name": "photovoltaic_power",
-     "type": "04",
-     "length": 20,
-     "from": "recorded"
+     "name": "photovoltaic_power"
     },
     {
      "tag": "ac",
-     "name": "battery_power_signed",
-     "type": "04",
-     "length": 20,
-     "from": "recorded"
+     "name": "battery_power_signed"
     },
     {
      "tag": "ad",
-     "name": "output_power",
-     "type": "04",
-     "length": 20,
-     "from": "recorded"
+     "name": "output_power"
     },
     {
      "tag": "ae",
-     "name": "ac_output_power_signed",
-     "type": "04",
-     "length": 20,
-     "from": "recorded"
+     "name": "ac_output_power_signed"
     },
     {
      "tag": "b0",
-     "name": "pv_yield",
-     "type": "01",
-     "length": 2,
-     "from": "recorded"
+     "name": "pv_yield"
     },
     {
      "tag": "b1",
-     "name": "charged_energy",
-     "type": "01",
-     "length": 2,
-     "from": "recorded"
+     "name": "charged_energy"
     },
     {
      "tag": "b2",
-     "name": "discharged_energy",
-     "type": "04",
-     "length": 3,
-     "from": "recorded"
+     "name": "discharged_energy"
     },
     {
      "tag": "b3",
-     "name": "output_energy",
-     "type": "01",
-     "length": 2,
-     "from": "recorded"
+     "name": "output_energy"
     },
     {
      "tag": "b4",
-     "name": "consumed_energy",
-     "type": "01",
-     "length": 2,
-     "from": "recorded"
+     "name": "consumed_energy"
     },
     {
      "tag": "b5",
-     "name": "min_soc",
-     "type": "01",
-     "length": 2,
-     "from": "recorded"
+     "name": "min_soc"
     },
     {
      "tag": "b7",
-     "name": "active_charge_soc",
-     "type": "02",
-     "length": 3,
-     "from": "recorded"
+     "name": "active_charge_soc"
     },
     {
      "tag": "b8",
-     "name": "usage_mode",
-     "type": "04",
-     "length": 8,
-     "from": "recorded"
+     "name": "usage_mode"
     },
     {
      "tag": "b9",
-     "name": "home_load_preset",
-     "type": "04",
-     "length": 6,
-     "from": "recorded"
+     "name": "home_load_preset"
     },
     {
      "tag": "ba",
      "name": null,
-     "type": "04",
-     "length": 13,
-     "from": "recorded",
      "bytes": [
       {
        "name": "light_mode",
@@ -183,38 +117,23 @@
     },
     {
      "tag": "bb",
-     "name": "heating_power",
-     "type": "01",
-     "length": 2,
-     "from": "recorded"
+     "name": "heating_power"
     },
     {
      "tag": "bc",
-     "name": "grid_to_battery_power",
-     "type": "01",
-     "length": 2,
-     "from": "recorded"
+     "name": "grid_to_battery_power"
     },
     {
      "tag": "bd",
-     "name": "max_load",
-     "type": "04",
-     "length": 17,
-     "from": "recorded"
+     "name": "max_load"
     },
     {
      "tag": "be",
-     "name": "max_load_legal",
-     "type": "04",
-     "length": 17,
-     "from": "recorded"
+     "name": "max_load_legal"
     },
     {
      "tag": "bf",
-     "name": "backup_start_timestamp",
-     "type": "01",
-     "length": 2,
-     "from": "recorded"
+     "name": "backup_start_timestamp"
     },
     {
      "tag": "c0",
@@ -234,17 +153,11 @@
     },
     {
      "tag": "c6",
-     "name": "pv_1_power",
-     "type": "04",
-     "length": 3,
-     "from": "name"
+     "name": "pv_1_power"
     },
     {
      "tag": "c7",
-     "name": "pv_2_power",
-     "type": "04",
-     "length": 19,
-     "from": "name"
+     "name": "pv_2_power"
     },
     {
      "tag": "c8",
@@ -260,10 +173,7 @@
     },
     {
      "tag": "d4",
-     "name": "device_timeout_minutes",
-     "type": "02",
-     "length": 3,
-     "from": "name"
+     "name": "device_timeout_minutes"
     },
     {
      "tag": "d5",
@@ -271,10 +181,7 @@
     },
     {
      "tag": "d6",
-     "name": "ac_input_limit",
-     "type": "02",
-     "length": 3,
-     "from": "name"
+     "name": "ac_input_limit"
     },
     {
      "tag": "d8",
@@ -305,10 +212,7 @@
     },
     {
      "tag": "fe",
-     "name": "msg_timestamp",
-     "type": "03",
-     "length": 5,
-     "from": "recorded"
+     "name": "msg_timestamp"
     }
    ]
   },

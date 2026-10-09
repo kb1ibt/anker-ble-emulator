@@ -1,9 +1,17 @@
 # Copyright (c) 2026 Shawn Stricker
-"""The Prime devices (A2345, A2687, A91B2) through a real ``bleak.BleakClient``."""
+"""The Prime devices (A110B, A2345, A25X7, A2687, A91B2) through ``BleakClient``."""
 
 from bleak import BleakClient
 
-from anker_ble_emulator import A91B2, A2345, A2687, EmulatedBleakBackend, Outer
+from anker_ble_emulator import (
+    A25X7,
+    A91B2,
+    A110B,
+    A2345,
+    A2687,
+    EmulatedBleakBackend,
+    Outer,
+)
 from anker_ble_emulator.devices import COMPANY_ID
 from tests.fixtures.client import (
     SESSION,
@@ -167,8 +175,67 @@ async def test_a2687_reports_its_module_and_answers_on_channel_11() -> None:
     assert {pattern_hex(reply.frame) for reply in [*status, *usb, pushed]} == {"030111"}
 
 
-def test_a2687_advertises_no_record() -> None:
+def test_a2687_advertises_its_chip_name_but_no_manufacturer_record() -> None:
     device = A2687()
+
+    assert device.local_name == "Charging"
+    assert device.advertisement_data.manufacturer_data == {}
+    assert device.module_build.session_ops == frozenset()
+
+
+async def test_a110b_reports_its_module_and_answers_on_channel_11() -> None:
+    device = A110B()
+    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
+        link = BleakLink(client, AppClient())
+        await link.start()
+        replies = await link.negotiate(TOKEN)
+        device.press_button()
+        await settle()
+        status = await link.send(0x200, [(0xA1, b"\x21")], SESSION)
+        usb_timer = await link.send(0x20A, [(0xA1, b"\x21")], SESSION)
+        version = await link.send(0x030, [(0xA1, b"\x21")], SESSION)
+        device.push(0x300)
+        await settle()
+
+    info = replies[0x829].fields
+    assert info[0xA2] == b"Charging"
+    assert info[0xA3] == b"v0.0.5.1"
+    assert info[0xA5] == device.mac + b"00000000001"
+    assert replies[0x803].fields[0xA2] == (297).to_bytes(2, "little")
+    assert [cmd_hex(reply.frame) for reply in status] == ["4a00"]
+    assert status[0].plaintext == device.mcu.respond(0x200)[0].payload
+    assert usb_timer == []
+    assert version == []
+    pushed = link.replies[-1]
+    assert cmd_hex(pushed.frame) == "4300"
+    assert pushed.plaintext == device.mcu.push(0x300).payload
+    assert {pattern_hex(reply.frame) for reply in [*status, pushed]} == {"030111"}
+
+
+async def test_a25x7_pushes_its_recorded_pads_and_leaves_the_subscribe_unanswered() -> (
+    None
+):
+    device = A25X7()
+    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
+        link = BleakLink(client, AppClient())
+        await link.start()
+        await link.negotiate(TOKEN)
+        device.press_button()
+        await settle()
+        subscribe = await link.send(0x200, [(0xA1, b"\x21")], SESSION)
+        device.push(0x300)
+        await settle()
+
+    assert subscribe == []
+    pushed = link.replies[-1]
+    assert cmd_hex(pushed.frame) == "4300"
+    assert pushed.plaintext == device.mcu.push(0x300).payload
+    assert device.local_name is None
+    assert device.advertisement_data.manufacturer_data == {}
+
+
+def test_a110b_advertises_no_record() -> None:
+    device = A110B()
 
     assert device.local_name is None
     assert device.advertisement_data.manufacturer_data == {}

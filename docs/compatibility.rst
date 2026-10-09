@@ -7,29 +7,29 @@ product doesn't do it.
 Emulated products
 -----------------
 
-=============================== ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= =========
-Feature                         C300      C1000     C1000 G2  C1000X G2 C2000 G2  C2000X G2 S2000     SB2 Pro   160W      250W      240W
-                                (A1722)   (A1761)   (A1763)   (A1765)   (A1783)   (A1785)   (AS220)   (A17C1)   (A2687)   (A2345)   (A91B2)
-=============================== ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= =========
-Advertisement                   ❌        ❌        ✅        ✅        ✅        ✅        ❌        ❌        ❌        ✅        ✅
-Encrypted outer (GCM session)   ❌        ❌        ✅        ✅        ✅        ✅        ✅        ❌        ✅        ✅        N/A
-Plain outer (CBC session)       ✅        ✅        ✅        ✅        ✅        ✅        ❌        ✅        ❌        ✅        ✅
-ECDH key exchange               ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Legacy AES key exchange         ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌
-Owner confirmation by button    ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        N/A
-Module builds (``module=``)     ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Version read (``0030``)         ✅        ✅        ✅        ✅        ✅        ✅        ❌        ❌        ❌        ✅        ✅
-Recorded module ops (``0020``…) ❌        ❌        ❌        ❌        ✅        ❌        ❌        ❌        ❌        ❌        ❌
-Request routing by ``a1``       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Fragmented frames               ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Recorded status reply           ❌        ❌        ✅        ✅        ✅        ✅        ✅        ❌        ✅        ✅        ✅
-Recorded telemetry pushes       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Summary push (``c490``)         N/A       N/A       ✅        ✅        ✅        ✅        ❌        N/A       N/A       N/A       N/A
-Summary fields by name          N/A       N/A       ✅        ✅        ✅        ✅        ❌        N/A       N/A       N/A       N/A
-Expansion battery attached      N/A       ❌        ❌        ❌        ✅        ❌        ❌        ❌        N/A       N/A       N/A
-Custom replies and pushes       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Cloud mode (no BLE link)        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-=============================== ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= =========
+=============================== ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= =========
+Feature                         C300      C1000     C1000 G2  C1000X G2 C2000 G2  C2000X G2 S2000     SB2 Pro   160W      20K       250W      3-in-1    240W      SB1       SB2 Plus
+                                (A1722)   (A1761)   (A1763)   (A1765)   (A1783)   (A1785)   (AS220)   (A17C1)   (A2687)   (A110B)   (A2345)   (A25X7)   (A91B2)   (A17C0)   (A17C3)
+=============================== ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= =========
+Advertisement                   ❌        ❌        ✅        ✅        ✅        ✅        ❌        ❌        ❌        ❌        ✅        ❌        ✅        ❌        ❌
+Encrypted outer (GCM session)   ❌        ❌        ✅        ✅        ✅        ✅        ✅        ❌        ✅        ✅        ✅        ✅        N/A       ❌        ❌
+Plain outer (CBC session)       ✅        ✅        ✅        ✅        ✅        ✅        ❌        ✅        ❌        ❌        ✅        ❌        ✅        ✅        ✅
+ECDH key exchange               ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Legacy AES key exchange         ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌
+Owner confirmation by button    ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        N/A       ✅        ✅
+Module builds (``module=``)     ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Version read (``0030``)         ✅        ✅        ✅        ✅        ✅        ✅        ❌        ❌        ❌        ❌        ✅        ❌        ✅        ❌        ❌
+Recorded module ops (``0020``…) ❌        ❌        ❌        ❌        ✅        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌
+Request routing by ``a1``       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Fragmented frames               ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Recorded status reply           ❌        ❌        ✅        ✅        ✅        ✅        ✅        ❌        ✅        ✅        ✅        ❌        ✅        ❌        ❌
+Recorded telemetry pushes       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ❌        ❌
+Summary push (``c490``)         N/A       N/A       ✅        ✅        ✅        ✅        ❌        N/A       N/A       N/A       N/A       N/A       N/A       N/A       N/A
+Summary fields by name          N/A       N/A       ✅        ✅        ✅        ✅        ❌        N/A       N/A       N/A       N/A       N/A       N/A       N/A       N/A
+Expansion battery attached      N/A       ❌        ❌        ❌        ✅        ❌        ❌        ❌        N/A       N/A       N/A       N/A       N/A       N/A       ❌
+Custom replies and pushes       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Cloud mode (no BLE link)        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+=============================== ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= =========
 
 - **Recorded** replies and pushes are sanitized frames from real units
   (:doc:`device-sources`). The C Gen 2 models share one display-board build,
@@ -44,11 +44,11 @@ Cloud mode (no BLE link)        ✅        ✅        ✅        ✅        ✅ 
   ``device.use_mcu`` replace what the MCU sends, for frames no recording has.
 - The A91B2 runs auth mode 0: it negotiates in the clear and authorizes at the
   key exchange, so it has no confirmation step.
-- **Not recorded** for the C300, the C1000, the S2000, the Solarbank 2 and the
-  160W: no advertisement record is recorded for any of them, so they advertise
-  only the ``ff09`` service and no manufacturer data. The C300, C1000 and
-  Solarbank 2 are recorded on the plain outer and the S2000 and 160W on the
-  encrypted one; their module builds don't enforce either, so the emulator
+- **Not recorded** for the C300, the C1000, the S2000, the Solarbank 2, the
+  160W and the 20K: no advertisement record is recorded for any of them, so they
+  advertise only the ``ff09`` service and no manufacturer data. The C300, C1000
+  and Solarbank 2 are recorded on the plain outer and the S2000, 160W and 20K on
+  the encrypted one; their module builds don't enforce either, so the emulator
   takes both. The S2000's ``4100`` subscribe draws its recorded ``c900`` and a
   ``c421`` that is the same telemetry without the status byte, as on the
   C Gen 2; its setter acks were recorded over MQTT. Whether it posts a
@@ -57,11 +57,26 @@ Cloud mode (no BLE link)        ✅        ✅        ✅        ✅        ✅ 
   ``4040`` with their recorded ``c402`` telemetry behind a ``00`` status byte,
   as replies carry one; their ``c840`` itself isn't recorded. Their setters get
   the map's checked ack (the C1000's ``404a`` ack is recorded); whether they
-  answer a refused value ``04`` isn't recorded. The S2000, the Solarbank 2 and
-  the 160W have no recorded ``0830``, so ``0030`` goes unanswered. The 160W's MCU
-  frames travel on channel ``11`` (``030111``). The Solarbank 2 pushes its
+  answer a refused value ``04`` isn't recorded. The S2000, the Solarbank 2, the
+  160W and the 20K have no recorded ``0830``, so ``0030`` goes unanswered. The
+  160W's and 20K's MCU frames travel on channel ``11`` (``030111``); the 20K's
+  ``420a`` has no recorded answer, so it goes unanswered. The Solarbank 2 pushes its
   ``c405`` telemetry in three fragments and a ``0409`` status; it answers no
   recorded request, and its legacy (no account) handshake isn't emulated.
+- **3-in-1 (A25X7)**: only its ``4300`` telemetry is recorded (three pad
+  blocks, ``a2``-``a4``); the encrypted outer and the ``4200`` subscribe are
+  SolixBLE's ``MagGo3in1``. Its handshake isn't recorded, so its module build,
+  ``0829``, MTU cap, MCU channel and button confirmation (auth mode 2) are the
+  emulator's defaults, not the device's. The ``4200`` subscribe has no recorded
+  answer, so it goes unanswered; the telemetry is pushed with ``device.push``.
+- **Built by hand from maps**: nothing about the Solarbank E1600 (A17C0) or the
+  Solarbank 2 E1600 Plus (A17C3) is recorded. Both take the plain outer the
+  Solarbank 2 (A17C1) is recorded on, which is assumed. The A17C0 answers
+  ``4040`` with its ``0405`` telemetry, built from its map's fields, all typed
+  from recordings. The A17C3's ``0405`` carries the fields its map names (the
+  A17C1's), typed as the A17C1's recorded ``c405`` carries them: on BLE, seven
+  of them differ in type or length from the map's MQTT ``0405``. Their setters
+  get the map's checked ack.
 
 Legacy transport products
 -------------------------

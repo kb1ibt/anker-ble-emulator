@@ -1,11 +1,10 @@
 # Copyright (c) 2026 Shawn Stricker
-"""Prime Charger 160W (A2687)."""
+"""MagGo 3-in-1 Wireless Charger (A25X7)."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from anker_ble_emulator.frame import CHANNEL_APP
 from anker_ble_emulator.module import AuthMode
 from anker_ble_emulator.products import ModuleBuild, Outer, Path, Product, Transport
 
@@ -16,38 +15,26 @@ if TYPE_CHECKING:
     from anker_ble_emulator.clock import Clock
 
 PROFILE = Profile(
-    serial="ASHDJW00000000001",
+    serial="A25X700000000001",
+    # SolixBLE's MagGo3in1 class; its handshake isn't recorded, so the module
+    # build, auth mode, 0829, MTU cap and MCU channel are the defaults.
     outer=Outer.ENCRYPTED,
     path=Path.ECDH,
-    module_build=ModuleBuild.CHARGING_0_0_5_0,
+    module_build=ModuleBuild.UNRECORDED,
     auth_mode=AuthMode.CONFIRM,
-    # The product type (b405) and the advertised name are known; the rest of
-    # the manufacturer record (version_code, bind_type, sku) isn't.
-    advert=Advert(local_name="Charging"),
-    data=("a2687.json",),
-    replies={
-        0x200: (0xA00,),
-        0x205: (0xA05,),
-        0x206: (0xA06,),
-        0x207: (0xA07,),
-        0x20A: (0xA0A,),
-    },
+    advert=Advert(local_name=None),
+    data=("a25x7.json",),
+    # SolixBLE's 0x200 subscribe has no recorded answer.
+    replies={},
     pushes=(0x300,),
-    # No 0830 is recorded, so 0030 goes unanswered.
     device_version=None,
-    # The recorded requests, and SolixBLE's USB timer (0x209).
-    known_commands=frozenset({0x200, 0x205, 0x206, 0x207, 0x209, 0x20A}),
-    chip=b"Charging",
-    lib_version=b"v0.0.5.0",
-    serial_tail=11,
-    fragment_cap=297,
-    mcu_channel=CHANNEL_APP,
+    known_commands=frozenset({0x200}),
 )
-register(Product.A2687, PROFILE)
+register(Product.A25X7, PROFILE)
 
 
-class A2687(EmulatedDevice):
-    """Prime Charger 160W: encrypted outer, ECDH, owner confirmation by button."""
+class A25X7(EmulatedDevice):
+    """MagGo 3-in-1 Wireless Charger: encrypted outer, ECDH; telemetry on 4300."""
 
     def __init__(  # noqa: PLR0913  # the identity plus the four protocol choices
         self,
@@ -60,9 +47,9 @@ class A2687(EmulatedDevice):
         module: ModuleBuild | None = None,
         clock: Clock | None = None,
     ) -> None:
-        """Build a Prime Charger 160W; see ``EmulatedDevice``."""
+        """Build a MagGo 3-in-1 Wireless Charger; see ``EmulatedDevice``."""
         super().__init__(
-            Product.A2687,
+            Product.A25X7,
             serial,
             mac,
             transport,

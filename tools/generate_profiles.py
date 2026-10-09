@@ -85,24 +85,41 @@ def map_names(pn: str) -> dict[tuple[int, int], str]:
     }
 
 
+def map_tags(pn: str) -> dict[int, frozenset[int]]:
+    """Return every tag a message names, typed or not, by msgtype."""
+    data = json.loads((MAPS / f"{pn.lower()}.json").read_text())
+    return {
+        int(msgtype, 16): frozenset(int(spec["tag"], 16) for spec in message["fields"])
+        for msgtype, message in data["messages"].items()
+    }
+
+
 def filled(
     facts: Mapping[str, Any],
     layout: Layout,
     names: Mapping[tuple[int, int], str],
+    tags: Mapping[int, frozenset[int]],
     target: int,
 ) -> tuple[Field, ...]:
     """Return fields for the tags SolixBLE decodes from telemetry the map can't type.
 
     A field takes the map's name for its tag, else the property's; its size
     covers every read, defaulting to 4 bytes (2 signed) or a 16-byte string.
+    Only a tag the product's own map names at all (typed or not) is filled;
+    a tag a shared SolixBLE class reads but this product's map never
+    mentions is left out, since the class's reads were validated against
+    whichever sibling product recorded them, not necessarily this one.
     """
     streams = [int(cmd, 16) for cmd in facts["telemetry"]]
+    known = tags.get(target, frozenset())
     reads: dict[int, list[tuple[str, Mapping[str, Any]]]] = {}
     for prop, prop_reads in sorted(facts.get("properties", {}).items()):
         for read in prop_reads:
             if read["source"] != "stream" or not isinstance(read["tag"], str):
                 continue
             tag = int(read["tag"], 16)
+            if tag not in known:
+                continue
             if all(source(layout, msgtype, tag) is None for msgtype in streams):
                 reads.setdefault(tag, []).append((prop, read))
     taken = layout.names(target)
@@ -129,6 +146,7 @@ def generated(
     facts: Mapping[str, Any],
     layout: Layout,
     names: Mapping[tuple[int, int], str] | None = None,
+    tags: Mapping[int, frozenset[int]] | None = None,
 ) -> Generated:
     """Return a product's profile facts; messages the map can't type are left out."""
 
@@ -156,7 +174,9 @@ def generated(
         if (typed := typed_by(msgtype)) is not None and typed != msgtype
     }
     target = typed_by(pushes[0]) if pushes else None
-    extra = () if target is None else filled(facts, layout, names or {}, target)
+    extra = (
+        () if target is None else filled(facts, layout, names or {}, tags or {}, target)
+    )
     return Generated(
         outer=Outer(facts["outer"]),
         replies=replies,
@@ -355,7 +375,7 @@ def generate(data: Mapping[str, Any], devices: Path) -> tuple[dict[Path, str], s
         recorded = (devices / f"{pn.lower()}.py").exists()
         if recorded or info.transport != Transport.NEGOTIATED:
             continue
-        profile = generated(facts, layout, map_names(pn))
+        profile = generated(facts, layout, map_names(pn), map_tags(pn))
         files[devices / "generated" / f"{pn.lower()}.py"] = render(
             pn, info.solixble_class, profile
         )

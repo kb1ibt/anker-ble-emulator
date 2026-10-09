@@ -32,8 +32,12 @@ EMULATED = (
     Product.AS220,
     Product.A17C1,
     Product.A2687,
+    Product.A110B,
     Product.A2345,
+    Product.A25X7,
     Product.A91B2,
+    Product.A17C0,
+    Product.A17C3,
 )
 MAP_BUILT_ROWS = (
     "SolixBLE class",

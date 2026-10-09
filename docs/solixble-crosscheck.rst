@@ -19,6 +19,35 @@ A1722 SOLIX C300 (``C300``)
 - ``turn_display_off`` ``0052``: ``display_switch``
 - ``turn_display_on`` ``0052``: ``display_switch``
 
+A1723 SOLIX C300X (``C300``)
+----------------------------
+
+15 positions agree; 10 read a field the map doesn't type.
+
+- ``get_status_update`` ``0040``: unlinked
+- ``set_display_mode`` ``004c``: unlinked
+- ``set_display_timeout`` ``0046``: unlinked
+- ``set_light_mode`` ``004f``: ``light_mode``
+- ``turn_ac_off`` ``004a``: ``ac_output_power_switch``, verified by ``ac_output``
+- ``turn_ac_on`` ``004a``: ``ac_output_power_switch``, verified by ``ac_output``
+- ``turn_dc_off`` ``004b``: ``dc_output_power_switch``, verified by ``dc_output``
+- ``turn_dc_on`` ``004b``: ``dc_output_power_switch``, verified by ``dc_output``
+- ``turn_display_off`` ``0052``: ``display_switch``
+- ``turn_display_on`` ``0052``: ``display_switch``
+
+A1726 SOLIX C300 DC (``C300DC``)
+--------------------------------
+
+36 positions agree; 0 read a field the map doesn't type.
+
+- ``set_display_mode`` ``004c``: ``display_mode``, verified by ``display_mode``
+- ``set_display_timeout`` ``0046``: ``display_timeout_seconds``, verified by ``display_timeout``
+- ``set_light_mode`` ``004f``: ``light_mode``, verified by ``light``
+- ``turn_dc_off`` ``004b``: ``dc_output_power_switch``, verified by ``dc_output``
+- ``turn_dc_on`` ``004b``: ``dc_output_power_switch``, verified by ``dc_output``
+- ``turn_display_off`` ``0052``: ``display_switch``, verified by ``is_display_on``
+- ``turn_display_on`` ``0052``: ``display_switch``, verified by ``is_display_on``
+
 A1728 SOLIX C300X DC (``C300DC``)
 ---------------------------------
 
@@ -157,7 +186,7 @@ A1781 SOLIX F2600 (``F2600``)
 
 16 positions agree; 27 read a field the map doesn't type.
 
-- Typed from SolixBLE: ``a2`` ``ac_output_timeout_seconds`` (4 B), ``a3`` ``dc_output_timeout_seconds`` (4 B), ``a4`` ``remaining_time_hours`` (4 B), ``a5`` ``ac_input_power`` (4 B), ``a6`` ``ac_output_power`` (4 B), ``a7`` ``usbc_1_power`` (4 B), ``a8`` ``usbc_2_power`` (4 B), ``a9`` ``usbc_3_power`` (4 B), ``aa`` ``usba_1_power`` (4 B), ``ab`` ``usba_2_power`` (4 B), ``ac`` ``dc_12v_1_power`` (4 B), ``ad`` ``dc_12v_2_power`` (4 B), ``af`` ``photovoltaic_power`` (4 B), ``b0`` ``output_power_total`` (4 B), ``b3`` ``sw_version`` (4 B), ``b9`` ``sw_expansion`` (4 B), ``bb`` ``ac_output`` (4 B), ``bd`` ``temperature`` (2 B), ``bf`` ``battery_status`` (4 B), ``c1`` ``main_battery_soc`` (4 B), ``c3`` ``battery_soh`` (4 B), ``c5`` ``expansion_packs`` (4 B), ``cf`` ``light`` (4 B), ``d0`` ``device_sn`` (16 B), ``db`` ``energy_saving_switch`` (4 B)
+- Typed from SolixBLE: ``a2`` ``ac_output_timeout_seconds`` (4 B), ``a3`` ``dc_output_timeout_seconds`` (4 B), ``a4`` ``remaining_time_hours`` (4 B), ``a5`` ``ac_input_power`` (4 B), ``a6`` ``ac_output_power`` (4 B), ``a7`` ``usbc_1_power`` (4 B), ``a8`` ``usbc_2_power`` (4 B), ``a9`` ``usbc_3_power`` (4 B), ``aa`` ``usba_1_power`` (4 B), ``ab`` ``usba_2_power`` (4 B), ``ac`` ``dc_12v_1_power`` (4 B), ``ad`` ``dc_12v_2_power`` (4 B), ``af`` ``photovoltaic_power`` (4 B), ``b0`` ``output_power_total`` (4 B), ``b3`` ``sw_version`` (4 B), ``b9`` ``sw_expansion`` (4 B), ``bd`` ``temperature`` (2 B), ``bf`` ``battery_status`` (4 B), ``c1`` ``main_battery_soc`` (4 B), ``c3`` ``battery_soh`` (4 B), ``c5`` ``expansion_packs`` (4 B), ``d0`` ``device_sn`` (16 B), ``db`` ``energy_saving_switch`` (4 B)
 - ``get_status_update`` ``0040``: unlinked
 - ``set_ac_charging_power`` ``0044``: ``ac_input_limit``, verified by ``ac_charging_power``
 - ``set_ac_timer`` ``0042``: ``ac_output_timeout_seconds``
@@ -251,13 +280,17 @@ A17C1 Solarbank 2 E1600 Pro (``Solarbank2``)
 
 11 positions agree; 27 read a field the map doesn't type.
 
+A17C3 Solarbank 2 E1600 Plus (``Solarbank2``)
+---------------------------------------------
+
+11 positions agree; 27 read a field the map doesn't type.
+
 A17C5 Solarbank 3 E2700 Pro (``Solarbank3``)
 --------------------------------------------
 
-13 positions agree; 7 read a field the map doesn't type.
+0 positions agree; 21 read a field the map doesn't type.
 
-- Typed from SolixBLE: ``b6`` ``battery_power_signed?`` (2 B), ``c8`` ``pv_3_power`` (4 B), ``c9`` ``pv_4_power`` (4 B), ``ca`` ``solar_pv_4_power_in`` (4 B), ``cc`` ``temperature`` (2 B), ``d3`` ``ac_output_power`` (4 B), ``d5`` ``pv_limit`` (4 B)
-- Conflict: serial_number a2[0:] vs 0405: string vs map device_sn type 02
+- Typed from SolixBLE: ``a2`` ``device_sn`` (16 B), ``a5`` ``temperature`` (4 B), ``a6`` ``battery_soc`` (4 B), ``a7`` ``sw_version`` (4 B), ``ab`` ``photovoltaic_power`` (4 B), ``ac`` ``battery_power_signed`` (4 B), ``b1`` ``charged_energy`` (4 B), ``b2`` ``discharged_energy`` (4 B), ``b7`` ``active_charge_soc`` (4 B), ``b8`` ``usage_mode`` (4 B), ``bd`` ``max_load`` (2 B), ``be`` ``max_load_legal`` (4 B), ``bf`` ``backup_start_timestamp`` (4 B), ``c7`` ``pv_2_power`` (4 B), ``c8`` ``pv_3_power`` (4 B), ``c9`` ``pv_4_power`` (4 B), ``d5`` ``pv_limit`` (4 B)
 
 A2345 Prime Charger 250W (``PrimeCharger250w``)
 -----------------------------------------------

@@ -17,6 +17,8 @@ from tools.generate_profiles import DEVICES, REPORT, SOLIXBLE, generate, generat
 TOKEN = b"owner-token"
 #: The products a map and a SolixBLE class cover, with no recorded profile.
 EXPECTED = {
+    Product.A1723,
+    Product.A1726,
     Product.A1728,
     Product.A1753,
     Product.A1754,

@@ -172,6 +172,15 @@ def test_extend_adds_fields_and_keeps_the_ones_already_typed() -> None:
     assert decode_fields(layout.build(0x405, {"added": 7}))[0xEE] == b"\x01\x07"
 
 
+def test_retype_replaces_a_message_s_typed_fields() -> None:
+    layout = Layout(LAYOUT)
+
+    layout.retype({0x405: (Field(0xEE, "only", TYPE_UI, 2),)})
+
+    assert layout.messages[0x405] == (Field(0xEE, "only", TYPE_UI, 2),)
+    assert layout.build(0x405).hex() == "a10131ee020100"
+
+
 def test_locate_finds_fields_and_parts() -> None:
     layout = Layout(LAYOUT)
 

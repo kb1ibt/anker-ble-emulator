@@ -147,6 +147,10 @@ class Layout:
         for msgtype, source in aliases.items():
             self.messages[msgtype] = self._message(source)
 
+    def retype(self, messages: Mapping[int, tuple[Field, ...]]) -> None:
+        """Type each message by the given fields alone, in place of the map's typing."""
+        self.messages.update(messages)
+
     def extend(self, fields: Mapping[int, tuple[Field, ...]]) -> None:
         """Add typed fields to messages; a tag the message already types is kept.
 

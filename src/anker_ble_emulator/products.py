@@ -82,6 +82,8 @@ class ModuleBuild(StrEnum):
     #: The Prime Charger 160W's module; its ``0830`` isn't recorded, so it's
     #: named by its ``0829`` chip and library version.
     CHARGING_0_0_5_0 = "Charging v0.0.5.0"
+    #: The Prime Power Bank 20K's module, likewise named by its ``0829``.
+    CHARGING_0_0_5_1 = "Charging v0.0.5.1"
     #: The Solarbank 2's module, likewise named by its ``0829``.
     ESP32_0_0_0_3 = "ESP32 0.0.0.3"
     #: The C1000 (first generation) module.
@@ -117,6 +119,7 @@ PRIME_SESSION_OPS = frozenset({0x20, 0x28, 0x2D, 0x2F, 0x30, 0x36})
 #: Session ops by build; an unrecorded build is known to answer only what was seen.
 SESSION_OPS = {
     ModuleBuild.CHARGING_0_0_5_0: frozenset[int](),
+    ModuleBuild.CHARGING_0_0_5_1: frozenset[int](),
     ModuleBuild.ESP32_0_0_0_3: frozenset[int](),
     ModuleBuild.V0_2_3_1: frozenset({0x30}),
     ModuleBuild.V0_2_9_7: PRIME_SESSION_OPS,
@@ -128,9 +131,12 @@ SESSION_OPS = {
 
 
 class Product(StrEnum):
-    """Anker part numbers with a known BLE client class."""
+    """Anker part numbers with a known BLE client class or BLE evidence."""
 
+    A110B = "A110B"
     A1722 = "A1722"
+    A1723 = "A1723"
+    A1726 = "A1726"
     A1728 = "A1728"
     A1753 = "A1753"
     A1754 = "A1754"
@@ -144,9 +150,12 @@ class Product(StrEnum):
     A1785 = "A1785"
     A1790 = "A1790"
     A1790P = "A1790P"
+    A17C0 = "A17C0"
     A17C1 = "A17C1"
+    A17C3 = "A17C3"
     A17C5 = "A17C5"
     A2345 = "A2345"
+    A25X7 = "A25X7"
     A2687 = "A2687"
     A91B2 = "A91B2"
     AS220 = "AS220"
@@ -158,7 +167,7 @@ class ProductInfo:
 
     Attributes:
         name: The marketing name.
-        solixble_class: The SolixBLE device class.
+        solixble_class: The SolixBLE device class; empty where SolixBLE has none.
         solix_api_category: The anker-solix-api ``SolixDeviceCategory`` value.
         transport: The GATT transport it speaks.
 
@@ -171,7 +180,12 @@ class ProductInfo:
 
 
 PRODUCTS: dict[Product, ProductInfo] = {
+    Product.A110B: ProductInfo(
+        "Prime Power Bank 20K", "PrimePowerBank20k", "powerbank"
+    ),
     Product.A1722: ProductInfo("SOLIX C300", "C300", "pps"),
+    Product.A1723: ProductInfo("SOLIX C300X", "C300", "pps"),
+    Product.A1726: ProductInfo("SOLIX C300 DC", "C300DC", "pps"),
     Product.A1728: ProductInfo("SOLIX C300X DC", "C300DC", "pps"),
     Product.A1753: ProductInfo("SOLIX C800", "C800", "pps"),
     Product.A1754: ProductInfo("SOLIX C800 Plus", "C800", "pps"),
@@ -187,9 +201,14 @@ PRODUCTS: dict[Product, ProductInfo] = {
     Product.A1785: ProductInfo("SOLIX C2000X Gen 2", "C2000G2", "pps"),
     Product.A1790: ProductInfo("SOLIX F3800", "F3800", "pps"),
     Product.A1790P: ProductInfo("SOLIX F3800 Plus", "F3800", "pps"),
+    #: SolixBLE has no Solarbank 1 class.
+    Product.A17C0: ProductInfo("Solarbank E1600", "", "solarbank_1"),
     Product.A17C1: ProductInfo("Solarbank 2 E1600 Pro", "Solarbank2", "solarbank_2"),
+    #: SolixBLE's ``Solarbank2`` names only the A17C1; the app's parser is shared.
+    Product.A17C3: ProductInfo("Solarbank 2 E1600 Plus", "Solarbank2", "solarbank_2"),
     Product.A17C5: ProductInfo("Solarbank 3 E2700 Pro", "Solarbank3", "solarbank_3"),
     Product.A2345: ProductInfo("Prime Charger 250W", "PrimeCharger250w", "charger"),
+    Product.A25X7: ProductInfo("MagGo 3-in-1 Wireless Charger", "MagGo3in1", "charger"),
     Product.A2687: ProductInfo("Prime Charger 160W", "PrimeCharger160w", "charger"),
     Product.A91B2: ProductInfo(
         "Prime Charging Station 240W", "PrimeChargingStation240w", "charger"
