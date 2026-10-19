@@ -86,6 +86,8 @@ class ModuleBuild(StrEnum):
     CHARGING_0_0_5_1 = "Charging v0.0.5.1"
     #: The Solarbank 2's module, likewise named by its ``0829``.
     ESP32_0_0_0_3 = "ESP32 0.0.0.3"
+    #: The C300 DC and C300X DC module.
+    V0_1_5_8 = "v0.1.5.8"
     #: The C1000 (first generation) module.
     V0_2_3_1 = "v0.2.3.1"
     #: The Prime line's module.
@@ -121,6 +123,7 @@ SESSION_OPS = {
     ModuleBuild.CHARGING_0_0_5_0: frozenset[int](),
     ModuleBuild.CHARGING_0_0_5_1: frozenset[int](),
     ModuleBuild.ESP32_0_0_0_3: frozenset[int](),
+    ModuleBuild.V0_1_5_8: frozenset({0x30}),
     ModuleBuild.V0_2_3_1: frozenset({0x30}),
     ModuleBuild.V0_2_9_7: PRIME_SESSION_OPS,
     ModuleBuild.V0_2_9_8: frozenset({0x30}),

@@ -7,10 +7,13 @@ from .a25x7 import A25X7
 from .a91b2 import A91B2
 from .a110b import A110B
 from .a1722 import A1722
+from .a1726 import A1726
+from .a1753 import A1753
 from .a1761 import A1761
 from .a1763 import A1763
 from .a1765 import A1765
 from .a1780 import A1780
+from .a1781 import A1781
 from .a1783 import A1783
 from .a1785 import A1785
 from .a2345 import A2345
@@ -39,10 +42,13 @@ __all__ = [
     "A91B2",
     "A110B",
     "A1722",
+    "A1726",
+    "A1753",
     "A1761",
     "A1763",
     "A1765",
     "A1780",
+    "A1781",
     "A1783",
     "A1785",
     "A2345",
