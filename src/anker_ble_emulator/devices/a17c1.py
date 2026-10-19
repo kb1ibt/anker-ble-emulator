@@ -45,6 +45,7 @@ class A17C1(EmulatedDevice):
         path: Path | None = None,
         module: ModuleBuild | None = None,
         clock: Clock | None = None,
+        mtu: int | None = None,
     ) -> None:
         """Build a Solarbank 2 E1600 Pro; see ``EmulatedDevice``."""
         super().__init__(
@@ -56,4 +57,5 @@ class A17C1(EmulatedDevice):
             path=path,
             module=module,
             clock=clock,
+            mtu=mtu,
         )

@@ -5,7 +5,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from construct import GreedyBytes, GreedyRange, Int8ub, Prefixed, Struct
+from construct import (
+    ConstructError,
+    GreedyBytes,
+    GreedyRange,
+    Int8ub,
+    Prefixed,
+    Struct,
+    Tell,
+    Terminated,
+)
 
 
 if TYPE_CHECKING:
@@ -15,7 +24,11 @@ if TYPE_CHECKING:
 FIELD_LAYOUT = Struct("tag" / Int8ub, "value" / Prefixed(Int8ub, GreedyBytes))
 #: Fields back to back, as many as fit.
 FIELDS_LAYOUT = GreedyRange(FIELD_LAYOUT)
-FIELD_HEADER_LEN = 2
+#: A whole run of fields, nothing after them.
+WHOLE_FIELDS = Struct("fields" / FIELDS_LAYOUT, Terminated)
+#: As many fields as fit, where they stopped, and what's left.
+FIELD_RUN = Struct("fields" / FIELDS_LAYOUT, "consumed" / Tell, "rest" / GreedyBytes)
+FIELD_HEADER = Struct("tag" / Int8ub, "length" / Int8ub)
 
 
 class FieldError(ValueError):
@@ -45,12 +58,13 @@ def decode_fields(data: bytes) -> dict[int, bytes]:
         FieldError: If a field's length runs past the end.
 
     """
-    parsed = FIELDS_LAYOUT.parse(data)
-    consumed = sum(FIELD_HEADER_LEN + len(field.value) for field in parsed)
-    if consumed == len(data):
-        return {int(field.tag): bytes(field.value) for field in parsed}
-    if len(data) - consumed < FIELD_HEADER_LEN:
-        msg = f"truncated field header at {consumed}: {data.hex()}"
-        raise FieldError(msg)
-    msg = f"the field at {consumed} runs past the end: {data.hex()}"
+    run = FIELD_RUN.parse(data)
+    if not run.rest:
+        return {int(field.tag): bytes(field.value) for field in run.fields}
+    try:
+        FIELD_HEADER.parse(run.rest)
+    except ConstructError as error:
+        msg = f"truncated field header at {run.consumed}: {data.hex()}"
+        raise FieldError(msg) from error
+    msg = f"the field at {run.consumed} runs past the end: {data.hex()}"
     raise FieldError(msg)

@@ -3,13 +3,16 @@
 
 from __future__ import annotations
 
+from construct import Int8ub
+
 from anker_ble_emulator.devices.a1780 import EXTENDED, TELEMETRY
 from anker_ble_emulator.legacy import (
+    CONTROL_PAYLOAD,
     FRAME_OVERHEAD,
     HEADER_WRITE,
+    LEGACY_REQUEST,
     LegacyModule,
     LegacyProfile,
-    checksum,
 )
 
 
@@ -17,18 +20,26 @@ from anker_ble_emulator.legacy import (
 PATTERN = b"\x00\x00\x00"
 #: ``02``: a control command's first cmd byte.
 CONTROL_CMD = 0x02
+#: A control command's cmd: ``02``, then the field it sets.
+CONTROL_CMD_LAYOUT = Int8ub[2]
 
 
 def legacy_request(cmd: bytes, payload: bytes = b"") -> bytes:
     """Build a well-formed, checksummed client write."""
-    length = (FRAME_OVERHEAD + len(payload)).to_bytes(2, "little")
-    body = HEADER_WRITE + PATTERN + cmd + length + payload
-    return body + bytes([checksum(body)])
+    body = {
+        "header": HEADER_WRITE,
+        "pattern": PATTERN,
+        "cmd": cmd,
+        "length": FRAME_OVERHEAD + len(payload),
+        "payload": payload,
+    }
+    return LEGACY_REQUEST.build({"body": {"value": body}})
 
 
 def control_request(field_id: int, value: int) -> bytes:
     """Build a confirmed on/off/mode-style control command."""
-    return legacy_request(bytes([CONTROL_CMD, field_id]), bytes([0x00, value]))
+    cmd = CONTROL_CMD_LAYOUT.build([CONTROL_CMD, field_id])
+    return legacy_request(cmd, CONTROL_PAYLOAD.build({"reserved": 0, "value": value}))
 
 
 def build_legacy_module() -> LegacyModule:

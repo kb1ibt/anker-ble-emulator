@@ -13,9 +13,10 @@ from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from construct import Bytes, Int8ub, Optional, Struct
 
+from anker_ble_emulator.c_g2_490 import CG2_490
 from anker_ble_emulator.clock import MonotonicClock
 from anker_ble_emulator.frame import CHANNEL_SESSION, RESPONSE
-from anker_ble_emulator.layouts import Layout, LayoutError
+from anker_ble_emulator.layouts import LayoutError, LayoutProtocol
 from anker_ble_emulator.legacy import LegacyModule, LegacyProfile
 from anker_ble_emulator.mcu import McuScript, mcu_frame
 from anker_ble_emulator.module import (
@@ -36,14 +37,13 @@ from anker_ble_emulator.products import (
     Product,
     Transport,
 )
-from anker_ble_emulator.summary import Summary
 
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
     from anker_ble_emulator.clock import Clock
-    from anker_ble_emulator.layouts import Field, Value
+    from anker_ble_emulator.layouts import Value
 
 #: A locally administered unicast MAC.
 DEFAULT_MAC = "AA:12:DE:AD:BE:EF"
@@ -151,25 +151,17 @@ class Profile:
             handles, emulated or not.
         rejects: The MCU answers a setting it refuses with ``04``; otherwise
             it acks ``00`` and leaves the setting unapplied.
-        summary: The ``0490`` summary's field names in ``devices/data/``,
-            where the MCU posts one.
+        push_490: The ``0490`` push's field names in ``devices/data/``, where
+            the MCU posts one.
         expansion: An expansion battery is attached.
-        layout_aliases: BLE msgtypes typed by another message of the layout
-            (anker-solix-api maps the MQTT message the BLE one equals).
         chip: ``0829 a2``.
         lib_version: ``0829 a3``.
         serial_tail: How many of the serial's last characters ``0829 a5``
             carries after the MAC.
         fragment_cap: The largest frame the module sends (``0803`` MTU cap).
         mcu_channel: The channel the MCU's frames travel on.
-        built: Msgtypes with no recording, built from the layout's typed
-            fields (a reply behind a ``00`` status).
-        fields: Typed fields the layout lacks, by message: tags the map names
-            untyped, typed from where SolixBLE's class decodes them.
-        map_built: Nothing about the product is recorded: the profile comes
-            from anker-solix-api's map and SolixBLE's device class.
-        retyped: Messages typed from a sibling product's recording instead of
-            the map: each replaces the map's typed fields.
+        layout: The product's own command/telemetry code, hand-written
+            directly in its module.
 
     """
 
@@ -187,32 +179,22 @@ class Profile:
     module_replies: Mapping[ModuleBuild, tuple[int, ...]] = field(default_factory=dict)
     known_commands: frozenset[int] = frozenset()
     rejects: bool = True
-    summary: str | None = None
+    push_490: str | None = None
     expansion: bool = True
-    layout_aliases: Mapping[int, int] = field(default_factory=dict)
     chip: bytes = b"ESP32"
     lib_version: bytes = b"0.0.0.3"
     serial_tail: int = 0
     fragment_cap: int = 253
     mcu_channel: int = CHANNEL_SESSION
-    built: tuple[int, ...] = ()
-    fields: Mapping[int, tuple[Field, ...]] = field(default_factory=dict)
-    map_built: bool = False
-    retyped: Mapping[int, tuple[Field, ...]] = field(default_factory=dict)
+    layout: LayoutProtocol | None = None
 
-    def frames(self, layout: Layout | None = None) -> dict[int, bytes]:
-        """Return the cleartext payloads by msgtype: recorded, then built."""
+    def frames(self) -> dict[int, bytes]:
+        """Return the recorded cleartext payloads by msgtype."""
         frames: dict[int, bytes] = {}
         for name in reversed(self.data):
             frames |= {
                 int(key, 16): bytes.fromhex(value)
                 for key, value in data_resource(name).items()
-            }
-        if layout is not None:
-            frames |= {
-                msgtype: (b"\x00" if msgtype & RESPONSE else b"")
-                + layout.build(msgtype)
-                for msgtype in self.built
             }
         return frames
 
@@ -234,14 +216,14 @@ class Profile:
         model, mcu, esp32 = (name.encode() for name in self.version_names)
         return replace(versions, model=model, mcu=mcu, esp32=esp32)
 
-    def script(self, layout: Layout | None = None) -> McuScript:
+    def script(self, layout: LayoutProtocol | None = None) -> McuScript:
         """Return the MCU script built from the packaged recorded frames.
 
         Args:
             layout: The product's layout, for command acks and named values.
 
         """
-        frames, channel = self.frames(layout), self.mcu_channel
+        frames, channel = self.frames(), self.mcu_channel
         return McuScript(
             replies={
                 request: tuple(
@@ -254,9 +236,9 @@ class Profile:
                 for msgtype in self.pushes
             },
             layout=layout,
-            summary=None
-            if self.summary is None
-            else Summary.from_json(data_resource(self.summary)),
+            push_490=None
+            if self.push_490 is None
+            else CG2_490.from_json(data_resource(self.push_490)),
             rejects=self.rejects,
             channel=channel,
         )
@@ -306,9 +288,9 @@ class EmulatedDevice:
     profile: Profile | LegacyProfile
     #: The provisioned serial; None for none.
     serial: str | None
-    #: The product's layout from anker-solix-api's maps; None where it has none,
-    #: which is every transport but the negotiated one.
-    layout: Layout | None
+    #: The product's layout, from its own code or anker-solix-api's maps;
+    #: None where it has none, which is every transport but the negotiated one.
+    layout: LayoutProtocol | None
     #: What answers writes and generates notifications; the transport's module.
     module: DeviceModule
 
@@ -323,6 +305,7 @@ class EmulatedDevice:
         path: Path | None = None,
         module: ModuleBuild | None = None,
         clock: Clock | None = None,
+        mtu: int | None = None,
     ) -> None:
         """Build the device from its product's profile.
 
@@ -337,6 +320,10 @@ class EmulatedDevice:
             module: The module firmware build; None for the profile's. Its
                 build decides whether a cleartext connect is refused.
             clock: Time for the module's timers; the monotonic clock if None.
+            mtu: The link's ATT MTU; None for the profile's fragment cap plus 3
+                (253 -> 256, the MTU seen on the bench). Also the ceiling the
+                module reports in ``0803``/``0829``: the real value is
+                ``min(mtu, the client's own request)``.
 
         Raises:
             NotImplementedError: If the product or a chosen option isn't emulated.
@@ -363,7 +350,7 @@ class EmulatedDevice:
         self.cloud = False
         self._listener: Callable[[Output], None] | None = None
         if self.transport == Transport.LEGACY:
-            self._init_legacy(pn, serial, outer, path, module)
+            self._init_legacy(pn, serial, outer, path, module, mtu)
             return
         profile = PROFILES.get(pn)
         if profile is None:
@@ -382,42 +369,45 @@ class EmulatedDevice:
             serial=None if self.serial is None else self.serial.encode(),
             auth_mode=profile.auth_mode,
             enforce=self.module_build.enforces and self.outer == Outer.ENCRYPTED,
-            fragment_cap=profile.fragment_cap,
+            fragment_cap=profile.fragment_cap if mtu is None else mtu - 3,
             chip=profile.chip,
             lib_version=profile.lib_version,
             serial_tail=profile.serial_tail,
             session_replies=profile.session_replies(self.module_build),
             versions=profile.versions(self.module_build),
         )
-        #: The product's layout from anker-solix-api's maps, where it has one.
-        self.layout = Layout.load(pn)
-        if self.layout is not None:
-            self.layout.retype(profile.retyped)
-            self.layout.extend(profile.fields)
-            self.layout.alias(profile.layout_aliases)
+        #: The product's own command/telemetry code, where it has one.
+        self.layout = profile.layout
         script = profile.script(self.layout)
         self.module = Module(config, script, clock or MonotonicClock())
-        if script.summary is not None and not profile.expansion:
-            self.module.values.update(script.summary.without_expansion())
+        if script.push_490 is not None and not profile.expansion:
+            self.module.values.update(script.push_490.without_expansion())
 
-    def _init_legacy(
+    def _init_legacy(  # noqa: PLR0913, PLR0917  # mirrors __init__'s own rejected choices
         self,
         pn: Product,
         serial: str | Unset | None,
         outer: Outer | None,
         path: Path | None,
         module: ModuleBuild | None,
+        mtu: int | None,
     ) -> None:
         """Build a legacy-transport device; see ``__init__``.
 
         Raises:
             NotImplementedError: If the product has no legacy emulation profile.
-            TypeError: If ``outer``, ``path``, ``module``, or a non-default
-                ``serial`` is given; none of them apply to this transport.
+            TypeError: If ``outer``, ``path``, ``module``, ``mtu``, or a
+                non-default ``serial`` is given; none of them apply to this
+                transport.
 
         """
-        if outer is not None or path is not None or module is not None:
-            msg = "outer/path/module choose the negotiated transport's options"
+        if (
+            outer is not None
+            or path is not None
+            or module is not None
+            or mtu is not None
+        ):
+            msg = "outer/path/module/mtu choose the negotiated transport's options"
             raise TypeError(msg)
         if serial is not UNSET:
             msg = f"{pn}'s serial is fixed in its captured telemetry"
@@ -448,22 +438,22 @@ class EmulatedDevice:
         """Set telemetry values by field name in every later frame that carries them.
 
         Names are the product layout's (anker-solix-api's field names) and the
-        ``0490`` summary's.
+        ``0490`` push's.
 
         Raises:
             LayoutError: If no message the device sends has a field so named.
             TypeError: If a value doesn't fit its field.
 
         """
-        layout, summary = self.layout, self.mcu.summary
+        layout, push_490 = self.layout, self.mcu.push_490
         for name, value in values.items():
             known = False
             if layout is not None:
                 for msgtype in layout.locate(name):
                     layout.build(msgtype, {name: value})
                     known = True
-            if summary is not None and name in summary.fields:
-                summary.check(name, value)
+            if push_490 is not None and name in push_490.fields:
+                push_490.check(name, value)
                 known = True
             if not known:
                 msg = f"{self.pn} sends no typed field {name!r}"

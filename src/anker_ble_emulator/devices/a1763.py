@@ -36,8 +36,9 @@ PROFILE = Profile(
     version_names=solix_c_gen2.version_names("A1763"),
     known_commands=solix_c_gen2.KNOWN_COMMANDS,
     rejects=False,
-    summary=solix_c_gen2.SUMMARY,
+    push_490=solix_c_gen2.PUSH_490_FIELDS,
     expansion=False,
+    layout=solix_c_gen2.CGen2Layout(),
 )
 register(Product.A1763, PROFILE)
 
@@ -55,6 +56,7 @@ class A1763(EmulatedDevice):
         path: Path | None = None,
         module: ModuleBuild | None = None,
         clock: Clock | None = None,
+        mtu: int | None = None,
     ) -> None:
         """Build a C1000 Gen 2; see ``EmulatedDevice``."""
         super().__init__(
@@ -66,4 +68,5 @@ class A1763(EmulatedDevice):
             path=path,
             module=module,
             clock=clock,
+            mtu=mtu,
         )

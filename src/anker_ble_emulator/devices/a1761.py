@@ -14,9 +14,6 @@ from .base import DEFAULT_MAC, UNSET, Advert, EmulatedDevice, Profile, Unset, re
 if TYPE_CHECKING:
     from anker_ble_emulator.clock import Clock
 
-#: anker-solix-api maps the MQTT ``0405``, which the BLE status frames equal.
-STATUS = 0x405
-
 PROFILE = Profile(
     serial="APC9FE0000000001",
     outer=Outer.PLAIN,
@@ -33,7 +30,6 @@ PROFILE = Profile(
         {0x040, 0x042, 0x043, 0x044, 0x045, 0x046, 0x04A, 0x04B, 0x04C, 0x04F}
         | {0x050, 0x052, 0x057, 0x05E, 0x076, 0x077}
     ),
-    layout_aliases={0x402: STATUS, 0x840: STATUS},
 )
 register(Product.A1761, PROFILE)
 
@@ -51,6 +47,7 @@ class A1761(EmulatedDevice):
         path: Path | None = None,
         module: ModuleBuild | None = None,
         clock: Clock | None = None,
+        mtu: int | None = None,
     ) -> None:
         """Build a C1000; see ``EmulatedDevice``."""
         super().__init__(
@@ -62,4 +59,5 @@ class A1761(EmulatedDevice):
             path=path,
             module=module,
             clock=clock,
+            mtu=mtu,
         )

@@ -41,6 +41,7 @@ class A1765(EmulatedDevice):
         path: Path | None = None,
         module: ModuleBuild | None = None,
         clock: Clock | None = None,
+        mtu: int | None = None,
     ) -> None:
         """Build a C1000X Gen 2; see ``EmulatedDevice``."""
         super().__init__(
@@ -52,4 +53,5 @@ class A1765(EmulatedDevice):
             path=path,
             module=module,
             clock=clock,
+            mtu=mtu,
         )

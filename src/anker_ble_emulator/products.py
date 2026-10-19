@@ -95,7 +95,7 @@ class ModuleBuild(StrEnum):
     V0_3_0_6 = "v0.3.0.6"
     #: Refuses a cleartext connect and a non-ECDH method, and gates ``0027``.
     V0_3_3_0 = "v0.3.3.0"
-    #: A map-built product's module: nothing about it is recorded.
+    #: A product whose module build isn't recorded.
     UNRECORDED = "unrecorded"
 
     @property
@@ -131,16 +131,12 @@ SESSION_OPS = {
 
 
 class Product(StrEnum):
-    """Anker part numbers with a known BLE client class or BLE evidence."""
+    """Anker part numbers with a BLE client class or BLE evidence."""
 
     A110B = "A110B"
     A1722 = "A1722"
-    A1723 = "A1723"
     A1726 = "A1726"
-    A1728 = "A1728"
     A1753 = "A1753"
-    A1754 = "A1754"
-    A1755 = "A1755"
     A1761 = "A1761"
     A1763 = "A1763"
     A1765 = "A1765"
@@ -152,8 +148,6 @@ class Product(StrEnum):
     A1790P = "A1790P"
     A17C0 = "A17C0"
     A17C1 = "A17C1"
-    A17C3 = "A17C3"
-    A17C5 = "A17C5"
     A2345 = "A2345"
     A25X7 = "A25X7"
     A2687 = "A2687"
@@ -184,17 +178,13 @@ PRODUCTS: dict[Product, ProductInfo] = {
         "Prime Power Bank 20K", "PrimePowerBank20k", "powerbank"
     ),
     Product.A1722: ProductInfo("SOLIX C300", "C300", "pps"),
-    Product.A1723: ProductInfo("SOLIX C300X", "C300", "pps"),
     Product.A1726: ProductInfo("SOLIX C300 DC", "C300DC", "pps"),
-    Product.A1728: ProductInfo("SOLIX C300X DC", "C300DC", "pps"),
     Product.A1753: ProductInfo("SOLIX C800", "C800", "pps"),
-    Product.A1754: ProductInfo("SOLIX C800 Plus", "C800", "pps"),
-    Product.A1755: ProductInfo("SOLIX C800X", "C800", "pps"),
     Product.A1761: ProductInfo("SOLIX C1000", "C1000", "pps"),
     Product.A1763: ProductInfo("SOLIX C1000 Gen 2", "C1000G2", "pps"),
     Product.A1765: ProductInfo("SOLIX C1000X Gen 2", "C1000G2", "pps"),
     Product.A1780: ProductInfo("SOLIX F2000", "F2000", "pps", Transport.LEGACY),
-    #: T6's F2600 SolixBLE class is ff09-shaped (plain outer, TLV commands,
+    #: SolixBLE's F2600 class is ff09-shaped (plain outer, TLV commands,
     #: status 040 -> 840), not the fixed-offset legacy transport.
     Product.A1781: ProductInfo("SOLIX F2600", "F2600", "pps"),
     Product.A1783: ProductInfo("SOLIX C2000 Gen 2", "C2000G2", "pps"),
@@ -204,9 +194,6 @@ PRODUCTS: dict[Product, ProductInfo] = {
     #: SolixBLE has no Solarbank 1 class.
     Product.A17C0: ProductInfo("Solarbank E1600", "", "solarbank_1"),
     Product.A17C1: ProductInfo("Solarbank 2 E1600 Pro", "Solarbank2", "solarbank_2"),
-    #: SolixBLE's ``Solarbank2`` names only the A17C1; the app's parser is shared.
-    Product.A17C3: ProductInfo("Solarbank 2 E1600 Plus", "Solarbank2", "solarbank_2"),
-    Product.A17C5: ProductInfo("Solarbank 3 E2700 Pro", "Solarbank3", "solarbank_3"),
     Product.A2345: ProductInfo("Prime Charger 250W", "PrimeCharger250w", "charger"),
     Product.A25X7: ProductInfo("MagGo 3-in-1 Wireless Charger", "MagGo3in1", "charger"),
     Product.A2687: ProductInfo("Prime Charger 160W", "PrimeCharger160w", "charger"),

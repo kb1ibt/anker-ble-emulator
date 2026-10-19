@@ -3,7 +3,6 @@
 
 from .a17c0 import A17C0
 from .a17c1 import A17C1
-from .a17c3 import A17C3
 from .a25x7 import A25X7
 from .a91b2 import A91B2
 from .a110b import A110B
@@ -31,13 +30,11 @@ from .base import (
     register,
     register_legacy,
 )
-from .generated import MAP_BUILT
 
 
 __all__ = [
     "A17C0",
     "A17C1",
-    "A17C3",
     "A25X7",
     "A91B2",
     "A110B",
@@ -54,7 +51,6 @@ __all__ = [
     "COMPANY_ID",
     "DEFAULT_MAC",
     "LEGACY_PROFILES",
-    "MAP_BUILT",
     "PROFILES",
     "SERVICE_UUID",
     "UNSET",

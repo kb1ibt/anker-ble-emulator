@@ -36,7 +36,8 @@ PROFILE = Profile(
     version_names=solix_c_gen2.version_names("A1783"),
     known_commands=solix_c_gen2.KNOWN_COMMANDS,
     rejects=False,
-    summary=solix_c_gen2.SUMMARY,
+    push_490=solix_c_gen2.PUSH_490_FIELDS,
+    layout=solix_c_gen2.CGen2ExpansionLayout(),
     module_replies={
         ModuleBuild.V0_3_3_0: (
             0x820,
@@ -67,6 +68,7 @@ class A1783(EmulatedDevice):
         path: Path | None = None,
         module: ModuleBuild | None = None,
         clock: Clock | None = None,
+        mtu: int | None = None,
     ) -> None:
         """Build a C2000 Gen 2; see ``EmulatedDevice``."""
         super().__init__(
@@ -78,4 +80,5 @@ class A1783(EmulatedDevice):
             path=path,
             module=module,
             clock=clock,
+            mtu=mtu,
         )

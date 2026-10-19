@@ -16,7 +16,7 @@ from anker_ble_emulator import (
 )
 from anker_ble_emulator.devices import COMPANY_ID, EmulatedDevice
 from anker_ble_emulator.devices.a1780 import EXTENDED, TELEMETRY
-from anker_ble_emulator.legacy import CMD_POLL, FIELD_AC_OUTPUT, OFFSET_AC_OUTPUT
+from anker_ble_emulator.legacy import CMD_POLL, FIELD_AC_OUTPUT, TELEMETRY_FRAME
 from tests.fixtures.client import settle
 from tests.fixtures.legacy import control_request, legacy_request
 
@@ -73,7 +73,7 @@ async def test_control_command_is_silent_but_updates_the_next_poll() -> None:
         )
         await settle()
 
-    assert received[0][OFFSET_AC_OUTPUT] == 0
+    assert TELEMETRY_FRAME.parse(received[0]).body.value.ac_output == 0
 
 
 def test_advertisement_shows_the_f2000_name_and_reversed_mac() -> None:

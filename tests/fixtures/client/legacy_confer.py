@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from anker_ble_emulator.frame import decode, encode, make_frame
+from anker_ble_emulator.mcu import REPLY
 from anker_ble_emulator.tlv import decode_fields, encode_fields
 
 from .app_client import NEGOTIATION
@@ -30,5 +31,5 @@ def confer_request(handshake: CbcCipher, fields: list[tuple[int, bytes]]) -> byt
 
 def open_confer_reply(cipher: Cipher, data: bytes) -> tuple[int, bytes]:
     """Return a ``0822``/``4822``: its status and the delivered ``a1`` key."""
-    plaintext = cipher.decrypt(decode(data).payload)
-    return plaintext[0], decode_fields(plaintext[1:])[0xA1]
+    reply = REPLY.parse(cipher.decrypt(decode(data).payload))
+    return reply.status, decode_fields(reply.fields)[0xA1]

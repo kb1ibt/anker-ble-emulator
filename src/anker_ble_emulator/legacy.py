@@ -5,8 +5,8 @@ Reverse-engineered from an HCI snoop of the official Anker app against a 767
 PowerHouse / F2000 (A1780) unit on GATT service ``014bf5da``
 (flip-dots/SolixBLEF2000's ``f2000_alt.py``; command and telemetry bytes
 cross-checked against SolixBLE PR #64's ``f2000_legacy.py``). Every notify
-frame is the *whole* wire frame (header through checksum): fields are read
-and patched at absolute offsets into it, not into an unwrapped payload.
+frame is the *whole* wire frame (header through checksum), so its fields sit
+at fixed offsets into it, not into an unwrapped payload.
 """
 
 from __future__ import annotations
@@ -18,12 +18,16 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 from construct import (
     Bytes,
     Checksum,
+    Const,
     ConstructError,
     Container,
+    If,
     Int8ub,
     Int16ul,
+    Padding,
     RawCopy,
     Struct,
+    Tell,
     this,
 )
 
@@ -38,6 +42,8 @@ _LOGGER = logging.getLogger(__name__)
 
 #: Header(2) + pattern(3) + cmd(2) + length(2) + checksum(1); the rest is payload.
 FRAME_OVERHEAD = 10
+#: The trailing checksum byte.
+CHECKSUM_LENGTH = 1
 #: The client (app) writes this header; the device notifies ``09ff``.
 HEADER_WRITE = b"\x08\xee"
 HEADER_NOTIFY = b"\x09\xff"
@@ -51,25 +57,8 @@ FIELD_AC_OUTPUT = 0x86
 FIELD_DC_OUTPUT = 0x87
 FIELD_POWER_SAVING_MODE = 0x8A
 FIELD_LIGHT_MODE = 0x8B
-
-#: Byte offsets into the full wire frame (prefix included) a control command patches.
-OFFSET_AC_OUTPUT = 63
-#: The two physical car-socket ports have only ever been observed moving together.
-OFFSET_DC_OUTPUT = (80, 81)
-#: Settings-block offsets; only present in the ~122-byte extended frame.
-OFFSET_POWER_SAVING_MODE = 117
-OFFSET_LIGHT_MODE = 118
-
-#: The ~14-byte StateAck notification fired on a physical button press.
-STATE_ACK_LENGTH = 14
 #: ``cmd[1]`` identifying a StateAck frame (vs. a real telemetry frame's).
 STATE_ACK_CMD_BYTE = 0x48
-STATE_ACK_AC = 9
-STATE_ACK_DC = 10
-STATE_ACK_POWER_SAVING = 11
-STATE_ACK_LIGHT = 12
-#: The serial's byte range in the full wire frame.
-OFFSET_SERIAL = slice(85, 101)
 
 
 def checksum(data: bytes) -> int:
@@ -91,6 +80,82 @@ LEGACY_REQUEST = Struct(
     ),
     "checksum" / Checksum(Int8ub, checksum, this.body.data),
 )
+
+#: A request's cmd: its group (``02`` = control), then the field it selects.
+LEGACY_CMD = Struct("group" / Int8ub, "field" / Int8ub)
+#: A control command's payload: a reserved byte, then the value to set.
+CONTROL_PAYLOAD = Struct("reserved" / Int8ub, "value" / Int8ub)
+
+#: The extended frame's settings block, wire offsets 101-120.
+SETTINGS = Struct(
+    "bytes_101_116" / Bytes(16),
+    "power_saving_mode" / Int8ub,
+    "light_mode" / Int8ub,
+    "bytes_119_120" / Bytes(2),
+)
+
+#: A telemetry notify, base (102 B) or extended (base + ``SETTINGS``), checksummed.
+#: Field names carry their wire offsets; the ``bytes_*`` runs are unmapped.
+TELEMETRY_FRAME = Struct(
+    "body"
+    / RawCopy(
+        Struct(
+            "header" / Bytes(2),
+            "pattern" / Bytes(3),
+            "cmd" / Bytes(2),
+            "length" / Int16ul,
+            "bytes_9_62" / Bytes(54),
+            "ac_output" / Int8ub,
+            "bytes_64_79" / Bytes(16),
+            # The two car-socket ports have only ever been observed moving together.
+            "dc_output_1" / Int8ub,
+            "dc_output_2" / Int8ub,
+            "bytes_82_84" / Bytes(3),
+            "serial" / Bytes(16),
+            "serial_end" / Tell,
+            "settings"
+            / If(
+                lambda this: (
+                    this.length - CHECKSUM_LENGTH - this.serial_end >= SETTINGS.sizeof()
+                ),
+                SETTINGS,
+            ),
+            "fields_end" / Tell,
+            "rest"
+            / Bytes(lambda this: this.length - CHECKSUM_LENGTH - this.fields_end),
+        ),
+    ),
+    "checksum" / Checksum(Int8ub, checksum, this.body.data),
+)
+
+#: The 14-byte StateAck notification fired on a physical button press.
+STATE_ACK = Struct(
+    "body"
+    / RawCopy(
+        Struct(
+            "header" / Const(HEADER_NOTIFY),
+            Padding(4),
+            "cmd" / Const(bytes([STATE_ACK_CMD_BYTE])),
+            Padding(2),
+            "ac_output" / Int8ub,
+            "dc_output" / Int8ub,
+            "power_saving_mode" / Int8ub,
+            "light_mode" / Int8ub,
+        ),
+    ),
+    "checksum" / Checksum(Int8ub, checksum, this.body.data),
+)
+
+#: Control field ID -> the telemetry fields it sets.
+_TELEMETRY_FIELDS = {
+    FIELD_AC_OUTPUT: ("ac_output",),
+    FIELD_DC_OUTPUT: ("dc_output_1", "dc_output_2"),
+}
+#: Control field ID -> the settings field it sets (extended frame only).
+_SETTINGS_FIELDS = {
+    FIELD_POWER_SAVING_MODE: "power_saving_mode",
+    FIELD_LIGHT_MODE: "light_mode",
+}
 
 
 class LegacyFrameError(ValueError):
@@ -117,9 +182,20 @@ def decode_request(data: bytes) -> LegacyRequest:
     )
 
 
-def _patched_checksum(frame: bytearray) -> None:
-    """Recompute ``frame``'s trailing checksum byte in place."""
-    frame[-1] = checksum(bytes(frame[:-1]))
+def _patched(frame: bytes, field_id: int, value: int) -> bytes:
+    """Return ``frame`` with ``field_id``'s field(s) set to ``value``, rechecksummed.
+
+    A settings field leaves a base frame, which has no settings block, unchanged.
+    """
+    fields = TELEMETRY_FRAME.parse(frame).body.value
+    if field_id in _SETTINGS_FIELDS:
+        if fields.settings is None:
+            return frame
+        fields.settings[_SETTINGS_FIELDS[field_id]] = value
+    else:
+        for name in _TELEMETRY_FIELDS[field_id]:
+            fields[name] = value
+    return TELEMETRY_FRAME.build({"body": {"value": fields}})
 
 
 @dataclass(frozen=True)
@@ -142,11 +218,12 @@ class LegacyProfile:
 
     @property
     def serial_number(self) -> str | None:
-        """The serial baked into the baseline telemetry frame; None if too short."""
-        if len(self.telemetry) < OFFSET_SERIAL.stop:
+        """The serial baked into the baseline telemetry frame; None if it has none."""
+        try:
+            raw = TELEMETRY_FRAME.parse(self.telemetry).body.value.serial
+        except ConstructError:
             return None
-        raw = bytes(self.telemetry[OFFSET_SERIAL])
-        return raw.decode("ascii", errors="replace").rstrip("\x00") or None
+        return bytes(raw).decode("ascii", errors="replace").rstrip("\x00") or None
 
 
 class LegacyModule:
@@ -155,8 +232,8 @@ class LegacyModule:
     def __init__(self, profile: LegacyProfile) -> None:
         """Cache ``profile``'s baseline frames; no link is up yet."""
         self.profile = profile
-        self._telemetry = bytearray(profile.telemetry)
-        self._extended = bytearray(profile.extended)
+        self._telemetry = profile.telemetry
+        self._extended = profile.extended
         self._connected = False
 
     @property
@@ -197,47 +274,38 @@ class LegacyModule:
             return Output()
         cmd = bytes(request.cmd)
         if cmd == CMD_POLL:
-            return Output([bytes(self._extended), bytes(self._telemetry)])
-        if cmd[0] == _CONTROL_CMD:
-            return self._control(cmd[1], bytes(request.payload))
+            return Output([self._extended, self._telemetry])
+        command = LEGACY_CMD.parse(cmd)
+        if command.group == _CONTROL_CMD:
+            return self._control(command.field, bytes(request.payload))
         return Output()
 
     def _control(self, field_id: int, payload: bytes) -> Output:
         """Apply a control command's value to the cached telemetry; no reply."""
-        if len(payload) < 2:  # noqa: PLR2004  # reserved byte + value
+        if field_id not in _TELEMETRY_FIELDS and field_id not in _SETTINGS_FIELDS:
             return Output()
-        value = payload[1]
-        if field_id == FIELD_AC_OUTPUT:
-            self._patch(OFFSET_AC_OUTPUT, value)
-        elif field_id == FIELD_DC_OUTPUT:
-            self._patch(OFFSET_DC_OUTPUT[0], value)
-            self._patch(OFFSET_DC_OUTPUT[1], value)
-        elif field_id == FIELD_POWER_SAVING_MODE:
-            self._patch(OFFSET_POWER_SAVING_MODE, value)
-        elif field_id == FIELD_LIGHT_MODE:
-            self._patch(OFFSET_LIGHT_MODE, value)
+        try:
+            value = CONTROL_PAYLOAD.parse(payload).value
+        except ConstructError:
+            return Output()
+        self._telemetry = _patched(self._telemetry, field_id, value)
+        self._extended = _patched(self._extended, field_id, value)
         return Output()
-
-    def _patch(self, offset: int, value: int) -> None:
-        """Set ``offset`` to ``value`` in every cached frame long enough to carry it.
-
-        Every confirmed field's offset fits the extended frame; only the
-        settings-block ones (past the shorter base frame) need the guard.
-        """
-        if offset < len(self._telemetry):
-            self._telemetry[offset] = value
-            _patched_checksum(self._telemetry)
-        self._extended[offset] = value
-        _patched_checksum(self._extended)
 
     def press_button(self) -> Output:
         """Emit a StateAck of the module's current AC/DC/power-saving/light state."""
-        frame = bytearray(STATE_ACK_LENGTH)
-        frame[0:2] = HEADER_NOTIFY
-        frame[6] = STATE_ACK_CMD_BYTE
-        frame[STATE_ACK_AC] = self._telemetry[OFFSET_AC_OUTPUT]
-        frame[STATE_ACK_DC] = self._telemetry[OFFSET_DC_OUTPUT[0]]
-        frame[STATE_ACK_POWER_SAVING] = self._extended[OFFSET_POWER_SAVING_MODE]
-        frame[STATE_ACK_LIGHT] = self._extended[OFFSET_LIGHT_MODE]
-        _patched_checksum(frame)
-        return Output([bytes(frame)])
+        telemetry = TELEMETRY_FRAME.parse(self._telemetry).body.value
+        settings = TELEMETRY_FRAME.parse(self._extended).body.value.settings
+        frame = STATE_ACK.build(
+            {
+                "body": {
+                    "value": {
+                        "ac_output": telemetry.ac_output,
+                        "dc_output": telemetry.dc_output_1,
+                        "power_saving_mode": settings.power_saving_mode,
+                        "light_mode": settings.light_mode,
+                    }
+                }
+            }
+        )
+        return Output([frame])

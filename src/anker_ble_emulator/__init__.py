@@ -11,7 +11,6 @@ from .clock import Clock, ManualClock, MonotonicClock
 from .devices import (
     A17C0,
     A17C1,
-    A17C3,
     A25X7,
     A91B2,
     A110B,
@@ -49,7 +48,6 @@ from .products import (
 __all__ = [
     "A17C0",
     "A17C1",
-    "A17C3",
     "A25X7",
     "A91B2",
     "A110B",

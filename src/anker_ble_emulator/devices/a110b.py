@@ -52,6 +52,7 @@ class A110B(EmulatedDevice):
         path: Path | None = None,
         module: ModuleBuild | None = None,
         clock: Clock | None = None,
+        mtu: int | None = None,
     ) -> None:
         """Build a Prime Power Bank 20K; see ``EmulatedDevice``."""
         super().__init__(
@@ -63,4 +64,5 @@ class A110B(EmulatedDevice):
             path=path,
             module=module,
             clock=clock,
+            mtu=mtu,
         )

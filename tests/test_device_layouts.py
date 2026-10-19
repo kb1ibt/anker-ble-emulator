@@ -1,28 +1,26 @@
 # Copyright (c) 2026 Shawn Stricker
-"""Devices with their anker-solix-api layouts, and the cloud switch."""
+"""Devices with their layouts, and the cloud switch."""
 
 import pytest
 from bleak import BleakClient
 from bleak.exc import BleakError
 
 from anker_ble_emulator import A1783, A2345, EmulatedBleakBackend
-from anker_ble_emulator.layouts import Layout, LayoutError
+from anker_ble_emulator.devices import EmulatedDevice
+from anker_ble_emulator.devices.solix_c_gen2 import AcOutput, Battery, Settings
+from anker_ble_emulator.layouts import LayoutError
 from anker_ble_emulator.mcu import McuScript
-from anker_ble_emulator.tlv import decode_fields
+from anker_ble_emulator.parameters import Parameters, decode_field
+from anker_ble_emulator.products import Product
 from tests.fixtures.client import SESSION, AppClient, BleakLink, cmd_hex, settle
 
 
 TOKEN = b"owner-token"
-#: ``a5`` of the A1783's ``0421``: temperature, charge state, then ``battery_soc``.
-BATTERY_SOC_OFFSET = 1 + 2
-#: ``a7`` of the A1783's ``0421`` leads with ``ac_output_power_switch``.
-AC_SWITCH_OFFSET = 1
 
 
 def test_every_device_loads_its_layout() -> None:
     assert A1783().layout is not None
     assert A2345().layout is not None
-    assert Layout.load("A0000") is None
 
 
 def test_a_telemetry_value_set_by_name_reaches_the_recorded_frame() -> None:
@@ -33,34 +31,36 @@ def test_a_telemetry_value_set_by_name_reaches_the_recorded_frame() -> None:
     push = device.negotiated_module.mcu.push(
         0x421, values=device.negotiated_module.values
     )
-    assert decode_fields(push.payload)[0xA5][BATTERY_SOC_OFFSET] == 55
+    battery = decode_field(Parameters.parse(push.payload), "a5", Battery)
+    assert battery.battery_soc == 55
     recorded = device.negotiated_module.mcu.push(0x421)
-    assert decode_fields(recorded.payload)[0xA5][BATTERY_SOC_OFFSET] != 55
+    recorded_battery = decode_field(Parameters.parse(recorded.payload), "a5", Battery)
+    assert recorded_battery.battery_soc != 55
 
 
 def test_a_value_set_on_the_device_reaches_every_message_that_carries_it() -> None:
     device = A1783()
-    script, summary = device.mcu, device.mcu.summary
-    assert summary is not None
+    script, push_490 = device.mcu, device.mcu.push_490
+    assert push_490 is not None
 
     device.set_values(battery_soc=55)
 
     status, telemetry = script.respond(0x100, values=device.negotiated_module.values)
     post = script.push(0x490, values=device.negotiated_module.values)
-    assert decode_fields(status.payload[1:])[0xA5][BATTERY_SOC_OFFSET] == 55
-    assert decode_fields(telemetry.payload)[0xA5][BATTERY_SOC_OFFSET] == 55
-    assert summary.read(post.payload)["battery_soc"] == 55
+    for frame in (status, telemetry):
+        fields = Parameters.parse(frame.payload)
+        assert decode_field(fields, "a5", Battery).battery_soc == 55
+    assert push_490.read(post.payload)["battery_soc"] == 55
 
 
-def test_a_part_past_offset_nine_lands_at_its_decimal_offset() -> None:
+def test_a_settings_value_lands_in_the_settings_block() -> None:
     device = A1783()
 
     device.set_values(display_timeout_seconds=300)
 
-    a4 = decode_fields(
-        device.mcu.push(0x421, values=device.negotiated_module.values).payload
-    )[0xA4]
-    assert a4[1 + 15 : 1 + 17] == (300).to_bytes(2, "little")
+    push = device.mcu.push(0x421, values=device.negotiated_module.values)
+    settings = decode_field(Parameters.parse(push.payload), "a4", Settings)
+    assert settings.display_timeout_seconds == 300
 
 
 def test_an_mcu_without_a_layout_sends_its_frames_as_recorded() -> None:
@@ -79,7 +79,7 @@ def test_a_value_the_layout_doesnt_type_is_refused() -> None:
         device.set_values(no_such_field=1)
 
 
-def test_a_device_without_a_layout_or_summary_takes_no_values() -> None:
+def test_a_device_without_a_layout_or_push_490_takes_no_values() -> None:
     device = A2345()
     device.layout = None
 
@@ -118,7 +118,8 @@ async def test_a_value_set_by_name_reaches_the_client() -> None:
         status = await link.send(0x100, [(0xA1, b"\x21")], SESSION)
 
     telemetry = next(reply for reply in status if cmd_hex(reply.frame) == "4421")
-    assert decode_fields(telemetry.plaintext)[0xA5][BATTERY_SOC_OFFSET] == 42
+    fields = Parameters.parse(telemetry.plaintext)
+    assert decode_field(fields, "a5", Battery).battery_soc == 42
 
 
 def test_replies_and_pushes_can_be_set_and_silenced() -> None:
@@ -156,15 +157,34 @@ async def test_an_accepted_setter_shows_in_the_telemetry_after_it() -> None:
         untyped = await link.send(0x101, [(0xA1, b"\x21"), (0xA2, b"\x01")], SESSION)
 
     switch = [
-        decode_fields(reply.plaintext)[0xA7][AC_SWITCH_OFFSET]
+        decode_field(Parameters.parse(reply.plaintext), "a7", AcOutput).ac_output_status
         for reply in (*on, *off, *bad, *untyped)
         if cmd_hex(reply.frame) == "4421"
     ]
     assert [cmd_hex(reply.frame) for reply in on] == ["4901", "4421"]
-    assert switch == [1, 0, 0, 0]
+    assert switch == [1, 0, 2, 1]
     assert [reply.plaintext for reply in (on[0], bad[0], untyped[0])] == [
         bytes.fromhex("00a10131")
     ] * 3
+
+
+def test_the_default_mtu_matches_the_bench_253_fragment_cap() -> None:
+    device = A1783()
+
+    assert device.module.fragment_cap == 253
+
+
+def test_an_explicit_mtu_raises_the_fragment_cap() -> None:
+    device = A1783(mtu=517)
+
+    assert device.module.fragment_cap == 514
+    push = device.negotiated_module.mcu.push(0x421)
+    assert len(push.payload) <= device.module.fragment_cap
+
+
+def test_a_legacy_device_rejects_an_explicit_mtu() -> None:
+    with pytest.raises(TypeError, match="mtu"):
+        EmulatedDevice(Product.A1780, mtu=517)
 
 
 async def test_going_on_the_cloud_drops_the_link_and_refuses_connects() -> None:

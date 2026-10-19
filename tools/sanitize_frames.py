@@ -29,17 +29,20 @@ from pathlib import Path
 
 from construct import (
     Bytes,
+    Checksum,
     Const,
     ConstructError,
     GreedyBytes,
     Int8ub,
+    Int16ub,
     Int32ul,
     Peek,
     Struct,
+    this,
 )
 
 from anker_ble_emulator.frame import COMMAND_LAYOUT, checksum, decode
-from anker_ble_emulator.tlv import FIELD_HEADER_LEN, FIELDS_LAYOUT, encode_fields
+from anker_ble_emulator.tlv import WHOLE_FIELDS, encode_fields
 
 
 LINE = re.compile(rb"ble frame: cmd=([0-9a-f]{4}) len=\d+ clear=([0-9a-f]+)")
@@ -64,6 +67,10 @@ TRAILER_VALUE = Struct("type" / Const(b"\x03"), "time" / Int32ul)
 STATUS_AND_BODY = Struct("status" / Bytes(1), "body" / GreedyBytes)
 BODY_ONLY = Struct("status" / Bytes(0), "body" / GreedyBytes)
 FIXED_UNIX_TIME = 1_790_812_800
+#: A wire frame built with its checksum over everything before it.
+CHECKSUMMED = Struct(
+    "body" / GreedyBytes, "checksum" / Checksum(Int8ub, checksum, this.body)
+)
 #: Printable runs this long are checked against the allowlist.
 SUSPECT_RUN = re.compile(rb"[A-Za-z0-9_]{6,}")
 FIRST_TAG = 0xA1
@@ -129,9 +136,11 @@ def fix_trailer(data: bytes) -> bytes:
     Only a payload that walks cleanly as fields to its end is changed.
     """
     status, body = split_status(data)
-    fields = list(FIELDS_LAYOUT.parse(body))
-    walked = sum(FIELD_HEADER_LEN + len(item.value) for item in fields)
-    if walked != len(body) or any(item.tag < FIRST_TAG for item in fields):
+    try:
+        fields = WHOLE_FIELDS.parse(body).fields
+    except ConstructError:
+        return data
+    if any(item.tag < FIRST_TAG for item in fields):
         return data
     return status + encode_fields(
         (int(item.tag), _fixed_time(int(item.tag), bytes(item.value)))
@@ -209,12 +218,18 @@ def _line_frames(line: bytes, *, fix_checksum: bool) -> list[tuple[int, bytes]]:
         return [(int(match.group(1), 16), bytes.fromhex(match.group(2).decode()))]
     wire = [base64.b64decode(data) for data in MQTT_DATA.findall(line)]
     if fix_checksum:
-        wire = [data[:-1] + bytes([checksum(data[:-1])]) for data in wire]
+        wire = [_rechecksummed(data) for data in wire]
     frames = [decode(data) for data in wire]
     return [
-        (int.from_bytes(COMMAND_LAYOUT.build(frame.cmd)), ble_routed(frame.payload))
+        (Int16ub.parse(COMMAND_LAYOUT.build(frame.cmd)), ble_routed(frame.payload))
         for frame in frames
     ]
+
+
+def _rechecksummed(data: bytes) -> bytes:
+    """Return a wire frame with its trailing checksum recomputed."""
+    split = Struct("body" / Bytes(len(data) - 1), "checksum" / Int8ub)
+    return CHECKSUMMED.build({"body": split.parse(data).body})
 
 
 def _pair(text: str) -> tuple[bytes, bytes]:

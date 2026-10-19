@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from construct import Int32ul
 
 from anker_ble_emulator.frame import FrameError
 from tests.fixtures.logs import mqtt_frame, write_frame_log, write_mqtt_records
@@ -47,9 +48,9 @@ def test_millisecond_epochs_are_fixed() -> None:
 def test_trailer_time_is_fixed() -> None:
     data = bytes.fromhex("00a10131fe05031a69a76a")
 
-    assert fix_trailer(data) == bytes.fromhex(
-        "00a10131fe0503"
-    ) + FIXED_UNIX_TIME.to_bytes(4, "little")
+    assert fix_trailer(data) == bytes.fromhex("00a10131fe0503") + Int32ul.build(
+        FIXED_UNIX_TIME
+    )
 
 
 def test_a_fe_field_that_isnt_a_time_is_left_alone() -> None:

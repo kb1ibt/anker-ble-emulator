@@ -46,6 +46,7 @@ class A25X7(EmulatedDevice):
         path: Path | None = None,
         module: ModuleBuild | None = None,
         clock: Clock | None = None,
+        mtu: int | None = None,
     ) -> None:
         """Build a MagGo 3-in-1 Wireless Charger; see ``EmulatedDevice``."""
         super().__init__(
@@ -57,4 +58,5 @@ class A25X7(EmulatedDevice):
             path=path,
             module=module,
             clock=clock,
+            mtu=mtu,
         )
