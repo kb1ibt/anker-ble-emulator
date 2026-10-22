@@ -13,7 +13,7 @@ from tests.fixtures.client import SESSION, AppClient, BleakLink, cmd_hex, settle
 TOKEN = b"owner-token"
 #: ``b4``/``b5``/``b6`` of the ``0405`` telemetry: the three cutoffs (ui).
 OUTPUT_CUTOFF_TAG = 0xB4
-LOWPOWER_INPUT_TAG = 0xB5
+LOW_POWER_INPUT_TAG = 0xB5
 #: ``a3`` of the ``0405`` telemetry is ``battery_level`` (ui).
 BATTERY_SOC_TAG = 0xA3
 
@@ -72,7 +72,7 @@ async def test_a17c0_setters_are_checked_and_show_in_its_telemetry() -> None:
     assert [reply.plaintext for reply in refused] == [bytes.fromhex("04a10131")]
     assert [reply.plaintext for reply in unit] == [bytes.fromhex("04a10131")]
     assert fields[OUTPUT_CUTOFF_TAG] == b"\x01\x05"
-    assert fields[LOWPOWER_INPUT_TAG] == b"\x01\x04"
+    assert fields[LOW_POWER_INPUT_TAG] == b"\x01\x04"
     assert fields[BATTERY_SOC_TAG] == b"\x01\x37"
 
 
@@ -85,7 +85,7 @@ def test_a17c0_builds_its_telemetry_from_zero() -> None:
     assert built[0xA1] == b"\x31"
     assert built[0xAA] == b"\x01\xfb"
     assert built[0xA2] == b"\x00" + bytes(16)
-    assert layout.locate("min_load") == (0x405,)
+    assert layout.locate("inverter_min_load") == (0x405,)
     assert layout.names(0x408) == frozenset()
 
 

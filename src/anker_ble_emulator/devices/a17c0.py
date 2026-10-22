@@ -48,24 +48,24 @@ TELEMETRY_405 = (
     unsigned("a5", "error_code"),
     short("a6", "device_version"),
     short("a7", "sub_mcu_version"),
-    short("a8", "hw_version"),
+    short("a8", "hardware_version"),
     unsigned("a9", "temperature_unit"),
     signed_byte("aa", "temperature"),
     short("ab", "pv1_input_power"),
     short("ac", "total_output_power"),
     unsigned("ad", "charge_discharge_status"),
     word("b0", "battery_charge_power"),
-    word("b1", "pv_yield"),
-    word("b2", "charged_energy"),
-    word("b3", "output_energy"),
+    word("b1", "pv_energy"),
+    word("b2", "battery_charge_energy"),
+    word("b3", "total_output_energy"),
     unsigned("b4", "discharge_limit_value"),
-    unsigned("b5", "lowpower_input_data"),
-    unsigned("b6", "input_cutoff_data"),
-    string("b7", "inverter_brand", 16),
-    string("b8", "inverter_model", 16),
-    short("b9", "min_load"),
-    string("c0", "0w_switch_sn", 16),
-    string("c1", "0w_switch_bt_mac", 12),
+    unsigned("b5", "low_power_input_value"),
+    unsigned("b6", "input_cutoff_value"),
+    string("b7", "inverter_manufacturer", 16),
+    string("b8", "inverter_model_name", 16),
+    short("b9", "inverter_min_load"),
+    string("c0", "zero_output_switch_sn", 16),
+    string("c1", "zero_output_switch_mac", 12),
     word("fe", "timestamp"),
 )
 
@@ -74,8 +74,8 @@ TEMP_UNIT = OptionsValidator(ui(1), 0, 1)
 #: ``0067``/``0068`` cutoff fields, each one of its options.
 CUTOFFS = {
     "a2": ("discharge_limit_value", OptionsValidator(ui(1), 5, 10)),
-    "a3": ("lowpower_input_data", OptionsValidator(ui(1), 4, 5)),
-    "a4": ("input_cutoff_data", OptionsValidator(ui(1), 5, 10)),
+    "a3": ("low_power_input_value", OptionsValidator(ui(1), 4, 5)),
+    "a4": ("input_cutoff_value", OptionsValidator(ui(1), 5, 10)),
 }
 
 

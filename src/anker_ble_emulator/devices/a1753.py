@@ -17,10 +17,11 @@ PROFILE = Profile(
     # The button confirmation isn't recorded; it's the C1000's.
     auth_mode=AuthMode.CONFIRM,
     advert=Advert(local_name=None),
-    # Telemetry borrowed from the C1000 (A1761) less its f9 and fd (the C1000's
-    # pack type): only the C800's MQTT 0405 is recorded, and its BLE c402
-    # differs from that; the C800 runs SolixBLE's C1000 class. Its frames
-    # carry the A1761's serial.
+    # Telemetry is the C1000's (A1761) recording byte for byte, its serial and
+    # pack string ("A1761_30Ah") included: only the C800's MQTT 0405 is
+    # recorded, its BLE c402 differs from that, and the C800 runs SolixBLE's
+    # C1000 class. Units carry other models' identity strings (an A1785 reports
+    # PN A1783, a1783-telemetry.md "a2"), so a borrowed one stays.
     data=("a1753.json",),
     replies={0x040: (0x840,)},
     pushes=(0x402,),

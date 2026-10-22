@@ -10,16 +10,12 @@ from anker_ble_emulator import (
     ModuleBuild,
     Outer,
 )
-from anker_ble_emulator.parameters import Parameter, Parameters
 from tests.fixtures.client import SESSION, AppClient, BleakLink, cmd_hex, settle
 
 
 TOKEN = b"owner-token"
 #: The A1753's ``0830`` as it sent it to MQTT: v0.2.3.1, v3.5.6, no names.
 C800_VERSIONS = bytes.fromhex("00a10876302e322e332e31a20676332e352e36")
-#: The C1000 tags a C800 frame doesn't carry: no ``f9`` in its map, and ``fd``
-#: is the C1000's own pack type.
-C1000_ONLY_TAGS = {"f9", "fd"}
 
 
 async def test_the_c800_reports_its_versions_and_the_c1000_telemetry() -> None:
@@ -42,16 +38,8 @@ async def test_the_c800_reports_its_versions_and_the_c1000_telemetry() -> None:
     pushed = link.replies[-1]
     assert pushed.frame.cmd.msgtype == 0x402
     c1000 = A1761().mcu
-    for ours, theirs in (
-        (status[0].plaintext, c1000.respond(0x040)[0].payload),
-        (pushed.plaintext, c1000.push(0x402).payload),
-    ):
-        c800_fields, c1000_fields = Parameters.parse(ours), Parameters.parse(theirs)
-        assert set(c800_fields) == set(c1000_fields) - C1000_ONLY_TAGS
-        assert all(
-            Parameter.build(c800_fields[tag]) == Parameter.build(c1000_fields[tag])
-            for tag in c800_fields
-        )
+    assert status[0].plaintext == c1000.respond(0x040)[0].payload
+    assert pushed.plaintext == c1000.push(0x402).payload
 
 
 def test_the_c800_advertises_nothing_recorded() -> None:

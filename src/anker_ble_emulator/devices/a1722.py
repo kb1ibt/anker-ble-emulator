@@ -22,7 +22,7 @@ PROFILE = Profile(
     pushes=(0x402,),
     device_version="v1.0.5.7",
     version_names=("A1722_high", "A1722_mcu_high", "A1722_esp32_high"),
-    # The requests anker-solix-api#348 recorded, and the map's 0x057.
+    # The requests anker-solix-api#348 recorded, and 0x057, the realtime subscribe.
     known_commands=dict.fromkeys(
         {0x040, 0x042, 0x043, 0x044, 0x045, 0x046, 0x04A, 0x04B, 0x04C, 0x04F}
         | {0x050, 0x052, 0x057, 0x076, 0x077, 0x079}
