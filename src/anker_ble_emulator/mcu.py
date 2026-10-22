@@ -10,8 +10,9 @@ from construct import GreedyBytes, Int8ul, Struct
 
 from .c_g2_490 import MSGTYPE_490
 from .frame import CHANNEL_SESSION, COMPOSER_SEND, RESPONSE, make_frame
-from .layouts import STATUS_ACCEPTED
+from .layouts import STATUS_ACCEPTED, LayoutError
 from .messages import BLE_REPLY_ROUTE, ROUTE_FIELD
+from .parameters import ParameterContainer, Parameters
 
 
 if TYPE_CHECKING:
@@ -38,6 +39,9 @@ REPLY = Struct("status" / Int8ul, "fields" / GreedyBytes)
 ACK = Struct("status" / Int8ul, "route" / ROUTE_FIELD, "fields" / GreedyBytes)
 #: The state name a read reply finds the MCU's RTC under: local seconds.
 RTC = "rtc"
+#: The state name a frame built for MQTT finds set: the unit is bound and on
+#: WiFi to the cloud, where it has no BLE link.
+CLOUD = "cloud"
 
 
 @dataclass(frozen=True)
@@ -83,6 +87,9 @@ class McuScript:
             op; None where those are dropped.
         factory_reset: The request msgtype that factory-resets the device: it
             clears the settings and pairing, then the link drops.
+        cloud_pushes: Pushes the MCU sends only to the cloud, never to BLE.
+        mqtt_routes: The ``a1`` value of each message the MCU publishes to
+            MQTT on the cloud, by msgtype.
 
     """
 
@@ -96,6 +103,8 @@ class McuScript:
     commands: Mapping[int, int | None] = field(default_factory=dict)
     past_table_status: int | None = None
     factory_reset: int | None = None
+    cloud_pushes: Mapping[int, Frame] = field(default_factory=dict)
+    mqtt_routes: Mapping[int, bytes] = field(default_factory=dict)
 
     def state(self, values: Mapping[str, Value]) -> dict[str, Value]:
         """Return every named value the recorded frames carry, ``values`` over them."""
@@ -198,6 +207,42 @@ class McuScript:
 
         """
         return self._with_values(self.pushes[msgtype], values, rtc)
+
+    def mqtt(
+        self, msgtype: int, *, values: Mapping[str, Value] | None = None, rtc: int = 0
+    ) -> Frame:
+        """Return the frame the MCU publishes to MQTT as ``msgtype``, on the cloud.
+
+        It is the push or reply the MCU would send to BLE, built from the named
+        values with the cloud set, under its MQTT ``a1``.
+
+        Raises:
+            LayoutError: If the MCU publishes no such message to MQTT.
+
+        """
+        layout = self.layout
+        route = self.mqtt_routes.get(msgtype)
+        recorded = self._mqtt_source(msgtype)
+        if layout is None or route is None or recorded is None:
+            msg = f"the MCU publishes no {msgtype:04x} to MQTT"
+            raise LayoutError(msg)
+        names = layout.names(msgtype)
+        named = {name: value for name, value in (values or {}).items() if name in names}
+        payload = layout.update(
+            msgtype, recorded.payload, {**named, RTC: rtc, CLOUD: True}
+        )
+        params = Parameters.parse(payload)
+        params["a1"] = ParameterContainer(key=b"\xa1", type=None, value=route)
+        return _rebuilt(recorded, Parameters.build(params))
+
+    def _mqtt_source(self, msgtype: int) -> Frame | None:
+        """Return the recorded push or reply ``msgtype`` is built from, if any."""
+        if msgtype in self.pushes:
+            return self.pushes[msgtype]
+        if msgtype in self.cloud_pushes:
+            return self.cloud_pushes[msgtype]
+        replies = (frame for frames in self.replies.values() for frame in frames)
+        return next((frame for frame in replies if frame.cmd.msgtype == msgtype), None)
 
     def _with_values(
         self, frame: Frame, values: Mapping[str, Value] | None, rtc: int | None

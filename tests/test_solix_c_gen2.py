@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, TypeAlias
 
 import pytest
 from bleak import BleakClient
-from construct import GreedyBytes
+from construct import GreedyBytes, Int8ul
 
 from anker_ble_emulator import (
     A1763,
@@ -18,9 +18,11 @@ from anker_ble_emulator import (
     ManualClock,
     ModuleBuild,
 )
+from anker_ble_emulator.c_g2_490 import MSGTYPE_490, PUSH_490_LAYOUT
 from anker_ble_emulator.devices import COMPANY_ID, Profile, solix_c_gen2
+from anker_ble_emulator.frame import decode
 from anker_ble_emulator.layouts import LayoutError, ui
-from anker_ble_emulator.parameters import Parameters, decode_field
+from anker_ble_emulator.parameters import Parameter, Parameters, decode_field
 from anker_ble_emulator.tlv import decode_fields
 from tests.fixtures.client import (
     SESSION,
@@ -68,10 +70,9 @@ UTC_16_00_00 = bytes.fromhex("c019d96a")
 UTC_16_21_00 = bytes.fromhex("ac1ed96a")
 UTC_16_26_00 = bytes.fromhex("d81fd96a")
 EDT = bytes.fromhex("40380000")
-#: The bench unit: on WiFi, mains in at 1290 W with Battery-Only Power off,
-#: main pack 95 %, min SoC 5 %.
+#: The bench unit: mains in at 1290 W with Battery-Only Power off, main pack
+#: 95 %, min SoC 5 %.
 TOU_UNIT = {
-    "wifi_online": 1,
     "battery_level": 95,
     "discharge_limit_value": 5,
     "ac_input_status": 1,
@@ -79,12 +80,10 @@ TOU_UNIT = {
     "ac_input_disable_switch": 0,
 }
 #: (``4090`` mode and record, the ``0022`` UTC, values over ``TOU_UNIT``) ->
-#: (``d9[0]``, ``a7`` AC input power, ``a1``). The plan's reserve is 50 %.
+#: the cloud ``0421``'s (``d9[0]``, ``a7`` AC input power, ``a1``). The plan's
+#: reserve is 50 %.
 TOU_HOLD_CASES = [
     pytest.param("01", "030018", UTC_16_21_00, {}, (3, 1290, "34"), id="off-peak"),
-    pytest.param(
-        "01", "010f10", UTC_15_44_27, {"wifi_online": 0}, (0, 1290, "31"), id="ble"
-    ),
     pytest.param("01", "030f02", UTC_16_26_00, {}, (0, 1290, "34"), id="wrapping"),
     pytest.param("00", "010f10", UTC_15_44_27, {}, (0, 1290, "34"), id="standard"),
     pytest.param(
@@ -131,6 +130,22 @@ TOU_HOLD_CASES = [
         "01", "020f10", UTC_15_44_27, {}, (2, 0, "34"), id="doc-gate-mid-peak"
     ),
 ]
+#: What the unit publishes to MQTT on the cloud, and its ``a1``
+#: (a1783-telemetry.md "MQTT channel routing").
+MQTT_MESSAGES = [
+    pytest.param(0x421, "34", id="0421"),
+    pytest.param(0x489, "34", id="0489"),
+    pytest.param(0x900, "34", id="0900"),
+    pytest.param(0x889, "34", id="0889"),
+    pytest.param(0x892, "34", id="0892"),
+    pytest.param(0x425, "12", id="0425"),
+]
+#: a1783-telemetry.md "0503" worked example (2026-10-21 17:49:04 EDT), its
+#: Time Save the packaged frames' fixed clock (``tools/sanitize_frames.py``).
+MQTT_0503 = bytes.fromhex(
+    "ff092f0003010f0503a10112a219040000000000000000d200000030070000820000006e"
+    "140000a3050380a2bd6a92"
+)
 #: The same day's cloud ``0090`` fields, in order, after ``TOU_BENCH``.
 TOU_BENCH_CLOUD = [
     "a2020100a6020102a70704030011011118",
@@ -1046,8 +1061,9 @@ async def test_the_bench_day_leaves_records_a_bare_count_shows_again() -> None:
 async def test_the_bench_peak_holds_grid_charging_until_the_period_ends() -> None:
     """a1783-control.md "TOU (4090)", 2026-10-21: Peak 15-16 on WiFi, reserve 50 %.
 
-    Battery-Only Power blocks the period; switched off at 15:44:27, Peak goes
-    active and AC input reads 0 W; at 16:00 the period ends and charging resumes.
+    Battery-Only Power blocks the period; switched off at 15:44:27 (the app's
+    cloud ``0101``, set here as a value), Peak goes active and AC input reads
+    0 W; at 16:00 the period ends and charging resumes.
     """
     clock = ManualClock()
     device = A1783(clock=clock)
@@ -1067,19 +1083,19 @@ async def test_the_bench_peak_holds_grid_charging_until_the_period_ends() -> Non
         await settle()
         await link.send(0x022, [(0xA1, UTC_15_44_00), (0xA3, EDT)])
         await link.send(0x090, plan, SESSION)
-        blocked = await link.send(
-            0x101, [(0xA1, b"\x21"), (0xAB, b"\x02\x01\x00")], SESSION
-        )
-        clock.advance(27)
-        held = await link.send(
-            0x101, [(0xA1, b"\x21"), (0xAB, b"\x02\x00\x00")], SESSION
-        )
-        clock.advance(16 * 60 - 27)
-        ended = await link.send(0x100, [(0xA1, b"\x21")], SESSION)
+        await link.send(0x101, [(0xA1, b"\x21"), (0xAB, b"\x02\x01\x00")], SESSION)
+    device.set_cloud(True)
+
+    blocked = decode(device.mqtt_frame(0x421))
+    clock.advance(27)
+    device.set_values(ac_input_disable_switch=0)
+    held = decode(device.mqtt_frame(0x421))
+    clock.advance(16 * 60 - 27)
+    ended = decode(device.mqtt_frame(0x421))
 
     states = []
-    for replies in (blocked, held, ended):
-        fields = Parameters.parse(replies[-1].plaintext)
+    for frame in (blocked, held, ended):
+        fields = Parameters.parse(frame.payload)
         states.append(
             (
                 decode_field(fields, "d9", solix_c_gen2.Tou).tou_system_status,
@@ -1088,6 +1104,38 @@ async def test_the_bench_peak_holds_grid_charging_until_the_period_ends() -> Non
             )
         )
     assert states == [(0, 1290, "34"), (1, 0, "34"), (0, 1290, "34")]
+
+
+async def test_over_ble_no_period_activates() -> None:
+    """a1783-control.md "TOU (4090)" condition 2: off the cloud no period is active.
+
+    A unit on BLE is never bound on WiFi too, so Peak at 15:44:27 holds nothing.
+    """
+    device = A1783(clock=ManualClock())
+    device.set_values(**TOU_UNIT)
+    plan = [
+        (0xA1, b"\x21"),
+        (0xA2, b"\x01\x01"),
+        (0xA5, b"\x01\x32"),
+        (0xA6, b"\x01\x01"),
+        (0xA7, bytes.fromhex("04010f10")),
+    ]
+    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
+        link = BleakLink(client, AppClient())
+        await link.start()
+        await link.negotiate(TOKEN)
+        device.press_button()
+        await settle()
+        await link.send(0x022, [(0xA1, UTC_15_44_27), (0xA3, EDT)])
+        await link.send(0x090, plan, SESSION)
+        status = await link.send(0x100, [(0xA1, b"\x21")], SESSION)
+
+    fields = Parameters.parse(status[-1].plaintext)
+    assert (
+        decode_field(fields, "d9", solix_c_gen2.Tou).tou_system_status,
+        decode_field(fields, "a7", solix_c_gen2.AcOutput).ac_input_power,
+        decode_field(fields, "a1", GreedyBytes).hex(),
+    ) == (0, 1290, "31")
 
 
 @pytest.mark.parametrize(
@@ -1122,9 +1170,9 @@ async def test_the_active_period_and_its_charge_hold(
         await settle()
         await link.send(0x022, [(0xA1, utc), (0xA3, EDT)])
         await link.send(0x090, plan, SESSION)
-        status = await link.send(0x100, [(0xA1, b"\x21")], SESSION)
+    device.set_cloud(True)
 
-    fields = Parameters.parse(status[-1].plaintext)
+    fields = Parameters.parse(decode(device.mqtt_frame(0x421)).payload)
     assert (
         decode_field(fields, "d9", solix_c_gen2.Tou).tou_system_status,
         decode_field(fields, "a7", solix_c_gen2.AcOutput).ac_input_power,
@@ -1134,7 +1182,8 @@ async def test_the_active_period_and_its_charge_hold(
 
 def test_the_c1000_gen_2_shares_the_peak_hold() -> None:
     """The A1763 (no ``ce``, MainMcu v1.2.1.1) runs the line's own TOU check."""
-    device = A1763()
+    clock = ManualClock()
+    device = A1763(clock=clock)
     layout = device.layout
     assert layout is not None
     module = device.negotiated_module
@@ -1146,18 +1195,129 @@ def test_the_c1000_gen_2_shares_the_peak_hold() -> None:
         state,
     )
     device.set_values(**peak)
-    push = module.mcu.push(0x421, values=module.values, rtc=10 * 3600)
-    fields = Parameters.parse(push.payload)
+    clock.advance(10 * 3600)
+    device.set_cloud(True)
+    fields = Parameters.parse(decode(device.mqtt_frame(0x421)).payload)
 
     assert decode_field(fields, "d9", solix_c_gen2.Tou).tou_system_status == 1
     assert decode_field(fields, "a7", solix_c_gen2.AcOutput).ac_input_power == 0
 
 
-def test_the_hidden_tou_inputs_are_switches() -> None:
+def test_the_power_stage_input_is_a_switch_and_the_cloud_no_value() -> None:
+    """The cloud is the device's state (``set_cloud``), never a telemetry value."""
     device = A1783()
-    for name, value in (("wifi_online", 2), ("power_stage_ac_input", b"\x01")):
-        with pytest.raises(TypeError):
-            device.set_values(**{name: value})
+    with pytest.raises(TypeError):
+        device.set_values(power_stage_ac_input=b"\x01")
+    for name in ("wifi_online", "cloud"):
+        with pytest.raises(LayoutError):
+            device.set_values(**{name: 1})
+
+
+@pytest.mark.parametrize("model", MODELS)
+def test_no_ble_frame_carries_a_cloud_route_or_message(model: Model) -> None:
+    """a1783-telemetry.md "BLE / cloud exclusivity": no cloud route or ``0503``.
+
+    Every push and reply the MCU sends the module routes ``a1 31``, even with a
+    Peak period due; ``a1 34`` / ``12`` and ``0503`` are MQTT's alone.
+    """
+    clock = ManualClock()
+    device = model(clock=clock)
+    layout = device.layout
+    assert layout is not None
+    module = device.negotiated_module
+    device.set_values(**TOU_UNIT)
+    plan = bytes.fromhex("a10121a2020101a5020132a6020101a70404010018")
+    device.set_values(**layout.state_changes(0x090, plan, module.mcu.state({})))
+    clock.advance(10 * 3600)
+    script = module.mcu
+    frames = [
+        *(
+            script.push(push, values=module.values, rtc=module.rtc)
+            for push in script.pushes
+        ),
+        *(
+            frame
+            for request in script.replies
+            for frame in script.respond(request, values=module.values, rtc=module.rtc)
+        ),
+    ]
+
+    assert solix_c_gen2.MSGTYPE_503 not in {frame.cmd.msgtype for frame in frames}
+    routes = {
+        PUSH_490_LAYOUT.parse(frame.payload).route.route
+        if frame.cmd.msgtype == MSGTYPE_490
+        else Int8ul.parse(Parameters.parse(frame.payload)["a1"]["value"])
+        for frame in frames
+    }
+    assert routes == {0x31}
+
+
+@pytest.mark.parametrize(("msgtype", "route"), MQTT_MESSAGES)
+def test_the_cloud_frame_is_the_ble_one_under_its_mqtt_route(
+    msgtype: int, route: str
+) -> None:
+    """a1783-telemetry.md "MQTT channel routing": the BLE frame under its MQTT ``a1``.
+
+    A plain ``03 01 0f`` frame with no link flags, field for field the one the
+    MCU sends to BLE.
+    """
+    device = A1783()
+    script = device.mcu
+    ble = script.pushes.get(msgtype) or next(
+        frame
+        for frames in script.replies.values()
+        for frame in frames
+        if frame.cmd.msgtype == msgtype
+    )
+    device.set_cloud(True)
+
+    frame = decode(device.mqtt_frame(msgtype))
+
+    ble_fields = Parameters.parse(ble.payload)
+    fields = Parameters.parse(frame.payload)
+    assert (frame.pattern.composer, frame.pattern.channel) == (0x01, 0x0F)
+    assert (frame.cmd.encrypted, frame.cmd.fragmented) == (False, False)
+    assert decode_field(fields, "a1", GreedyBytes).hex() == route
+    assert fields.prefix == ble_fields.prefix
+    assert {tag: Parameter.build(f) for tag, f in fields.items() if tag != "a1"} == {
+        tag: Parameter.build(f) for tag, f in ble_fields.items() if tag != "a1"
+    }
+
+
+def test_the_cloud_frame_needs_the_cloud_and_a_cloud_message() -> None:
+    """``mqtt_frame`` builds only on the cloud, and not ``0490`` (HTTPS) or unknowns."""
+    device = A1783()
+    with pytest.raises(RuntimeError, match="set_cloud"):
+        device.mqtt_frame(0x421)
+    device.set_cloud(True)
+    for msgtype in (0x490, 0x999):
+        with pytest.raises(LayoutError, match=f"{msgtype:04x}"):
+            device.mqtt_frame(msgtype)
+    with pytest.raises(LayoutError, match="0425"):
+        A1763().mcu.mqtt(0x425)
+
+
+@pytest.mark.parametrize("model", MODELS)
+def test_the_0503_totals_are_the_doc_example_and_settable(model: Model) -> None:
+    """a1783-telemetry.md "0503": cloud only, ``a1 12``; the values set show next."""
+    device = model()
+    device.set_cloud(True)
+
+    seeded = device.mqtt_frame(0x503)
+    device.set_values(peak_time=1850, battery_to_load_energy=211, time_save=7)
+    totals = Parameters.parse(decode(device.mqtt_frame(0x503)).payload)
+
+    assert seeded == MQTT_0503
+    assert solix_c_gen2.MSGTYPE_503 not in device.mcu.pushes
+    assert decode_field(totals, "a2", solix_c_gen2.TouTotals) == {
+        "solar_to_battery_energy": 0,
+        "grid_to_battery_energy": 0,
+        "battery_to_load_energy": 211,
+        "peak_time": 1850,
+        "mid_peak_time": 130,
+        "off_peak_time": 5230,
+    }
+    assert decode_field(totals, "a3", ui(4)) == 7
 
 
 async def test_a_count_over_six_periods_is_refused_and_telemetry_builds() -> None:

@@ -30,7 +30,7 @@ The C Gen 2 models share one display-board build, so their identity-free replies
 
 | file | packaged from | other sources |
 |---|---|---|
-| `solix_c_gen2.json` | `0490`: first-party A1783 captures; `0489`, `0857`, `085e`, `0863`, `0872`, `0889`–`0892`, `0901`–`0904`: recorded across the four models (first-party A1783 captures and the A1763 / A1785 records in their rows above), identity-free, transaction id replaced | the same replies from the A1763 and A1785: their rows above |
+| `solix_c_gen2.json` | `0490`: first-party A1783 captures; `0489`, `0857`, `085e`, `0863`, `0872`, `0889`–`0892`, `0901`–`0904`: recorded across the four models (first-party A1783 captures and the A1763 / A1785 records in their rows above), identity-free, transaction id replaced; `0503` (cloud only, `a1 12`): a first-party A1783 MQTT capture of 2026-10-21, carrying no identifier, its Time Save replaced by the packaged fixed clock | the same replies from the A1763 and A1785: their rows above |
 
 ## Not yet packaged
 

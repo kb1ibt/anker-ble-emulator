@@ -114,9 +114,11 @@ def parse_request(msgtype: int, payload: bytes) -> Fields:
 #: from (low nibble).
 ROUTE_LAYOUT = BitStruct("destination" / Nibble, "source" / Nibble)
 #: Route nibbles: the BLE client, the MCU, the app (a reply's destination), the
-#: cloud's ``param_info`` topic, and the HTTPS logging channel.
+#: cloud's ``state_info`` and ``param_info`` topics (as sources), and the HTTPS
+#: logging channel.
 ROUTE_BLE = 0x1
 ROUTE_MCU = 0x2
+ROUTE_STATE_INFO = 0x2
 ROUTE_APP = 0x3
 ROUTE_PARAM_INFO = 0x4
 ROUTE_HTTPS_LOG = 0xA

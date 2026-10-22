@@ -60,8 +60,14 @@ from anker_ble_emulator.layouts import (
     fitted,
     ui,
 )
-from anker_ble_emulator.mcu import RTC
-from anker_ble_emulator.messages import ROUTE_APP, ROUTE_LAYOUT, ROUTE_PARAM_INFO
+from anker_ble_emulator.mcu import CLOUD, RTC
+from anker_ble_emulator.messages import (
+    ROUTE_APP,
+    ROUTE_BLE,
+    ROUTE_LAYOUT,
+    ROUTE_PARAM_INFO,
+    ROUTE_STATE_INFO,
+)
 from anker_ble_emulator.parameters import (
     FieldGroup,
     FieldSpec,
@@ -74,6 +80,7 @@ from anker_ble_emulator.parameters import (
     decode_request,
     flat,
     leaf_zeros,
+    one_field,
     struct_zeros,
 )
 
@@ -712,12 +719,31 @@ CLOCK_READ_FIELDS: dict[str, FieldSpec] = {
     "a2": (ClockScreenHead, 0x04, CLOCK_HEAD_ZEROS),
     "a3": (Struct(LCD_THEME_NAME / GreedyBytes), 0x04, {LCD_THEME_NAME: b""}),
 }
+#: ``0503`` energy and TOU-time totals, a push only to the cloud
+#: (``td_stats_send``): ``a2`` the main pack's lifetime Wh and the seconds in
+#: each active TOU type, ``a3`` the Time Save epoch. a1783-telemetry.md
+#: "0503"; the app logs none, so the names are the firmware's ``[touWh]`` /
+#: ``[touTs]`` labels, the periods under the app's type names.
+MSGTYPE_503 = 0x503
+TouTotals = Struct(
+    "solar_to_battery_energy" / ui(4),
+    "grid_to_battery_energy" / ui(4),
+    "battery_to_load_energy" / ui(4),
+    "peak_time" / ui(4),
+    "mid_peak_time" / ui(4),
+    "off_peak_time" / ui(4),
+)
+TOU_TOTALS_FIELDS: dict[str, FieldSpec] = {
+    "a2": (TouTotals, TYPE_BIN, struct_zeros(TouTotals)),
+    "a3": one_field("time_save", ui(4), TYPE_VAR),
+}
 #: Typed tags of every message but ``0421``, whose table is per layout.
 MESSAGE_FIELDS: dict[int, Mapping[str, FieldSpec]] = {
     MSGTYPE_425: EVENT_FIELDS,
     MSGTYPE_489: OTA_FIELDS,
     MSGTYPE_889: OTA_FIELDS,
     MSGTYPE_892: CLOCK_READ_FIELDS,
+    MSGTYPE_503: TOU_TOTALS_FIELDS,
 }
 
 
@@ -900,17 +926,32 @@ TOU_MIN_MARGIN = 5
 AC_INPUT_DISABLE_GATE_VERSION = 1216
 #: One plan record: ``{type, start hour, end hour}``, whole hours.
 TouRecord = Struct("type" / ui(1), "start_hour" / ui(1), "end_hour" / ui(1))
-#: The app's name for the device being on WiFi to the cloud; set, it stands
-#: for TOU condition 2 (bound and on WiFi) and routes ``param_info``.
-WIFI_ONLINE = "wifi_online"
 #: TOU condition 3, the power stage's AC input report (``0x2000054a`` bit 0),
 #: which no ``0421`` field carries; unset, it reads reported. Descriptive name.
 POWER_STAGE_AC_INPUT = "power_stage_ac_input"
-#: The data-read replies and pushes whose ``a1`` source follows WiFi:
-#: a1783-telemetry.md "Data-read replies and telemetry pushes ride param_info".
+#: The data-read replies and telemetry pushes that ride ``param_info``:
+#: a1783-telemetry.md "MQTT channel routing".
 PARAM_INFO_MESSAGES = frozenset(
     {MSGTYPE_421, MSGTYPE_900, MSGTYPE_489, MSGTYPE_889, MSGTYPE_892}
 )
+#: The ``a1`` MainMcu gives what it publishes to MQTT, bound and on WiFi:
+#: ``34`` on ``param_info``, ``12`` on the ``state_info`` events (``0425``,
+#: ``0503``). a1783-telemetry.md "MQTT channel routing".
+PARAM_INFO_ROUTE = ROUTE_LAYOUT.build(
+    Container(destination=ROUTE_APP, source=ROUTE_PARAM_INFO)
+)
+STATE_INFO_ROUTE = ROUTE_LAYOUT.build(
+    Container(destination=ROUTE_BLE, source=ROUTE_STATE_INFO)
+)
+MQTT_ROUTES = MappingProxyType(
+    {
+        **dict.fromkeys(PARAM_INFO_MESSAGES, PARAM_INFO_ROUTE),
+        MSGTYPE_425: STATE_INFO_ROUTE,
+        MSGTYPE_503: STATE_INFO_ROUTE,
+    }
+)
+#: The pushes MainMcu sends only to the cloud.
+CLOUD_PUSHES = (MSGTYPE_503,)
 
 
 def _check_switch(name: str, value: Value) -> None:
@@ -956,7 +997,7 @@ def _active_period(params: ParameterDict, values: Mapping[str, Value]) -> int:
     """
     tou = decode_field(params, "d9", Tou)
     on = tou.backup_mode == TOU_MODE_ON
-    online = values.get(WIFI_ONLINE, 0) and values.get(POWER_STAGE_AC_INPUT, 1)
+    online = values.get(CLOUD) and values.get(POWER_STAGE_AC_INPUT, 1)
     if not on or not online or _alternator_attached(params):
         return TouPeriodType.NONE
     if _ac_input_disabled(params):
@@ -1275,16 +1316,14 @@ class CGen2Layout(TableLayout):
     def names(self, msgtype: int) -> frozenset[str]:
         """Return the names ``set_values()`` can reach.
 
-        ``0425`` adds its SoC byte, a message carrying ``d9`` the stored plan and
-        the power stage's AC input, and a ``param_info`` message the WiFi state.
+        ``0425`` adds its SoC byte, and a message carrying ``d9`` the stored plan
+        and the power stage's AC input.
         """
         names = set(super().names(msgtype))
         if msgtype == MSGTYPE_425:
             names.add(EVENT_SOC)
         if "d9" in self.FIELDS.get(msgtype, {}):
             names |= {TOU_TABLE, POWER_STAGE_AC_INPUT}
-        if msgtype in PARAM_INFO_MESSAGES:
-            names.add(WIFI_ONLINE)
         return frozenset(names)
 
     def read(self, msgtype: int, payload: bytes) -> dict[str, Value]:
@@ -1319,7 +1358,7 @@ class CGen2Layout(TableLayout):
         Raises:
             ConstructError: If a value doesn't fit its field.
             TypeError: If the stored plan isn't its count and record buffer, or
-                a hidden on/off input isn't 0 or 1.
+                the power stage's AC input isn't 0 or 1.
 
         """
         given = values or {}
@@ -1327,9 +1366,8 @@ class CGen2Layout(TableLayout):
             ui(1).build(given[EVENT_SOC])
         if TOU_TABLE in given:
             _check_tou_table(given[TOU_TABLE])
-        for name in (WIFI_ONLINE, POWER_STAGE_AC_INPUT):
-            if name in given:
-                _check_switch(name, given[name])
+        if POWER_STAGE_AC_INPUT in given:
+            _check_switch(POWER_STAGE_AC_INPUT, given[POWER_STAGE_AC_INPUT])
         return super().build(msgtype, values)
 
     def finish(
@@ -1338,9 +1376,8 @@ class CGen2Layout(TableLayout):
         """Give a grid-loss ``0425`` its 1-byte SoC ``a3`` and no ``a4``.
 
         A ``d9`` takes its ``tou_periods`` from the stored plan and, with the RTC
-        known, its active type, which holds grid charging (``a7`` AC input) at 0
-        W in Peak and Mid-Peak; on WiFi a ``param_info`` message routes ``a1``
-        ``0x34``, else as recorded (``0x31``).
+        known, its active type (0 off the cloud), which holds grid charging
+        (``a7`` AC input) at 0 W in Peak and Mid-Peak.
         """
         if msgtype == MSGTYPE_425:
             _shape_grid_loss(params, values)
@@ -1357,11 +1394,6 @@ class CGen2Layout(TableLayout):
             if _charge_held(params, period):
                 ac, ac_type, _ = fields["a7"]
                 self._encode_field(params, "a7", ac, ac_type, ac_input_power=0)
-        if msgtype in PARAM_INFO_MESSAGES and values.get(WIFI_ONLINE):
-            route = ROUTE_LAYOUT.build(
-                Container(destination=ROUTE_APP, source=ROUTE_PARAM_INFO)
-            )
-            params["a1"] = ParameterContainer(key=b"\xa1", type=None, value=route)
 
 
 class CGen2ExpansionLayout(CGen2Layout):

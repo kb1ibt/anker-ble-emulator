@@ -15,7 +15,7 @@ from construct import Bytes, ByteSwapped, Int8ub, Optional, Struct
 
 from anker_ble_emulator.c_g2_490 import CG2_490
 from anker_ble_emulator.clock import MonotonicClock
-from anker_ble_emulator.frame import CHANNEL_SESSION, RESPONSE
+from anker_ble_emulator.frame import CHANNEL_SESSION, RESPONSE, encode
 from anker_ble_emulator.layouts import LayoutError, LayoutProtocol
 from anker_ble_emulator.legacy import LegacyModule, LegacyProfile
 from anker_ble_emulator.mcu import Burst, McuScript, mcu_frame
@@ -170,6 +170,9 @@ class Profile:
             directly in its module.
         burst: The push a trigger repeats on a timer, where the MCU has one.
         factory_reset: The request msgtype that factory-resets the device.
+        cloud_pushes: Msgtypes the MCU sends only to the cloud, never to BLE.
+        mqtt_routes: The ``a1`` value of each message the MCU publishes to
+            MQTT on the cloud, by msgtype; none where it isn't modeled.
 
     """
 
@@ -198,6 +201,8 @@ class Profile:
     layout: LayoutProtocol | None = None
     burst: Burst | None = None
     factory_reset: int | None = None
+    cloud_pushes: tuple[int, ...] = ()
+    mqtt_routes: Mapping[int, bytes] = field(default_factory=dict)
 
     def frames(self) -> dict[int, bytes]:
         """Return the recorded cleartext payloads by msgtype."""
@@ -256,6 +261,11 @@ class Profile:
             commands=self.known_commands,
             past_table_status=self.past_table_status,
             factory_reset=self.factory_reset,
+            cloud_pushes={
+                msgtype: mcu_frame(msgtype, frames[msgtype], channel)
+                for msgtype in self.cloud_pushes
+            },
+            mqtt_routes=self.mqtt_routes,
         )
 
 
@@ -576,6 +586,22 @@ class EmulatedDevice:
         self.cloud = on
         if on:
             self.drop()
+
+    def mqtt_frame(self, msgtype: int) -> bytes:
+        """Return the plain ``ff09`` frame the device publishes to MQTT as ``msgtype``.
+
+        Built from the device's state on the cloud; nothing is sent on a link.
+
+        Raises:
+            RuntimeError: If the device isn't on the cloud (``set_cloud``).
+            LayoutError: If it publishes no such message to MQTT.
+
+        """
+        if not self.cloud:
+            msg = f"{self.pn} publishes to MQTT only on the cloud (set_cloud)"
+            raise RuntimeError(msg)
+        module = self.negotiated_module
+        return encode(module.mcu.mqtt(msgtype, values=module.values, rtc=module.rtc))
 
     def _emit(self, output: Output) -> None:
         if self._listener is not None:
