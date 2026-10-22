@@ -78,6 +78,9 @@ class LayoutProtocol(Protocol):
     def publishes(self, msgtype: int, payload_of: Callable[[int], bytes]) -> bool:
         """Whether ``msgtype`` publishes to MQTT now; ``payload_of`` builds others."""
 
+    def sends(self, msgtype: int, values: Mapping[str, Value]) -> bool:
+        """Whether the MCU sends its push of ``msgtype`` now, given the set values."""
+
 
 #: Type bytes, every code the firmware writes (names from anker-solix-api's
 #: ``DeviceHexDataTypes``): string, u8, u16, 4 bytes, a raw block, and a

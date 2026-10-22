@@ -50,6 +50,7 @@ from construct import (
     this,
 )
 
+from anker_ble_emulator.c_g2_490 import MSGTYPE_490
 from anker_ble_emulator.layouts import (
     STATUS_ACCEPTED,
     TYPE_BIN,
@@ -750,11 +751,12 @@ MESSAGE_FIELDS: dict[int, Mapping[str, FieldSpec]] = {
 # --- Commands (fid 0x0f) ------------------------------------------------------
 # PiField/docs/re/a1783-control.md "Command map", "Groups 4101-4103", "TOU
 # (4090)", "Clock screen (4091 -> da)" and "4104": every command below has a
-# captured or firmware-documented payload shape. 4051 (restore defaults),
-# 4057 (streaming countdown -- a module timer, not a telemetry field),
-# 405e (backup-plan group: which table a plan lands in and when its window
-# goes active depend on the clock), 4063/4064 (BLE OTA) and 4072 (daily
-# update window) stay unanswered rather than guessed.
+# captured or firmware-documented payload shape. 4057 sets only what its stop
+# is seen to do, the device-point switch off; its streaming countdown is a
+# module timer, not a telemetry field. 405e (backup-plan group: which table a
+# plan lands in and when its window goes active depend on the clock),
+# 4063/4064 (BLE OTA) and 4072 (daily update window) stay unanswered rather
+# than guessed.
 
 
 #: ``4101`` AC group: tag -> (the field it sets, its codec).
@@ -929,6 +931,13 @@ TouRecord = Struct("type" / ui(1), "start_hour" / ui(1), "end_hour" / ui(1))
 #: TOU condition 3, the power stage's AC input report (``0x2000054a`` bit 0),
 #: which no ``0421`` field carries; unset, it reads reported. Descriptive name.
 POWER_STAGE_AC_INPUT = "power_stage_ac_input"
+#: The module's cloud device-point switch (``device_get_device_point_switch``),
+#: which the ``0490`` push needs on; no field carries it, and the app has no
+#: name for it. Unset, it reads on. a1783-telemetry.md "When the display board
+#: posts c490".
+DEVICE_POINT_SWITCH = "device_point_switch"
+#: ``4057 a2``: 0 stops the realtime stream, 1 starts it.
+REALTIME_STOP = 0
 #: The data-read replies and telemetry pushes that ride ``param_info``:
 #: a1783-telemetry.md "MQTT channel routing".
 PARAM_INFO_MESSAGES = frozenset(
@@ -1269,9 +1278,22 @@ def _get_all_device_info(request: ParameterDict) -> dict[str, Value] | None:
     }
 
 
+def _realtime_trigger(request: ParameterDict) -> dict[str, Value] | None:
+    """Return the device-point switch off for a ``4057`` stop (``a2`` 0).
+
+    A start, or no ``a2``, sets nothing: re-sends don't bring the ``0490`` back
+    (a1783-telemetry.md "What stops and restores c490"). ``a3`` is the
+    module's countdown.
+    """
+    if "a2" in request and decode_field(request, "a2", ui(1)) == REALTIME_STOP:
+        return {DEVICE_POINT_SWITCH: 0}
+    return {}
+
+
 #: Every command the line answers with real validation, by msgtype.
 LINE_COMMANDS: dict[int, Callable[[ParameterDict], dict[str, Value] | None]] = {
     0x051: _restore_defaults,
+    0x057: _realtime_trigger,
     0x065: _get_log_size,
     0x066: _get_log_chunk,
     0x090: _set_tou_system_params,
@@ -1316,15 +1338,29 @@ class CGen2Layout(TableLayout):
     def names(self, msgtype: int) -> frozenset[str]:
         """Return the names ``set_values()`` can reach.
 
-        ``0425`` adds its SoC byte, and a message carrying ``d9`` the stored plan
-        and the power stage's AC input.
+        ``0425`` adds its SoC byte, a message carrying ``d9`` the stored plan
+        and the power stage's AC input, and ``0490`` the device-point switch.
         """
         names = set(super().names(msgtype))
         if msgtype == MSGTYPE_425:
             names.add(EVENT_SOC)
         if "d9" in self.FIELDS.get(msgtype, {}):
             names |= {TOU_TABLE, POWER_STAGE_AC_INPUT}
+        if msgtype == MSGTYPE_490:
+            names.add(DEVICE_POINT_SWITCH)
         return frozenset(names)
+
+    def locate(self, name: str) -> tuple[int, ...]:
+        """Return the messages ``name`` reaches; the device-point switch, ``0490``."""
+        if name == DEVICE_POINT_SWITCH:
+            return (MSGTYPE_490,)
+        return super().locate(name)
+
+    def sends(self, msgtype: int, values: Mapping[str, Value]) -> bool:
+        """Whether a push goes out now: ``0490`` only with the device-point switch."""
+        if msgtype == MSGTYPE_490:
+            return bool(values.get(DEVICE_POINT_SWITCH, 1))
+        return super().sends(msgtype, values)
 
     def read(self, msgtype: int, payload: bytes) -> dict[str, Value]:
         """Return the named values ``payload`` carries and its ``d9``'s stored plan."""
@@ -1358,7 +1394,8 @@ class CGen2Layout(TableLayout):
         Raises:
             ConstructError: If a value doesn't fit its field.
             TypeError: If the stored plan isn't its count and record buffer, or
-                the power stage's AC input isn't 0 or 1.
+                the power stage's AC input or the device-point switch isn't 0
+                or 1.
 
         """
         given = values or {}
@@ -1366,8 +1403,9 @@ class CGen2Layout(TableLayout):
             ui(1).build(given[EVENT_SOC])
         if TOU_TABLE in given:
             _check_tou_table(given[TOU_TABLE])
-        if POWER_STAGE_AC_INPUT in given:
-            _check_switch(POWER_STAGE_AC_INPUT, given[POWER_STAGE_AC_INPUT])
+        for switch in (POWER_STAGE_AC_INPUT, DEVICE_POINT_SWITCH):
+            if switch in given:
+                _check_switch(switch, given[switch])
         return super().build(msgtype, values)
 
     def publishes(self, msgtype: int, payload_of: Callable[[int], bytes]) -> bool:

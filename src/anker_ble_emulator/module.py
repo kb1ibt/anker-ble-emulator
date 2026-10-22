@@ -421,12 +421,16 @@ class Module:
     def push(self, msgtype: int) -> Output:
         """Send the MCU's scripted push of ``msgtype`` if the link is authorized.
 
+        Nothing goes out while the layout holds the push back.
+
         Args:
             msgtype: The push's 12-bit message type.
 
         """
-        link = self._link
+        link, layout = self._link, self.mcu.layout
         if link is None or not link.authorized:
+            return Output()
+        if layout is not None and not layout.sends(msgtype, self.values):
             return Output()
         return self._relay(
             link, [self.mcu.push(msgtype, values=self.values, rtc=self.rtc)]

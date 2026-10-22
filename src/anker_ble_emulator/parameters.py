@@ -418,6 +418,14 @@ class TableLayout(StructFieldLayout, CommandDispatchLayout):
         """Whether ``msgtype`` publishes to MQTT now: always."""
         return True
 
+    def sends(
+        self,
+        msgtype: int,  # noqa: ARG002  # every push goes out on an authorized link
+        values: Mapping[str, Value],  # noqa: ARG002
+    ) -> bool:
+        """Whether the MCU sends its push of ``msgtype`` now: always."""
+        return True
+
     def read(self, msgtype: int, payload: bytes) -> dict[str, Value]:
         """Return the named values ``payload`` carries."""
         fields = self.FIELDS.get(msgtype, {})
@@ -517,6 +525,14 @@ class ScalarFieldLayout:
         payload_of: Callable[[int], bytes],  # noqa: ARG002
     ) -> bool:
         """Whether ``msgtype`` publishes to MQTT now: always."""
+        return True
+
+    def sends(
+        self,
+        msgtype: int,  # noqa: ARG002  # every push goes out on an authorized link
+        values: Mapping[str, Value],  # noqa: ARG002
+    ) -> bool:
+        """Whether the MCU sends its push of ``msgtype`` now: always."""
         return True
 
     def read(self, msgtype: int, payload: bytes) -> dict[str, Value]:

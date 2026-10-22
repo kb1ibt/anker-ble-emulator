@@ -234,6 +234,82 @@ def test_every_model_pushes_the_series_0490(model: Model) -> None:
 
 
 @pytest.mark.parametrize("model", MODELS)
+async def test_the_device_point_switch_gates_only_the_0490(model: Model) -> None:
+    """a1783-telemetry.md "When the display board posts c490": the switch on.
+
+    On by default; off holds back the ``0490`` push and no other; on again
+    brings it back.
+    """
+    device = model()
+    pushed = []
+    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
+        link = BleakLink(client, AppClient())
+        await link.start()
+        await link.negotiate(TOKEN)
+        device.press_button()
+        await settle()
+        for switch in (None, 0, 1):
+            if switch is not None:
+                device.set_values(device_point_switch=switch)
+            start = len(link.replies)
+            device.push(0x490)
+            device.push(0x421)
+            await settle()
+            pushed.append([reply.frame.cmd.msgtype for reply in link.replies[start:]])
+
+    assert pushed == [[0x490, 0x421], [0x421], [0x490, 0x421]]
+
+
+@pytest.mark.parametrize("model", MODELS)
+async def test_a_4057_stop_holds_back_the_0490_and_a_start_leaves_it(
+    model: Model,
+) -> None:
+    """a1783-telemetry.md "What stops and restores c490": ``4057`` ``a2 = 0``.
+
+    A bare ``4057`` and a later start (``a2 = 1``) leave the switch as it was;
+    each is acked with the recorded ``4857``.
+    """
+    device = model()
+    requests = [
+        [(0xA1, b"\x21")],
+        [(0xA1, b"\x21"), (0xA2, b"\x01\x00")],
+        [(0xA1, b"\x21"), (0xA2, b"\x01\x01"), (0xA3, bytes.fromhex("022c01"))],
+    ]
+    acks, pushed = [], []
+    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
+        link = BleakLink(client, AppClient())
+        await link.start()
+        await link.negotiate(TOKEN)
+        device.press_button()
+        await settle()
+        for fields in requests:
+            replies = await link.send(0x057, fields, SESSION)
+            acks.append([(cmd_hex(reply.frame), reply.plaintext) for reply in replies])
+            start = len(link.replies)
+            device.push(0x490)
+            device.push(0x421)
+            await settle()
+            pushed.append([reply.frame.cmd.msgtype for reply in link.replies[start:]])
+
+    assert acks == [[("4857", bytes.fromhex("00a10131"))]] * 3
+    assert pushed == [[0x490, 0x421], [0x421], [0x421]]
+
+
+@pytest.mark.parametrize("model", MODELS)
+@pytest.mark.parametrize("value", [2, b"\x01"])
+def test_the_device_point_switch_is_a_0490_switch(model: Model, value: Value) -> None:
+    """A hidden 0/1 input on the ``0490``, which no field carries."""
+    device = model()
+    layout = device.layout
+    assert layout is not None
+
+    assert layout.locate("device_point_switch") == (MSGTYPE_490,)
+    assert "device_point_switch" in layout.names(MSGTYPE_490)
+    with pytest.raises(TypeError, match="device_point_switch"):
+        device.set_values(device_point_switch=value)
+
+
+@pytest.mark.parametrize("model", MODELS)
 def test_recorded_frames_are_routed_to_ble(model: Model) -> None:
     device = model()
     script = device.negotiated_module.mcu
