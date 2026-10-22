@@ -924,6 +924,11 @@ TOU_MODE_ON = 1
 HELD_PERIODS = frozenset({TouPeriodType.PEAK, TouPeriodType.MID_PEAK})
 #: The threshold's margin over the discharge limit: max(reserve, min + 5).
 TOU_MIN_MARGIN = 5
+#: The main pack's displayed SoC, the hold compares (c490 ``.14.18``, 0.1 %).
+PACK_SOC = "pack_soc"
+#: ``pack_soc`` steps per whole percent, and its full scale (100.0 %).
+SOC_STEPS_PER_PERCENT = 10
+SOC_FULL = 1000
 #: The MainMcu build (v1.2.1.6) from which Battery-Only Power blocks TOU.
 AC_INPUT_DISABLE_GATE_VERSION = 1216
 #: One plan record: ``{type, start hour, end hour}``, whole hours.
@@ -1019,17 +1024,21 @@ def _active_period(params: ParameterDict, values: Mapping[str, Value]) -> int:
     return TouPeriodType.NONE
 
 
-def _charge_held(params: ParameterDict, period: int) -> bool:
-    """Whether ``period`` holds grid charging off at the battery's SoC.
+def _charge_held(
+    params: ParameterDict, values: Mapping[str, Value], period: int
+) -> bool:
+    """Whether ``period`` holds grid charging off at the main pack's SoC.
 
-    Peak and Mid-Peak hold while SoC >= max(reserve, min + 5). Assumed: the SoC
-    is ``a5``'s whole-percent ``battery_level``, with no +0.3 % hysteresis.
+    Peak and Mid-Peak hold while c490 ``.14.18`` (the main pack, 0.1 %) >=
+    min(100.0 %, max(reserve, min + 5)) (a1783-control.md "TOU" effects).
+    Assumed: the main pack only, and no +0.3 % after a pass with AC current.
     """
     if period not in HELD_PERIODS:
         return False
     tou = decode_field(params, "d9", Tou)
-    threshold = max(tou.tou_reserve_power, tou.discharge_limit_value + TOU_MIN_MARGIN)
-    return bool(decode_field(params, "a5", Battery).battery_level >= threshold)
+    floor = max(tou.tou_reserve_power, tou.discharge_limit_value + TOU_MIN_MARGIN)
+    threshold = min(SOC_FULL, floor * SOC_STEPS_PER_PERCENT)
+    return bool(int(values[PACK_SOC]) >= threshold)
 
 
 #: ``4091`` tag -> (the ``da`` leaf it writes, its width): a1783-control.md
@@ -1338,14 +1347,15 @@ class CGen2Layout(TableLayout):
     def names(self, msgtype: int) -> frozenset[str]:
         """Return the names ``set_values()`` can reach.
 
-        ``0425`` adds its SoC byte, a message carrying ``d9`` the stored plan
-        and the power stage's AC input, and ``0490`` the device-point switch.
+        ``0425`` adds its SoC byte, a message carrying ``d9`` the stored plan,
+        the power stage's AC input and the main pack's c490 SoC its charge hold
+        reads, and ``0490`` the device-point switch.
         """
         names = set(super().names(msgtype))
         if msgtype == MSGTYPE_425:
             names.add(EVENT_SOC)
         if "d9" in self.FIELDS.get(msgtype, {}):
-            names |= {TOU_TABLE, POWER_STAGE_AC_INPUT}
+            names |= {TOU_TABLE, POWER_STAGE_AC_INPUT, PACK_SOC}
         if msgtype == MSGTYPE_490:
             names.add(DEVICE_POINT_SWITCH)
         return frozenset(names)
@@ -1440,7 +1450,7 @@ class CGen2Layout(TableLayout):
             codec, type_byte, _ = tou
             period = _active_period(params, values)
             self._encode_field(params, "d9", codec, type_byte, tou_system_status=period)
-            if _charge_held(params, period):
+            if _charge_held(params, values, period):
                 ac, ac_type, _ = fields["a7"]
                 self._encode_field(params, "a7", ac, ac_type, ac_input_power=0)
 

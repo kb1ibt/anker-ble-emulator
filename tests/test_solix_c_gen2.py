@@ -71,9 +71,9 @@ UTC_16_21_00 = bytes.fromhex("ac1ed96a")
 UTC_16_26_00 = bytes.fromhex("d81fd96a")
 EDT = bytes.fromhex("40380000")
 #: The bench unit: mains in at 1290 W with Battery-Only Power off, main pack
-#: 95 %, min SoC 5 %.
+#: 95.0 % (c490 ``pack_soc``), min SoC 5 %.
 TOU_UNIT = {
-    "battery_level": 95,
+    "pack_soc": 950,
     "discharge_limit_value": 5,
     "ac_input_status": 1,
     "ac_input_power": 1290,
@@ -122,13 +122,33 @@ TOU_HOLD_CASES = [
         "01",
         "010f10",
         UTC_15_44_27,
-        {"battery_level": 40},
+        {"pack_soc": 400},
         (1, 1290, "34"),
         id="doc-gate-below-threshold",
     ),
     pytest.param(
         "01", "020f10", UTC_15_44_27, {}, (2, 0, "34"), id="doc-gate-mid-peak"
     ),
+]
+#: (values over ``TOU_UNIT``, None to leave one unset; the ``4090`` reserve) ->
+#: the cloud ``0421``'s ``a7`` AC input power in an active Peak period, held
+#: while ``pack_soc`` >= T = min(1000, 10 x max(reserve, min + 5)).
+PACK_SOC_HOLD_CASES = [
+    pytest.param({"pack_soc": 499}, 50, 1290, id="below-500"),
+    pytest.param({"pack_soc": 500}, 50, 0, id="at-500"),
+    pytest.param({"pack_soc": None, "battery_level": 0}, 50, 0, id="battery-level-low"),
+    pytest.param(
+        {"pack_soc": 499, "battery_level": 100}, 50, 1290, id="battery-level-high"
+    ),
+    pytest.param(
+        {"pack_soc": 149, "discharge_limit_value": 10}, 5, 1290, id="below-min-plus-5"
+    ),
+    pytest.param(
+        {"pack_soc": 150, "discharge_limit_value": 10}, 5, 0, id="at-min-plus-5"
+    ),
+    pytest.param({"pack_soc": 999}, 100, 1290, id="below-1000"),
+    pytest.param({"pack_soc": 1000}, 100, 0, id="at-1000"),
+    pytest.param({"pack_soc": 1000}, 0xFF, 0, id="the-1000-cap"),
 ]
 #: What the unit publishes to MQTT on the cloud, and its ``a1``
 #: (a1783-telemetry.md "MQTT channel routing").
@@ -1280,6 +1300,36 @@ def test_the_c1000_gen_2_shares_the_peak_hold() -> None:
 
     assert decode_field(fields, "d9", solix_c_gen2.Tou).tou_system_status == 1
     assert decode_field(fields, "a7", solix_c_gen2.AcOutput).ac_input_power == 0
+
+
+@pytest.mark.parametrize(("values", "reserve", "ac_input_power"), PACK_SOC_HOLD_CASES)
+def test_the_peak_hold_compares_the_main_pack_soc(
+    values: dict[str, Value | None], reserve: int, ac_input_power: int
+) -> None:
+    """a1783-control.md "TOU" effects: held while c490 ``pack_soc`` >= T, at 0.1 %.
+
+    ``0421 a5`` ``battery_level`` plays no part; unset, ``pack_soc`` is the
+    recorded ``0490``'s (1000).
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    layout = device.layout
+    assert layout is not None
+    module = device.negotiated_module
+    unit = {**TOU_UNIT, **values}
+    device.set_values(**{name: v for name, v in unit.items() if v is not None})
+    plan = f"a10121a2020101a50201{reserve:02x}a6020101a70404{TOU_ALL_DAY}"
+    state = module.mcu.state({})
+    device.set_values(**layout.state_changes(0x090, bytes.fromhex(plan), state))
+    clock.advance(10 * 3600)
+    device.set_cloud(True)
+
+    fields = Parameters.parse(decode(device.mqtt_frame(0x421)).payload)
+    assert decode_field(fields, "d9", solix_c_gen2.Tou).tou_system_status == 1
+    assert (
+        decode_field(fields, "a7", solix_c_gen2.AcOutput).ac_input_power
+        == ac_input_power
+    )
 
 
 def test_the_power_stage_input_is_a_switch_and_the_cloud_no_value() -> None:

@@ -249,8 +249,16 @@ class McuScript:
         return layout.update(
             msgtype,
             self._mqtt_source(msgtype).payload,
-            {**named, RTC: rtc, CLOUD: True},
+            {**self._recorded_490(names), **named, RTC: rtc, CLOUD: True},
         )
+
+    def _recorded_490(self, names: frozenset[str]) -> dict[str, Value]:
+        """Return the recorded ``0490``'s values among ``names``: what a frame reads."""
+        recorded, push_490 = self.pushes.get(MSGTYPE_490), self.push_490
+        if push_490 is None or recorded is None or names.isdisjoint(push_490.fields):
+            return {}
+        values = push_490.read(recorded.payload)
+        return {name: value for name, value in values.items() if name in names}
 
     def _mqtt_source(self, msgtype: int) -> Frame:
         """Return the recorded push or reply ``msgtype`` is built from.
@@ -275,7 +283,8 @@ class McuScript:
     ) -> Frame:
         """Return ``frame`` with the named values set.
 
-        A frame the layout rebuilds also gets the RTC, under ``RTC``, when known.
+        A frame the layout rebuilds also gets the RTC, under ``RTC``, when known,
+        and the recorded ``0490``'s value of any ``0490`` name it reads but isn't set.
         """
         msgtype = frame.cmd.msgtype
         if not values:
@@ -287,6 +296,7 @@ class McuScript:
             named = {name: value for name, value in values.items() if name in names}
             if not named:
                 return frame
+            named = {**self._recorded_490(names), **named}
             if rtc is not None:
                 named[RTC] = rtc
             payload = self.layout.update(msgtype, frame.payload, named)
