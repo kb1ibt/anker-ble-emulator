@@ -428,7 +428,9 @@ class Module:
         link = self._link
         if link is None or not link.authorized:
             return Output()
-        return self._relay(link, [self.mcu.push(msgtype, values=self.values)])
+        return self._relay(
+            link, [self.mcu.push(msgtype, values=self.values, rtc=self.rtc)]
+        )
 
     def check_pushes(self) -> Output:
         """Send the MCU's burst pushes due by now, on an authorized link.
@@ -444,7 +446,7 @@ class Module:
             return Output()
         frames = []
         while link.burst_left and self.clock.now() >= link.burst_due:
-            frames.append(self.mcu.push(burst.push, values=self.values))
+            frames.append(self.mcu.push(burst.push, values=self.values, rtc=self.rtc))
             link.burst_left -= 1
             link.burst_due += burst.period
         return self._relay(link, frames)
@@ -799,7 +801,7 @@ class Module:
             link.drop_at = self.clock.now() + FACTORY_RESET_DELAY
         burst = self.mcu.burst
         if burst is not None and frame.cmd.msgtype == burst.trigger:
-            frames.append(self.mcu.push(burst.push, values=self.values))
+            frames.append(self.mcu.push(burst.push, values=self.values, rtc=self.rtc))
             link.burst_left = burst.count - 1
             link.burst_due = self.clock.now() + burst.period
         return self._relay(link, frames)

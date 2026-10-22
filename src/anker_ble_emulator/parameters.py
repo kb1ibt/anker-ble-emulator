@@ -409,6 +409,13 @@ class TableLayout(StructFieldLayout, CommandDispatchLayout):
         msgtypes = dict.fromkeys([*self.FIELDS, *self.GROUPS])
         return tuple(msgtype for msgtype in msgtypes if name in self.names(msgtype))
 
+    def implied(
+        self,
+        values: Mapping[str, Value],  # noqa: ARG002  # no value implies another here
+    ) -> dict[str, Value]:
+        """Return the further values that setting ``values`` sets: none."""
+        return {}
+
     def read(self, msgtype: int, payload: bytes) -> dict[str, Value]:
         """Return the named values ``payload`` carries."""
         fields = self.FIELDS.get(msgtype, {})
@@ -494,6 +501,13 @@ class ScalarFieldLayout:
     def locate(self, name: str) -> tuple[int, ...]:
         """Return the messages with a field called ``name``."""
         return tuple(m for m in self.TELEMETRY if name in self.names(m))
+
+    def implied(
+        self,
+        values: Mapping[str, Value],  # noqa: ARG002  # no value implies another here
+    ) -> dict[str, Value]:
+        """Return the further values that setting ``values`` sets: none."""
+        return {}
 
     def read(self, msgtype: int, payload: bytes) -> dict[str, Value]:
         """Return the named values ``payload`` carries."""

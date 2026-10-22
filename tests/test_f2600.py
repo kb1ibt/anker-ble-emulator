@@ -1,6 +1,7 @@
 # Copyright (c) 2026 Shawn Stricker
 """The SOLIX F2600 (A1781) through a real ``BleakClient``."""
 
+import pytest
 from bleak import BleakClient
 
 from anker_ble_emulator import (
@@ -11,6 +12,7 @@ from anker_ble_emulator import (
     Transport,
 )
 from anker_ble_emulator.devices.base import data_resource
+from anker_ble_emulator.layouts import LayoutError
 from tests.fixtures.client import SESSION, AppClient, BleakLink, cmd_hex
 
 
@@ -36,3 +38,11 @@ async def test_answers_its_status_read_with_its_recorded_c840() -> None:
     assert ac_on == []
     assert device.layout is None
     assert device.advertisement_data.manufacturer_data == {}
+
+
+def test_takes_no_named_values_without_a_layout() -> None:
+    device = A1781()
+    device.set_values()
+    assert device.negotiated_module.values == {}
+    with pytest.raises(LayoutError):
+        device.set_values(battery_level=1)

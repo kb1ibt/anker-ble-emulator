@@ -452,8 +452,7 @@ class EmulatedDevice:
     def set_values(self, **values: Value) -> None:
         """Set telemetry values by field name in every later frame that carries them.
 
-        Names are the product layout's (anker-solix-api's field names) and the
-        ``0490`` push's.
+        Names are the Anker app's, in snake_case, plus the ``0490`` push's.
 
         Raises:
             LayoutError: If no message the device sends has a field so named.
@@ -474,6 +473,8 @@ class EmulatedDevice:
                 msg = f"{self.pn} sends no typed field {name!r}"
                 raise LayoutError(msg)
         self.negotiated_module.values.update(values)
+        if layout is not None:
+            self.negotiated_module.values.update(layout.implied(values))
 
     @property
     def mcu(self) -> McuScript:

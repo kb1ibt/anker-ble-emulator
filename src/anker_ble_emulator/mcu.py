@@ -160,7 +160,7 @@ class McuScript:
             if table_status is None:
                 return []
             return [self._ack(msgtype, table_status)]
-        return [self._with_values(frame, values) for frame in frames]
+        return [self._with_values(frame, values, rtc) for frame in frames]
 
     def _ack(self, msgtype: int, status: int, echoed: bytes = b"") -> Frame:
         """Return the ``<status> a1 01 31`` reply to ``msgtype``, then ``echoed``."""
@@ -176,16 +176,33 @@ class McuScript:
             return self.past_table_status
         return None
 
-    def push(self, msgtype: int, *, values: Mapping[str, Value] | None = None) -> Frame:
+    def push(
+        self,
+        msgtype: int,
+        *,
+        values: Mapping[str, Value] | None = None,
+        rtc: int | None = None,
+    ) -> Frame:
         """Return the scripted push of ``msgtype``.
+
+        Args:
+            msgtype: The push's 12-bit message type.
+            values: The device's telemetry values by name.
+            rtc: The MCU's RTC, local seconds, for a push the clock shapes.
 
         Raises:
             KeyError: If the script has no such push.
 
         """
-        return self._with_values(self.pushes[msgtype], values)
+        return self._with_values(self.pushes[msgtype], values, rtc)
 
-    def _with_values(self, frame: Frame, values: Mapping[str, Value] | None) -> Frame:
+    def _with_values(
+        self, frame: Frame, values: Mapping[str, Value] | None, rtc: int | None
+    ) -> Frame:
+        """Return ``frame`` with the named values set.
+
+        A frame the layout rebuilds also gets the RTC, under ``RTC``, when known.
+        """
         msgtype = frame.cmd.msgtype
         if not values:
             return frame
@@ -196,6 +213,8 @@ class McuScript:
             named = {name: value for name, value in values.items() if name in names}
             if not named:
                 return frame
+            if rtc is not None:
+                named[RTC] = rtc
             payload = self.layout.update(msgtype, frame.payload, named)
         else:
             return frame

@@ -36,6 +36,7 @@ from construct import (
     ExprAdapter,
     Flag,
     GreedyBytes,
+    GreedyRange,
     Int8ul,
     Optional,
     Padding,
@@ -53,6 +54,7 @@ from anker_ble_emulator.layouts import (
     ui,
 )
 from anker_ble_emulator.mcu import RTC
+from anker_ble_emulator.messages import ROUTE_APP, ROUTE_LAYOUT, ROUTE_PARAM_INFO
 from anker_ble_emulator.parameters import (
     FieldGroup,
     FieldSpec,
@@ -302,13 +304,25 @@ TransactionId = Struct("transaction_id" / GreedyBytes)
 #: one value sets both tags. ``tou_periods`` is the count byte plus 3 B per
 #: period ``{type, start hour, end hour}``.
 TOU_RECORD_SIZE = 3
+#: The most periods a plan holds: the app's limit ("A maximum of 6 segments
+#: can be set") and the display's. A ``4090`` counting more is refused.
+TOU_PERIODS_MAX = 6
 #: The plan's record buffer: six periods. A longer ``4090 a7`` overruns the
 #: handler's stack buffer, so it is refused.
-TOU_RECORDS_SIZE = 6 * TOU_RECORD_SIZE
+TOU_RECORDS_SIZE = TOU_PERIODS_MAX * TOU_RECORD_SIZE
 #: The schedule's wire form: the count, then exactly that many periods.
 TouRecords = Struct(
     "count" / ui(1),
     "records" / Bytes(lambda this: this.count * TOU_RECORD_SIZE),
+    Terminated,
+)
+#: The plan ``4090`` stores (T at ``0x20003efe``, from T[1]): the raw count,
+#: then the record buffer ``a7`` is copied over. The app has no name for it;
+#: ``d9``'s ``tou_periods`` is read from it.
+TOU_TABLE = "tou_period_table"
+TouTable = Struct(
+    "count" / ui(1),
+    "records" / Bytes(TOU_RECORDS_SIZE),
     Terminated,
 )
 
@@ -786,36 +800,173 @@ def _set_system_params(request: ParameterDict) -> dict[str, Value] | None:
 def _set_tou_system_params(request: ParameterDict) -> dict[str, Value] | None:
     """Return the mode and reserve SoC ``4090`` stores (``fid0f_op90_tou_set?``).
 
-    ``a3``/``a4`` are never read. An ``a7`` over six periods is refused; the
-    periods themselves are ``_tou_periods``'s.
+    ``a3``/``a4`` are never read. An ``a6`` or ``a7`` over six periods is
+    refused; the periods themselves are ``_tou_periods``'s.
     """
     periods = decode_field(request, "a7", GreedyBytes) if "a7" in request else b""
     if len(periods) > TOU_RECORDS_SIZE:
         return None
-    if "a6" in request:
-        decode_field(request, "a6", ui(1))
+    if "a6" in request and decode_field(request, "a6", ui(1)) > TOU_PERIODS_MAX:
+        return None
     return decode_request(request, TOU_PLAN)
+
+
+def _tou_table_of(periods: bytes) -> bytes:
+    """Return the stored plan a ``tou_periods`` value implies, zero past its periods."""
+    schedule = TouRecords.parse(periods)
+    records = schedule.records[:TOU_RECORDS_SIZE].ljust(TOU_RECORDS_SIZE, b"\0")
+    return TouTable.build({"count": schedule.count, "records": records})
+
+
+def _check_tou_table(table: Value) -> None:
+    """Check a stored plan is its count byte and record buffer.
+
+    Raises:
+        TypeError: If it isn't.
+
+    """
+    msg = f"{TOU_TABLE} is a count byte then {TOU_RECORDS_SIZE} record bytes"
+    if not isinstance(table, bytes):
+        raise TypeError(msg)
+    try:
+        TouTable.parse(table)
+    except ConstructError as error:
+        raise TypeError(msg) from error
+
+
+def _tou_periods_of(table: bytes) -> bytes:
+    """Return ``d9``'s ``tou_periods``: the count, then that many stored periods.
+
+    Periods past the record buffer read zero.
+    """
+    stored = TouTable.parse(table)
+    size = stored.count * TOU_RECORD_SIZE
+    records = stored.records[:size].ljust(size, b"\0")
+    return TouRecords.build({"count": stored.count, "records": records})
 
 
 def _tou_periods(
     request: ParameterDict, state: Mapping[str, Value]
 ) -> dict[str, Value]:
-    """Return the schedule after ``4090``: ``a7`` copied raw over the stored periods.
+    """Return the plan after ``4090``: ``a7`` copied raw over the record buffer.
 
-    ``a6`` sets the count, else the stored count stays; nothing checks the
-    count against the periods sent. Bytes past the stored periods read zero.
+    ``a6`` sets the count raw, else the stored count stays; nothing checks the
+    count against the periods sent. Bytes ``a7`` doesn't cover keep their
+    stored values, past the count too, so a raised count shows them again
+    (a1783-control.md "TOU (4090)").
     """
     if "a6" not in request and "a7" not in request:
         return {}
-    stored = TouRecords.parse(_bytes_value(state, "tou_periods"))
+    stored = TouTable.parse(_bytes_value(state, TOU_TABLE))
     count = decode_field(request, "a6", ui(1)) if "a6" in request else stored.count
-    buffer = bytearray(stored.records.ljust(TOU_RECORDS_SIZE, b"\0"))
+    buffer = bytearray(stored.records)
     if "a7" in request:
         periods = decode_field(request, "a7", GreedyBytes)
         buffer[: len(periods)] = periods
-    size = count * TOU_RECORD_SIZE
-    records = bytes(buffer[:size]).ljust(size, b"\0")
-    return {"tou_periods": TouRecords.build({"count": count, "records": records})}
+    table = TouTable.build({"count": count, "records": bytes(buffer)})
+    return {TOU_TABLE: table, "tou_periods": _tou_periods_of(table)}
+
+
+class TouPeriodType(IntEnum):
+    """A plan record's type byte, ``d9[0]`` when active; the app's labels."""
+
+    NONE = 0
+    PEAK = 1
+    MID_PEAK = 2
+    OFF_PEAK = 3
+
+
+#: ``d9[1]`` (T[0]) in Time-of-Use mode; any other value never activates.
+TOU_MODE_ON = 1
+#: The active periods that hold grid charging above the reserve threshold.
+HELD_PERIODS = frozenset({TouPeriodType.PEAK, TouPeriodType.MID_PEAK})
+#: The threshold's margin over the discharge limit: max(reserve, min + 5).
+TOU_MIN_MARGIN = 5
+#: The MainMcu build (v1.2.1.6) from which Battery-Only Power blocks TOU.
+AC_INPUT_DISABLE_GATE_VERSION = 1216
+#: One plan record: ``{type, start hour, end hour}``, whole hours.
+TouRecord = Struct("type" / ui(1), "start_hour" / ui(1), "end_hour" / ui(1))
+#: The app's name for the device being on WiFi to the cloud; set, it stands
+#: for TOU condition 2 (bound and on WiFi) and routes ``param_info``.
+WIFI_ONLINE = "wifi_online"
+#: TOU condition 3, the power stage's AC input report (``0x2000054a`` bit 0),
+#: which no ``0421`` field carries; unset, it reads reported. Descriptive name.
+POWER_STAGE_AC_INPUT = "power_stage_ac_input"
+#: The data-read replies and pushes whose ``a1`` source follows WiFi:
+#: a1783-telemetry.md "Data-read replies and telemetry pushes ride param_info".
+PARAM_INFO_MESSAGES = frozenset(
+    {MSGTYPE_421, MSGTYPE_900, MSGTYPE_489, MSGTYPE_889, MSGTYPE_892}
+)
+
+
+def _check_switch(name: str, value: Value) -> None:
+    """Check a hidden on/off input is 0 or 1.
+
+    Raises:
+        TypeError: If it isn't.
+
+    """
+    if not isinstance(value, int) or value not in {0, 1}:
+        msg = f"{name} is 0 or 1"
+        raise TypeError(msg)
+
+
+def _alternator_attached(params: ParameterDict) -> bool:
+    """Whether a car-alternator charger is attached (TOU condition 4).
+
+    Assumed: attached when ``ce`` names a product code; the firmware's present
+    byte (block 0xe +0x30) isn't in ``ce``.
+    """
+    if "ce" not in params:
+        return False
+    alternator = decode_field(params, "ce", Alternator)
+    return bool(alternator.external_device_product_code != bytes(PN_SIZE))
+
+
+def _ac_input_disabled(params: ParameterDict) -> bool:
+    """Whether Battery-Only Power blocks TOU (condition 5, MainMcu v1.2.1.6 on).
+
+    Assumed: both ``a4[31]`` input states, 1 (``4101 ab``) and 2 (auto-off).
+    """
+    versions = decode_field(params, "f9", DeviceVersions)
+    version = _version_number({"mcu_version": versions.mcu_version}, "mcu_version")
+    if version < AC_INPUT_DISABLE_GATE_VERSION:
+        return False
+    return bool(decode_field(params, "a4", Settings).ac_input_disable_switch)
+
+
+def _active_period(params: ParameterDict, values: Mapping[str, Value]) -> int:
+    """Return ``d9[0]``: the active record's type, else 0 (``tou_active_period_get?``).
+
+    a1783-control.md "TOU (4090)" conditions 1-6, in order; the hour is the
+    RTC's. Assumed: the first record in order wins where two match.
+    """
+    tou = decode_field(params, "d9", Tou)
+    on = tou.backup_mode == TOU_MODE_ON
+    online = values.get(WIFI_ONLINE, 0) and values.get(POWER_STAGE_AC_INPUT, 1)
+    if not on or not online or _alternator_attached(params):
+        return TouPeriodType.NONE
+    if _ac_input_disabled(params):
+        return TouPeriodType.NONE
+    hour = int(values[RTC]) // 3600 % 24
+    records = TouRecords.parse(tou.tou_periods).records
+    for record in GreedyRange(TouRecord).parse(records):
+        if record.start_hour <= hour < record.end_hour:
+            return int(record.type)
+    return TouPeriodType.NONE
+
+
+def _charge_held(params: ParameterDict, period: int) -> bool:
+    """Whether ``period`` holds grid charging off at the battery's SoC.
+
+    Peak and Mid-Peak hold while SoC >= max(reserve, min + 5). Assumed: the SoC
+    is ``a5``'s whole-percent ``battery_level``, with no +0.3 % hysteresis.
+    """
+    if period not in HELD_PERIODS:
+        return False
+    tou = decode_field(params, "d9", Tou)
+    threshold = max(tou.tou_reserve_power, tou.discharge_limit_value + TOU_MIN_MARGIN)
+    return bool(decode_field(params, "a5", Battery).battery_level >= threshold)
 
 
 #: ``4091`` tag -> (the ``da`` leaf it writes, its width): a1783-control.md
@@ -1063,9 +1214,30 @@ class CGen2Layout(TableLayout):
     )
 
     def names(self, msgtype: int) -> frozenset[str]:
-        """Return the names ``set_values()`` can reach; ``0425`` adds its SoC byte."""
-        names = super().names(msgtype)
-        return names | {EVENT_SOC} if msgtype == MSGTYPE_425 else names
+        """Return the names ``set_values()`` can reach.
+
+        ``0425`` adds its SoC byte, a message carrying ``d9`` the stored plan and
+        the power stage's AC input, and a ``param_info`` message the WiFi state.
+        """
+        names = set(super().names(msgtype))
+        if msgtype == MSGTYPE_425:
+            names.add(EVENT_SOC)
+        if "d9" in self.FIELDS.get(msgtype, {}):
+            names |= {TOU_TABLE, POWER_STAGE_AC_INPUT}
+        if msgtype in PARAM_INFO_MESSAGES:
+            names.add(WIFI_ONLINE)
+        return frozenset(names)
+
+    def read(self, msgtype: int, payload: bytes) -> dict[str, Value]:
+        """Return the named values ``payload`` carries and its ``d9``'s stored plan."""
+        values = super().read(msgtype, payload)
+        return values | self.implied(values)
+
+    def implied(self, values: Mapping[str, Value]) -> dict[str, Value]:
+        """Return the stored plan a ``tou_periods`` set without one implies."""
+        if "tou_periods" not in values or TOU_TABLE in values:
+            return {}
+        return {TOU_TABLE: _tou_table_of(_bytes_value(values, "tou_periods"))}
 
     def state_changes(
         self, msgtype: int, plaintext: bytes, state: Mapping[str, Value]
@@ -1087,18 +1259,50 @@ class CGen2Layout(TableLayout):
 
         Raises:
             ConstructError: If a value doesn't fit its field.
+            TypeError: If the stored plan isn't its count and record buffer, or
+                a hidden on/off input isn't 0 or 1.
 
         """
-        if msgtype == MSGTYPE_425 and values and EVENT_SOC in values:
-            ui(1).build(values[EVENT_SOC])
+        given = values or {}
+        if msgtype == MSGTYPE_425 and EVENT_SOC in given:
+            ui(1).build(given[EVENT_SOC])
+        if TOU_TABLE in given:
+            _check_tou_table(given[TOU_TABLE])
+        for name in (WIFI_ONLINE, POWER_STAGE_AC_INPUT):
+            if name in given:
+                _check_switch(name, given[name])
         return super().build(msgtype, values)
 
     def finish(
         self, msgtype: int, params: ParameterDict, values: Mapping[str, Value]
     ) -> None:
-        """Give a grid-loss ``0425`` its 1-byte SoC ``a3`` and no ``a4``."""
+        """Give a grid-loss ``0425`` its 1-byte SoC ``a3`` and no ``a4``.
+
+        A ``d9`` takes its ``tou_periods`` from the stored plan and, with the RTC
+        known, its active type, which holds grid charging (``a7`` AC input) at 0
+        W in Peak and Mid-Peak; on WiFi a ``param_info`` message routes ``a1``
+        ``0x34``, else as recorded (``0x31``).
+        """
         if msgtype == MSGTYPE_425:
             _shape_grid_loss(params, values)
+        fields = self.FIELDS.get(msgtype, {})
+        tou = fields.get("d9")
+        if tou is not None and TOU_TABLE in values:
+            codec, type_byte, _ = tou
+            periods = _tou_periods_of(_bytes_value(values, TOU_TABLE))
+            self._encode_field(params, "d9", codec, type_byte, tou_periods=periods)
+        if tou is not None and RTC in values:
+            codec, type_byte, _ = tou
+            period = _active_period(params, values)
+            self._encode_field(params, "d9", codec, type_byte, tou_system_status=period)
+            if _charge_held(params, period):
+                ac, ac_type, _ = fields["a7"]
+                self._encode_field(params, "a7", ac, ac_type, ac_input_power=0)
+        if msgtype in PARAM_INFO_MESSAGES and values.get(WIFI_ONLINE):
+            route = ROUTE_LAYOUT.build(
+                Container(destination=ROUTE_APP, source=ROUTE_PARAM_INFO)
+            )
+            params["a1"] = ParameterContainer(key=b"\xa1", type=None, value=route)
 
 
 class CGen2ExpansionLayout(CGen2Layout):

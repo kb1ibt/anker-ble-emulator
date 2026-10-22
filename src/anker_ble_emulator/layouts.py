@@ -60,6 +60,9 @@ class LayoutProtocol(Protocol):
     def locate(self, name: str) -> tuple[int, ...]:
         """Return the messages with a typed field or part called ``name``."""
 
+    def implied(self, values: Mapping[str, Value]) -> dict[str, Value]:
+        """Return the further values that setting ``values`` sets."""
+
     def build(self, msgtype: int, values: Mapping[str, Value] | None = None) -> bytes:
         """Return a telemetry payload of the message's typed fields, zero unless set."""
 

@@ -101,6 +101,14 @@ def test_as220_shares_the_a1783_codecs_and_reads_f0_as_the_charger() -> None:
     assert not flags.support_upgrade_record
 
 
+def test_as220_answers_4090_from_its_recording_with_no_stored_plan() -> None:
+    """Its ``0890`` is recorded, so a ``tou_periods`` set implies no other value."""
+    layout = AS220().layout
+    assert layout is not None
+    assert layout.implied({"tou_periods": b"\x00"}) == {}
+    assert "tou_period_table" not in layout.names(0x421)
+
+
 def test_as220_named_values_reach_both_telemetry_frames() -> None:
     device = AS220()
     recorded = Parameters.parse(device.mcu.push(0x421).payload)

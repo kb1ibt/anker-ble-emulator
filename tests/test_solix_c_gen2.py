@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from anker_ble_emulator import EmulatedDevice
+    from anker_ble_emulator.layouts import Value
 
     Model: TypeAlias = Callable[..., EmulatedDevice]
 
@@ -58,6 +59,84 @@ TOU_BENCH = [
     ("a2020101a6020101a70404011516", (1, "01011516", 0)),
     ("a2020100", (0, "01011516", 0)),
     ("a2020101a6020101a70404010f10", (1, "01010f10", 0)),
+]
+#: The 2026-10-21 bench clock (a1783-control.md "TOU (4090)"): ``0022`` UTC
+#: as sent, and EDT, 14400 s west.
+UTC_15_44_00 = bytes.fromhex("0016d96a")
+UTC_15_44_27 = bytes.fromhex("1b16d96a")
+UTC_16_00_00 = bytes.fromhex("c019d96a")
+UTC_16_21_00 = bytes.fromhex("ac1ed96a")
+UTC_16_26_00 = bytes.fromhex("d81fd96a")
+EDT = bytes.fromhex("40380000")
+#: The bench unit: on WiFi, mains in at 1290 W with Battery-Only Power off,
+#: main pack 95 %, min SoC 5 %.
+TOU_UNIT = {
+    "wifi_online": 1,
+    "battery_level": 95,
+    "discharge_limit_value": 5,
+    "ac_input_status": 1,
+    "ac_input_power": 1290,
+    "ac_input_disable_switch": 0,
+}
+#: (``4090`` mode and record, the ``0022`` UTC, values over ``TOU_UNIT``) ->
+#: (``d9[0]``, ``a7`` AC input power, ``a1``). The plan's reserve is 50 %.
+TOU_HOLD_CASES = [
+    pytest.param("01", "030018", UTC_16_21_00, {}, (3, 1290, "34"), id="off-peak"),
+    pytest.param(
+        "01", "010f10", UTC_15_44_27, {"wifi_online": 0}, (0, 1290, "31"), id="ble"
+    ),
+    pytest.param("01", "030f02", UTC_16_26_00, {}, (0, 1290, "34"), id="wrapping"),
+    pytest.param("00", "010f10", UTC_15_44_27, {}, (0, 1290, "34"), id="standard"),
+    pytest.param(
+        "01",
+        "010f10",
+        UTC_15_44_27,
+        {"power_stage_ac_input": 0},
+        (0, 1290, "34"),
+        id="no-power-stage-input",
+    ),
+    pytest.param(
+        "01",
+        "010f10",
+        UTC_15_44_27,
+        {"external_device_product_code": b"AS200".ljust(16, b"\0")},
+        (0, 1290, "34"),
+        id="alternator",
+    ),
+    pytest.param(
+        "01",
+        "010f10",
+        UTC_15_44_27,
+        {"ac_input_disable_switch": 2},
+        (0, 1290, "34"),
+        id="auto-off",
+    ),
+    pytest.param(
+        "01",
+        "010f10",
+        UTC_15_44_27,
+        {"ac_input_disable_switch": 1, "mcu_version": bytes.fromhex("01010201")},
+        (1, 0, "34"),
+        id="v1.2.1.1-battery-only",
+    ),
+    pytest.param(
+        "01",
+        "010f10",
+        UTC_15_44_27,
+        {"battery_level": 40},
+        (1, 1290, "34"),
+        id="doc-gate-below-threshold",
+    ),
+    pytest.param(
+        "01", "020f10", UTC_15_44_27, {}, (2, 0, "34"), id="doc-gate-mid-peak"
+    ),
+]
+#: The same day's cloud ``0090`` fields, in order, after ``TOU_BENCH``.
+TOU_BENCH_CLOUD = [
+    "a2020100a6020102a70704030011011118",
+    "a2020101a6020101a70404030018",
+    "a2020101a6020101a70404030f02",
+    "a2020101a6020101a70404030018",
 ]
 #: Class, advert name, manufacturer record, synthetic serial, PN in the frames.
 IDENTITIES = [
@@ -845,19 +924,23 @@ def test_partial_tou_and_clock_writes_mirrors_and_a_malformed_schedule() -> None
     assert layout is not None
     state = device.negotiated_module.mcu.state({})
 
-    # The recorded plan is 030017 011718. a7 alone overwrites from the first
-    # period and keeps the count; a6 alone recounts the stored periods.
+    # The recorded plan is 030017 011718, zero past it. a7 alone overwrites from
+    # the first period and keeps the count; a6 alone recounts the stored buffer,
+    # which a lower count leaves in place.
     assert layout.state_changes(0x090, bytes.fromhex("a10121a2020101"), state) == {
         "backup_mode": 1
     }
     assert layout.state_changes(0x090, bytes.fromhex("a10121a70404011516"), state) == {
-        "tou_periods": bytes.fromhex("02011516011718")
+        "tou_periods": bytes.fromhex("02011516011718"),
+        "tou_period_table": bytes.fromhex("02011516011718") + bytes(12),
     }
     assert layout.state_changes(0x090, bytes.fromhex("a10121a6020101"), state) == {
-        "tou_periods": bytes.fromhex("01030017")
+        "tou_periods": bytes.fromhex("01030017"),
+        "tou_period_table": bytes.fromhex("01030017011718") + bytes(12),
     }
     assert layout.state_changes(0x090, bytes.fromhex("a10121a6020103"), state) == {
-        "tou_periods": bytes.fromhex("03030017011718000000")
+        "tou_periods": bytes.fromhex("03030017011718000000"),
+        "tou_period_table": bytes.fromhex("03030017011718") + bytes(12),
     }
     # Seven periods overrun the handler's buffer: refused, nothing stored.
     seven = "a7" + "16" + "04" + "030017" * 7
@@ -865,6 +948,13 @@ def test_partial_tou_and_clock_writes_mirrors_and_a_malformed_schedule() -> None
         layout.state_changes(0x090, bytes.fromhex(f"a10121a2020101{seven}"), state)
         == {}
     )
+    # A count over six is refused the same way; six recounts the stored buffer.
+    assert layout.state_changes(0x090, bytes.fromhex("a10121a6020107"), state) == {}
+    assert layout.check(0x090, bytes.fromhex("a10121a6020107")) == 0x04
+    assert layout.state_changes(0x090, bytes.fromhex("a10121a6020106"), state) == {
+        "tou_periods": bytes.fromhex("06030017011718") + bytes(12),
+        "tou_period_table": bytes.fromhex("06030017011718") + bytes(12),
+    }
     # A locate blink changes no field; a theme-id write touches only its leaf.
     assert layout.state_changes(0x104, bytes.fromhex("a10121a5020101"), state) == {}
     assert layout.state_changes(
@@ -880,6 +970,231 @@ def test_partial_tou_and_clock_writes_mirrors_and_a_malformed_schedule() -> None
         device.set_values(tou_periods=b"\x02\x03")
     with pytest.raises(TypeError):
         device.set_values(tou_periods=2)
+
+
+def test_a_tou_periods_set_writes_through_to_the_stored_plan() -> None:
+    """``tou_periods`` sets the plan ``4090`` builds on; ``d9`` reads from the plan."""
+    device = A1783()
+    layout = device.layout
+    assert layout is not None
+    module = device.negotiated_module
+
+    # The recorded d9 is the initial plan, zero past its periods.
+    recorded = module.mcu.state({})
+    assert recorded["tou_period_table"] == bytes.fromhex("02030017011718") + bytes(12)
+    assert "tou_period_table" in layout.names(0x421)
+    assert layout.implied({"charging_limit_value": 90}) == {}
+
+    device.set_values(tou_periods=bytes.fromhex("01011516"))
+    assert module.values["tou_period_table"] == bytes.fromhex("01011516") + bytes(15)
+    # A bare a6 recounts the plan that was set, not the recorded one.
+    changes = layout.state_changes(
+        0x090, bytes.fromhex("a10121a6020102"), module.mcu.state(module.values)
+    )
+    assert changes["tou_periods"] == bytes.fromhex("02011516000000")
+
+    # The plan set directly wins over a tou_periods given beside it.
+    plan = bytes.fromhex("02030017011718") + bytes(12)
+    device.set_values(tou_periods=bytes.fromhex("01011516"), tou_period_table=plan)
+    push = module.mcu.push(0x421, values=module.values)
+    tou = decode_field(Parameters.parse(push.payload), "d9", solix_c_gen2.Tou)
+    assert tou.tou_periods == bytes.fromhex("02030017011718")
+    with pytest.raises(TypeError):
+        device.set_values(tou_period_table=bytes(18))
+    with pytest.raises(TypeError):
+        device.set_values(tou_period_table=2)
+
+
+def test_a_lowered_count_keeps_its_records_for_a_later_raise() -> None:
+    """``4090`` patches the stored plan, so a raised count shows the old records."""
+    device = A1783()
+    layout = device.layout
+    assert layout is not None
+    state = device.negotiated_module.mcu.state({})
+    views = []
+    for fields in ("a6020103a70a04030007020711011118", "a6020101", "a6020103"):
+        changes = layout.state_changes(0x090, bytes.fromhex(f"a10121{fields}"), state)
+        state = {**state, **changes}
+        views.append(changes["tou_periods"])
+
+    assert views == [
+        bytes.fromhex("03030007020711011118"),
+        bytes.fromhex("01030007"),
+        bytes.fromhex("03030007020711011118"),
+    ]
+
+
+async def test_the_bench_day_leaves_records_a_bare_count_shows_again() -> None:
+    """The 2026-10-21 ``4090``/``0090`` run, then a bare three-period count."""
+    device = A1783()
+    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
+        link = BleakLink(client, AppClient())
+        await link.start()
+        await link.negotiate(TOKEN)
+        device.press_button()
+        await settle()
+        for request in [*(sent for sent, _ in TOU_BENCH), *TOU_BENCH_CLOUD, "a6020103"]:
+            fields = decode_fields(bytes.fromhex(request))
+            _, status = await link.send(
+                0x090, [(0xA1, b"\x21"), *fields.items()], SESSION
+            )
+
+    tou = decode_field(Parameters.parse(status.plaintext), "d9", solix_c_gen2.Tou)
+    assert tou.tou_periods == bytes.fromhex("03030018011118011118")
+
+
+async def test_the_bench_peak_holds_grid_charging_until_the_period_ends() -> None:
+    """a1783-control.md "TOU (4090)", 2026-10-21: Peak 15-16 on WiFi, reserve 50 %.
+
+    Battery-Only Power blocks the period; switched off at 15:44:27, Peak goes
+    active and AC input reads 0 W; at 16:00 the period ends and charging resumes.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**TOU_UNIT)
+    plan = [
+        (0xA1, b"\x21"),
+        (0xA2, b"\x01\x01"),
+        (0xA5, b"\x01\x32"),
+        (0xA6, b"\x01\x01"),
+        (0xA7, bytes.fromhex("04010f10")),
+    ]
+    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
+        link = BleakLink(client, AppClient())
+        await link.start()
+        await link.negotiate(TOKEN)
+        device.press_button()
+        await settle()
+        await link.send(0x022, [(0xA1, UTC_15_44_00), (0xA3, EDT)])
+        await link.send(0x090, plan, SESSION)
+        blocked = await link.send(
+            0x101, [(0xA1, b"\x21"), (0xAB, b"\x02\x01\x00")], SESSION
+        )
+        clock.advance(27)
+        held = await link.send(
+            0x101, [(0xA1, b"\x21"), (0xAB, b"\x02\x00\x00")], SESSION
+        )
+        clock.advance(16 * 60 - 27)
+        ended = await link.send(0x100, [(0xA1, b"\x21")], SESSION)
+
+    states = []
+    for replies in (blocked, held, ended):
+        fields = Parameters.parse(replies[-1].plaintext)
+        states.append(
+            (
+                decode_field(fields, "d9", solix_c_gen2.Tou).tou_system_status,
+                decode_field(fields, "a7", solix_c_gen2.AcOutput).ac_input_power,
+                decode_field(fields, "a1", GreedyBytes).hex(),
+            )
+        )
+    assert states == [(0, 1290, "34"), (1, 0, "34"), (0, 1290, "34")]
+
+
+@pytest.mark.parametrize(
+    ("mode", "record", "utc", "values", "expected"), TOU_HOLD_CASES
+)
+async def test_the_active_period_and_its_charge_hold(
+    mode: str,
+    record: str,
+    utc: bytes,
+    values: dict[str, Value],
+    expected: tuple[int, int, str],
+) -> None:
+    """a1783-control.md "TOU (4090)" conditions 1-6 and the Peak/Mid-Peak hold.
+
+    The ``doc-gate`` cases follow the doc's charging gate; the bench never
+    witnessed them.
+    """
+    device = A1783(clock=ManualClock())
+    device.set_values(**{**TOU_UNIT, **values})
+    plan = [
+        (0xA1, b"\x21"),
+        (0xA2, bytes.fromhex(f"01{mode}")),
+        (0xA5, b"\x01\x32"),
+        (0xA6, b"\x01\x01"),
+        (0xA7, bytes.fromhex(f"04{record}")),
+    ]
+    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
+        link = BleakLink(client, AppClient())
+        await link.start()
+        await link.negotiate(TOKEN)
+        device.press_button()
+        await settle()
+        await link.send(0x022, [(0xA1, utc), (0xA3, EDT)])
+        await link.send(0x090, plan, SESSION)
+        status = await link.send(0x100, [(0xA1, b"\x21")], SESSION)
+
+    fields = Parameters.parse(status[-1].plaintext)
+    assert (
+        decode_field(fields, "d9", solix_c_gen2.Tou).tou_system_status,
+        decode_field(fields, "a7", solix_c_gen2.AcOutput).ac_input_power,
+        decode_field(fields, "a1", GreedyBytes).hex(),
+    ) == expected
+
+
+def test_the_c1000_gen_2_shares_the_peak_hold() -> None:
+    """The A1763 (no ``ce``, MainMcu v1.2.1.1) runs the line's own TOU check."""
+    device = A1763()
+    layout = device.layout
+    assert layout is not None
+    module = device.negotiated_module
+    device.set_values(**TOU_UNIT)
+    state = module.mcu.state(module.values)
+    peak = layout.state_changes(
+        0x090,
+        bytes.fromhex("a10121a2020101a5020132a6020101a70404010015"),
+        state,
+    )
+    device.set_values(**peak)
+    push = module.mcu.push(0x421, values=module.values, rtc=10 * 3600)
+    fields = Parameters.parse(push.payload)
+
+    assert decode_field(fields, "d9", solix_c_gen2.Tou).tou_system_status == 1
+    assert decode_field(fields, "a7", solix_c_gen2.AcOutput).ac_input_power == 0
+
+
+def test_the_hidden_tou_inputs_are_switches() -> None:
+    device = A1783()
+    for name, value in (("wifi_online", 2), ("power_stage_ac_input", b"\x01")):
+        with pytest.raises(TypeError):
+            device.set_values(**{name: value})
+
+
+async def test_a_count_over_six_periods_is_refused_and_telemetry_builds() -> None:
+    """The app allows six periods; a larger ``a6`` stores nothing, breaks no frame."""
+    device = A1783()
+    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
+        link = BleakLink(client, AppClient())
+        await link.start()
+        await link.negotiate(TOKEN)
+        device.press_button()
+        await settle()
+        overrun = await link.send(
+            0x090, [(0xA1, b"\x21"), (0xA7, b"\x04" + bytes(21))], SESSION
+        )
+        refused = [
+            await link.send(
+                0x090, [(0xA1, b"\x21"), (0xA6, bytes([0x01, count]))], SESSION
+            )
+            for count in (7, 77, 255)
+        ]
+        status = await link.send(0x100, [(0xA1, b"\x21")], SESSION)
+
+    # The board answers a refused count as it does an a7 overrun: an 00 ack and
+    # its status push, with nothing stored.
+    assert [cmd_hex(reply.frame) for reply in overrun] == ["4890", "4421"]
+    assert overrun[0].plaintext.hex() == "00a10131"
+    for replies in refused:
+        assert [cmd_hex(reply.frame) for reply in replies] == ["4890", "4421"]
+        assert replies[0].plaintext.hex() == "00a10131"
+        tou = decode_field(
+            Parameters.parse(replies[1].plaintext), "d9", solix_c_gen2.Tou
+        )
+        assert tou.tou_periods == bytes.fromhex("02030017011718")
+    assert [cmd_hex(reply.frame) for reply in status] == ["4900", "4421"]
+    for reply in status:
+        tou = decode_field(Parameters.parse(reply.plaintext), "d9", solix_c_gen2.Tou)
+        assert tou.tou_periods == bytes.fromhex("02030017011718")
 
 
 async def test_the_bench_tou_writes_leave_the_plans_the_unit_reported() -> None:
