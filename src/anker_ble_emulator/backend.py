@@ -75,6 +75,7 @@ class EmulatedBleakBackend(BaseBleakClient):
         self._connected = False
         self._notify: NotifyCallback | None = None
         self._timer: asyncio.Task[None] | None = None
+        self._pusher: asyncio.Task[None] | None = None
 
     @property
     def name(self) -> str:
@@ -108,7 +109,9 @@ class EmulatedBleakBackend(BaseBleakClient):
         self.device.listen(self._deliver)
         self.services = _services(self.device.gatt, self.device.module.fragment_cap)
         self._connected = True
-        self._timer = asyncio.get_running_loop().create_task(self._run_timer())
+        loop = asyncio.get_running_loop()
+        self._timer = loop.create_task(self._run_timer())
+        self._pusher = loop.create_task(self._run_pushes())
 
     async def disconnect(self) -> None:
         """Drop the link from the client side."""
@@ -223,9 +226,10 @@ class EmulatedBleakBackend(BaseBleakClient):
             self._disconnected_callback()
 
     def _teardown(self) -> None:
-        if self._timer is not None:
-            self._timer.cancel()
-        self._timer = None
+        for task in (self._timer, self._pusher):
+            if task is not None:
+                task.cancel()
+        self._timer = self._pusher = None
         self._connected = False
         self._notify = None
         self.device.listen(None)
@@ -236,3 +240,9 @@ class EmulatedBleakBackend(BaseBleakClient):
         while True:
             await asyncio.sleep(self.device.timer_period)
             self._deliver(self.device.module.check_timers())
+
+    async def _run_pushes(self) -> None:
+        """Send the MCU's due timed pushes every ``push_period`` seconds."""
+        while True:
+            await asyncio.sleep(self.device.push_period)
+            self._deliver(self.device.module.check_pushes())

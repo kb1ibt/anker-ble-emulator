@@ -23,9 +23,9 @@ def test_the_recorded_push_reads_back_unchanged() -> None:
 
     assert set(values) == set(push_490.fields)
     assert push_490.update(recorded, values) == recorded
-    assert push_490.update(recorded, {"ac_input_power_total": 5}) == recorded
-    assert values["battery_soc"] == 100
-    assert values["exp_1_soc"] == 90
+    assert push_490.update(recorded, {"ac_input_power": 5}) == recorded
+    assert values["battery_level"] == 100
+    assert values["sub_package_battery_level"] == 90
 
 
 def test_named_values_reach_the_push() -> None:
@@ -34,16 +34,16 @@ def test_named_values_reach_the_push() -> None:
     assert push_490 is not None
 
     device.set_values(
-        pack_soc=555, pack_current_a=-3, cell_voltage=b"\x01\x02", output_power_total=86
+        pack_soc=555, pack_current=-3, cell_voltage=b"\x01\x02", total_output_power=86
     )
 
     post = push_490.read(
         device.mcu.push(0x490, values=device.negotiated_module.values).payload
     )
     assert post["pack_soc"] == 555
-    assert post["pack_current_a"] == -3
+    assert post["pack_current"] == -3
     assert post["cell_voltage"] == b"\x01\x02".ljust(CELL_BYTES, b"\x00")
-    assert post["output_power_total"] == 86
+    assert post["total_output_power"] == 86
 
 
 @pytest.mark.parametrize(
@@ -91,10 +91,10 @@ def test_a_model_without_an_expansion_zeroes_the_expansion_entries(
     zeroed = {
         name: bytes(len(value)) if isinstance(value, bytes) else 0
         for name, value in recorded.items()
-        if name.startswith("exp_1_")
+        if name.startswith("sub_package_")
     }
     assert post == {**recorded, **zeroed}
-    assert recorded["exp_1_soc"] != 0
+    assert recorded["sub_package_battery_level"] != 0
 
 
 def test_the_a1783_keeps_its_recorded_expansion() -> None:

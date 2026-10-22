@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from construct import (
+    Bytes,
     ConstructError,
     GreedyBytes,
     GreedyRange,
@@ -14,6 +15,7 @@ from construct import (
     Struct,
     Tell,
     Terminated,
+    this,
 )
 
 
@@ -29,6 +31,10 @@ WHOLE_FIELDS = Struct("fields" / FIELDS_LAYOUT, Terminated)
 #: As many fields as fit, where they stopped, and what's left.
 FIELD_RUN = Struct("fields" / FIELDS_LAYOUT, "consumed" / Tell, "rest" / GreedyBytes)
 FIELD_HEADER = Struct("tag" / Int8ub, "length" / Int8ub)
+#: One field and where its value starts.
+PLACED_FIELD = Struct(
+    "tag" / Int8ub, "length" / Int8ub, "start" / Tell, "value" / Bytes(this.length)
+)
 
 
 class FieldError(ValueError):
@@ -68,3 +74,14 @@ def decode_fields(data: bytes) -> dict[int, bytes]:
         raise FieldError(msg) from error
     msg = f"the field at {run.consumed} runs past the end: {data.hex()}"
     raise FieldError(msg)
+
+
+def field_starts(data: bytes) -> dict[int, int]:
+    """Return where each field's value starts in ``data``, by tag.
+
+    Args:
+        data: A whole run of fields, as ``decode_fields`` accepts it.
+
+    """
+    placed = GreedyRange(PLACED_FIELD).parse(data)
+    return {int(field.tag): int(field.start) for field in placed}

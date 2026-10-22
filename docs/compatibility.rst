@@ -7,29 +7,29 @@ product doesn't do it.
 Emulated products
 -----------------
 
-=============================== ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= =========
-Feature                         C300      C300 DC   C1000     C800      C1000 G2  C1000X G2 C2000 G2  C2000X G2 S2000     SB2 Pro   160W      20K       250W      3-in-1    240W      SB1       F2600
-                                (A1722)   (A1726)   (A1761)   (A1753)   (A1763)   (A1765)   (A1783)   (A1785)   (AS220)   (A17C1)   (A2687)   (A110B)   (A2345)   (A25X7)   (A91B2)   (A17C0)   (A1781)
-=============================== ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= =========
-Advertisement                   ❌        ❌        ❌        ❌        ✅        ✅        ✅        ✅        ❌        ❌        ❌        ❌        ✅        ❌        ✅        ❌        ❌
-Encrypted outer (GCM session)   ❌        ❌        ❌        ❌        ✅        ✅        ✅        ✅        ✅        ❌        ✅        ✅        ✅        ✅        N/A       ❌        ❌
-Plain outer (CBC session)       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ❌        ✅        ❌        ❌        ✅        ❌        ✅        ✅        ✅
-ECDH key exchange               ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Legacy AES key exchange         ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌
-Owner confirmation by button    ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        N/A       ✅        ✅
-Module builds (``module=``)     ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Version read (``0030``)         ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ❌        ❌        ❌        ❌        ✅        ❌        ✅        ❌        ❌
-Recorded module ops (``0020``…) ❌        ❌        ❌        ❌        ❌        ❌        ✅        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌
-Request routing by ``a1``       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Fragmented frames               ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Recorded status reply           ❌        ❌        ❌        ❌        ✅        ✅        ✅        ✅        ✅        ❌        ✅        ✅        ✅        ❌        ✅        ✅        ✅
-Recorded telemetry pushes       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ❌
-``0490`` push                   N/A       N/A       N/A       N/A       ✅        ✅        ✅        ✅        ❌        N/A       N/A       N/A       N/A       N/A       N/A       N/A       N/A
-``0490`` fields by name         N/A       N/A       N/A       N/A       ✅        ✅        ✅        ✅        ❌        N/A       N/A       N/A       N/A       N/A       N/A       N/A       N/A
-Expansion battery attached      N/A       N/A       ❌        N/A       ❌        ❌        ✅        ❌        ❌        ❌        N/A       N/A       N/A       N/A       N/A       N/A       ❌
-Custom replies and pushes       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-Cloud mode (no BLE link)        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
-=============================== ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= =========
+=============================== ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= =========
+Feature                         C300      C300 DC   C1000     C800      C1000 G2  C1000X G2 C2000 G2  C2000X G2 S2000     Alt Chgr  SB2 Pro   160W      20K       250W      3-in-1    240W      SB1       F2600
+                                (A1722)   (A1726)   (A1761)   (A1753)   (A1763)   (A1765)   (A1783)   (A1785)   (AS220)   (AS200)   (A17C1)   (A2687)   (A110B)   (A2345)   (A25X7)   (A91B2)   (A17C0)   (A1781)
+=============================== ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= =========
+Advertisement                   ❌        ❌        ❌        ❌        ✅        ✅        ✅        ✅        ❌        ❌        ❌        ❌        ❌        ✅        ❌        ✅        ❌        ❌
+Encrypted outer (GCM session)   ❌        ❌        ❌        ❌        ✅        ✅        ✅        ✅        ✅        ✅        ❌        ✅        ✅        ✅        ✅        N/A       ❌        ❌
+Plain outer (CBC session)       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ❌        ❌        ✅        ❌        ❌        ✅        ❌        ✅        ✅        ✅
+ECDH key exchange               ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Legacy AES key exchange         ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌
+Owner confirmation by button    ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        N/A       ✅        ✅
+Module builds (``module=``)     ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Version read (``0030``)         ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ❌        ❌        ❌        ❌        ❌        ✅        ❌        ✅        ❌        ❌
+Recorded module ops (``0020``…) ❌        ❌        ❌        ❌        ❌        ❌        ✅        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌        ❌
+Request routing by ``a1``       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Fragmented frames               ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Recorded status reply           ❌        ❌        ❌        ❌        ✅        ✅        ✅        ✅        ✅        ✅        ❌        ✅        ✅        ✅        ❌        ✅        ✅        ✅
+Recorded telemetry pushes       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ❌
+``0490`` push                   N/A       N/A       N/A       N/A       ✅        ✅        ✅        ✅        ❌        ❌        N/A       N/A       N/A       N/A       N/A       N/A       N/A       N/A
+``0490`` fields by name         N/A       N/A       N/A       N/A       ✅        ✅        ✅        ✅        ❌        ❌        N/A       N/A       N/A       N/A       N/A       N/A       N/A       N/A
+Expansion battery attached      N/A       N/A       ❌        N/A       ❌        ❌        ✅        ❌        ❌        N/A       ❌        N/A       N/A       N/A       N/A       N/A       N/A       ❌
+Custom replies and pushes       ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+Cloud mode (no BLE link)        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅        ✅
+=============================== ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= ========= =========
 
 - **Recorded** replies and pushes are sanitized frames from real units
   (:doc:`device-sources`). The C Gen 2 models share one display-board build,
@@ -75,6 +75,15 @@ Cloud mode (no BLE link)        ✅        ✅        ✅        ✅        ✅ 
   ``4040`` with that ``0405``. Its plain outer is the Solarbank 2's (A17C1),
   assumed. The ``0050`` / ``0067`` / ``0068`` setters check their documented
   options and set the telemetry fields they name.
+- **Alternator Charger (AS200)**: no BLE frame or handshake is recorded. Its
+  ``0900``, ``0421``, ``0857``, ``0903`` and ``0489`` are MQTT recordings
+  with the BLE route marker, and it runs the C Gen 2 display board's message
+  set: ``4100`` draws ``4900`` + ``4421``, ``4057`` an ack, ``4103`` an ack
+  and a ``4421`` that shows the settings it wrote. Its encrypted outer and
+  button confirmation are the S2000's, assumed. Its ``0421`` is one moment
+  of charging a C2000 Gen 2 through the expansion cable; the attached power
+  station's fields (``a7``) are set by name like the rest. Whether it posts a
+  ``c490`` isn't recorded.
 - **C300 DC (A1726)**: the ``c402`` telemetry was recorded in the clear on
   device firmware v0.1.2.8; later firmware (v0.1.3.7) sends it fragmented over
   an ECDH session, which the emulator negotiates.

@@ -3,17 +3,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from anker_ble_emulator.frame import CHANNEL_APP
 from anker_ble_emulator.module import AuthMode
-from anker_ble_emulator.products import ModuleBuild, Outer, Path, Product, Transport
+from anker_ble_emulator.products import ModuleBuild, Outer, Path, Product
 
-from .base import DEFAULT_MAC, UNSET, Advert, EmulatedDevice, Profile, Unset, register
+from .base import Advert, ProductDevice, Profile, register
 
-
-if TYPE_CHECKING:
-    from anker_ble_emulator.clock import Clock
 
 PROFILE = Profile(
     serial="ASHDJW00000000001",
@@ -36,7 +31,7 @@ PROFILE = Profile(
     # No 0830 is recorded, so 0030 goes unanswered.
     device_version=None,
     # The recorded requests, and SolixBLE's USB timer (0x209).
-    known_commands=frozenset({0x200, 0x205, 0x206, 0x207, 0x209, 0x20A}),
+    known_commands=dict.fromkeys({0x200, 0x205, 0x206, 0x207, 0x209, 0x20A}),
     chip=b"Charging",
     lib_version=b"v0.0.5.0",
     serial_tail=11,
@@ -46,30 +41,7 @@ PROFILE = Profile(
 register(Product.A2687, PROFILE)
 
 
-class A2687(EmulatedDevice):
+class A2687(ProductDevice):
     """Prime Charger 160W: encrypted outer, ECDH, owner confirmation by button."""
 
-    def __init__(  # noqa: PLR0913  # the identity plus the four protocol choices
-        self,
-        serial: str | Unset | None = UNSET,
-        mac: str = DEFAULT_MAC,
-        transport: Transport | None = None,
-        *,
-        outer: Outer | None = None,
-        path: Path | None = None,
-        module: ModuleBuild | None = None,
-        clock: Clock | None = None,
-        mtu: int | None = None,
-    ) -> None:
-        """Build a Prime Charger 160W; see ``EmulatedDevice``."""
-        super().__init__(
-            Product.A2687,
-            serial,
-            mac,
-            transport,
-            outer=outer,
-            path=path,
-            module=module,
-            clock=clock,
-            mtu=mtu,
-        )
+    PRODUCT = Product.A2687

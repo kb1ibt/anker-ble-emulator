@@ -39,22 +39,30 @@ def test_replacement_of_another_length_is_refused() -> None:
         Sanitizer(replacements={REAL: b"short"})
 
 
-def test_millisecond_epochs_are_fixed() -> None:
-    clean = Sanitizer().sanitize(b"\xfd\x0e\x00" + b"1791343809887")
+@pytest.mark.parametrize(
+    ("epoch", "fixed"),
+    [
+        pytest.param(b"1791343809887", FIXED_EPOCH_MS, id="13 digits"),
+        pytest.param(b"17823817427623", FIXED_EPOCH_MS + b"0", id="14 digits (AS200)"),
+    ],
+)
+def test_millisecond_epochs_are_fixed(epoch: bytes, fixed: bytes) -> None:
+    clean = Sanitizer().sanitize(b"\xfd\x10\x04" + epoch + b"\x00")
 
-    assert clean.endswith(FIXED_EPOCH_MS)
+    assert clean == b"\xfd\x10\x04" + fixed + b"\x00"
 
 
-def test_trailer_time_is_fixed() -> None:
-    data = bytes.fromhex("00a10131fe05031a69a76a")
+@pytest.mark.parametrize("type_byte", ["03", "04"])
+def test_trailer_time_is_fixed(type_byte: str) -> None:
+    data = bytes.fromhex(f"00a10131fe05{type_byte}1a69a76a")
 
-    assert fix_trailer(data) == bytes.fromhex("00a10131fe0503") + Int32ul.build(
-        FIXED_UNIX_TIME
-    )
+    assert fix_trailer(data) == bytes.fromhex(
+        f"00a10131fe05{type_byte}"
+    ) + Int32ul.build(FIXED_UNIX_TIME)
 
 
 def test_a_fe_field_that_isnt_a_time_is_left_alone() -> None:
-    data = bytes.fromhex("a10131fe050401020304")
+    data = bytes.fromhex("a10131fe050101020304")
 
     assert fix_trailer(data) == data
 

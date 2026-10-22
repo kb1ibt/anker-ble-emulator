@@ -26,6 +26,7 @@ AAD = bytes.fromhex("3322110077665544bbaa9988ffeeddcc")
 DEFAULT_ACCOUNT = b"ANKER_DEFAULT_ACCOUNT_1"
 
 COORDINATE_LEN = 32
+AES_BLOCK = 16
 
 #: A P-256 public point as the link carries it: ``X || Y``, big-endian, no ``04``.
 POINT_LAYOUT = Struct(
@@ -75,7 +76,7 @@ class GcmCipher:
 
 
 class CbcCipher:
-    """AES-128-CBC with a fixed IV and PKCS7 padding."""
+    """AES-128-CBC with a fixed IV; PKCS7 padding out, the module's unpadding in."""
 
     def __init__(self, key: bytes, iv: bytes) -> None:
         """Use ``key`` and ``iv`` for every payload."""
@@ -89,16 +90,23 @@ class CbcCipher:
         return encryptor.update(padded) + encryptor.finalize()
 
     def decrypt(self, ciphertext: bytes) -> bytes:
-        """Return the unpadded plaintext.
+        """Return the plaintext less as many bytes as its last byte counts.
+
+        Only that byte is checked, as the module checks it (``decrypt_aes_cbc``):
+        the pad bytes before it are never compared.
 
         Raises:
-            ValueError: If the length or padding is wrong.
+            ValueError: If the length isn't whole blocks, or the last byte is 0
+                or over 16.
 
         """
         decryptor = self._cipher.decryptor()
         padded = decryptor.update(ciphertext) + decryptor.finalize()
-        unpadder = padding.PKCS7(128).unpadder()
-        return unpadder.update(padded) + unpadder.finalize()
+        pad = padded[-1] if padded else 0
+        if not 1 <= pad <= AES_BLOCK:
+            msg = f"pad byte {pad} outside 1-{AES_BLOCK}"
+            raise ValueError(msg)
+        return padded[:-pad]
 
 
 STATIC_GCM = GcmCipher(STATIC_KEY, STATIC_NONCE)

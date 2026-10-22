@@ -89,7 +89,7 @@ CONTROL_PAYLOAD = Struct("reserved" / Int8ub, "value" / Int8ub)
 #: The extended frame's settings block, wire offsets 101-120.
 SETTINGS = Struct(
     "bytes_101_116" / Bytes(16),
-    "power_saving_mode" / Int8ub,
+    "ac_energy_saving_switch" / Int8ub,
     "light_mode" / Int8ub,
     "bytes_119_120" / Bytes(2),
 )
@@ -105,18 +105,19 @@ TELEMETRY_FRAME = Struct(
             "cmd" / Bytes(2),
             "length" / Int16ul,
             "bytes_9_62" / Bytes(54),
-            "ac_output" / Int8ub,
+            "ac_output_status" / Int8ub,
             "bytes_64_79" / Bytes(16),
             # The two car-socket ports have only ever been observed moving together.
-            "dc_output_1" / Int8ub,
-            "dc_output_2" / Int8ub,
+            "car_charge1_output_status" / Int8ub,
+            "car_charge2_output_status" / Int8ub,
             "bytes_82_84" / Bytes(3),
-            "serial" / Bytes(16),
-            "serial_end" / Tell,
+            "device_sn" / Bytes(16),
+            "device_sn_end" / Tell,
             "settings"
             / If(
                 lambda this: (
-                    this.length - CHECKSUM_LENGTH - this.serial_end >= SETTINGS.sizeof()
+                    this.length - CHECKSUM_LENGTH - this.device_sn_end
+                    >= SETTINGS.sizeof()
                 ),
                 SETTINGS,
             ),
@@ -137,9 +138,9 @@ STATE_ACK = Struct(
             Padding(4),
             "cmd" / Const(bytes([STATE_ACK_CMD_BYTE])),
             Padding(2),
-            "ac_output" / Int8ub,
-            "dc_output" / Int8ub,
-            "power_saving_mode" / Int8ub,
+            "ac_output_status" / Int8ub,
+            "car_charge_output_status" / Int8ub,
+            "ac_energy_saving_switch" / Int8ub,
             "light_mode" / Int8ub,
         ),
     ),
@@ -148,12 +149,12 @@ STATE_ACK = Struct(
 
 #: Control field ID -> the telemetry fields it sets.
 _TELEMETRY_FIELDS = {
-    FIELD_AC_OUTPUT: ("ac_output",),
-    FIELD_DC_OUTPUT: ("dc_output_1", "dc_output_2"),
+    FIELD_AC_OUTPUT: ("ac_output_status",),
+    FIELD_DC_OUTPUT: ("car_charge1_output_status", "car_charge2_output_status"),
 }
 #: Control field ID -> the settings field it sets (extended frame only).
 _SETTINGS_FIELDS = {
-    FIELD_POWER_SAVING_MODE: "power_saving_mode",
+    FIELD_POWER_SAVING_MODE: "ac_energy_saving_switch",
     FIELD_LIGHT_MODE: "light_mode",
 }
 
@@ -220,7 +221,7 @@ class LegacyProfile:
     def serial_number(self) -> str | None:
         """The serial baked into the baseline telemetry frame; None if it has none."""
         try:
-            raw = TELEMETRY_FRAME.parse(self.telemetry).body.value.serial
+            raw = TELEMETRY_FRAME.parse(self.telemetry).body.value.device_sn
         except ConstructError:
             return None
         return bytes(raw).decode("ascii", errors="replace").rstrip("\x00") or None
@@ -256,6 +257,10 @@ class LegacyModule:
 
     def check_timers(self) -> Output:
         """Do nothing: this protocol has no authorize timer or confirmation window."""
+        return Output()
+
+    def check_pushes(self) -> Output:
+        """Do nothing: this protocol has no timed pushes."""
         return Output()
 
     def write(self, data: bytes) -> Output:
@@ -300,9 +305,9 @@ class LegacyModule:
             {
                 "body": {
                     "value": {
-                        "ac_output": telemetry.ac_output,
-                        "dc_output": telemetry.dc_output_1,
-                        "power_saving_mode": settings.power_saving_mode,
+                        "ac_output_status": telemetry.ac_output_status,
+                        "car_charge_output_status": telemetry.car_charge1_output_status,
+                        "ac_energy_saving_switch": settings.ac_energy_saving_switch,
                         "light_mode": settings.light_mode,
                     }
                 }

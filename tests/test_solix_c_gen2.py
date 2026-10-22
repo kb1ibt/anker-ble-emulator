@@ -15,12 +15,22 @@ from anker_ble_emulator import (
     A1783,
     A1785,
     EmulatedBleakBackend,
+    ManualClock,
     ModuleBuild,
 )
 from anker_ble_emulator.devices import COMPANY_ID, Profile, solix_c_gen2
 from anker_ble_emulator.layouts import LayoutError, ui
 from anker_ble_emulator.parameters import Parameters, decode_field
-from tests.fixtures.client import SESSION, AppClient, BleakLink, cmd_hex, settle
+from anker_ble_emulator.tlv import decode_fields
+from tests.fixtures.client import (
+    SESSION,
+    AppClient,
+    BleakLink,
+    cmd_hex,
+    exchange,
+    negotiate,
+    settle,
+)
 
 
 if TYPE_CHECKING:
@@ -37,6 +47,18 @@ A1783_VERSIONS = bytes.fromhex(
     "a40d41313738335f6d63755f6c6f77a50f41313738335f65737033325f6c6f77"
 )
 MODELS = [A1763, A1765, A1783, A1785]
+#: The bench's ``4090`` fields and the ``d9`` (mode, periods, active type) after each.
+TOU_BENCH = [
+    ("a2020100a6020102a70704030011011118", (0, "02030011011118", 0)),
+    ("a2020100a7080402030011011118", (0, "02020300110111", 0)),
+    (
+        "a2020100a3020105a4020107a6020103a70a04030007020711011118",
+        (0, "03030007020711011118", 0),
+    ),
+    ("a2020101a6020101a70404011516", (1, "01011516", 0)),
+    ("a2020100", (0, "01011516", 0)),
+    ("a2020101a6020101a70404010f10", (1, "01010f10", 0)),
+]
 #: Class, advert name, manufacturer record, synthetic serial, PN in the frames.
 IDENTITIES = [
     pytest.param(
@@ -221,7 +243,18 @@ def test_recorded_module_replies_come_only_with_their_build() -> None:
 def test_each_module_build_lists_the_session_ops_it_answers() -> None:
     assert len(ModuleBuild.V0_3_3_0.session_ops) == 14
     assert ModuleBuild.V0_3_0_6.session_ops == ModuleBuild.V0_3_3_0.session_ops
-    assert ModuleBuild.V0_2_9_7.session_ops == {0x20, 0x28, 0x2D, 0x2F, 0x30, 0x36}
+    assert ModuleBuild.V0_2_9_7.session_ops == {
+        0x20,
+        0x22,
+        0x23,
+        0x24,
+        0x25,
+        0x28,
+        0x2D,
+        0x2F,
+        0x30,
+        0x36,
+    }
 
 
 async def test_a1783_ac_group_sets_timeout_input_limit_and_switches() -> None:
@@ -258,12 +291,12 @@ async def test_a1783_ac_group_sets_timeout_input_limit_and_switches() -> None:
     )
     assert decode_field(status, "a7", solix_c_gen2.AcOutput).ac_output_status == 1
     settings = decode_field(status, "a4", solix_c_gen2.Settings)
-    assert settings.ac_output_timeout_seconds == 300
-    assert settings.ac_input_limit == 1200
+    assert settings.ac_timer_value == 300
+    assert settings.ac_recharge_power == 1200
     assert settings.ac_frequency == 60
-    assert settings.ac_output_mode == 1
-    assert settings.ac_fast_charge_switch == 1
-    assert settings.ac_input_disable_state == 1
+    assert settings.ac_energy_saving_switch == 1
+    assert settings.super_fast_charge_status == 1
+    assert settings.ac_input_disable_switch == 1
 
 
 async def test_a1783_dc_group_sets_car_socket_and_timeout() -> None:
@@ -296,14 +329,31 @@ async def test_a1783_dc_group_sets_car_socket_and_timeout() -> None:
     assert setter[0].plaintext == bytes.fromhex("00a10131")
     assert switch_only[0].plaintext == bytes.fromhex("00a10131")
     assert no_switch[0].plaintext == bytes.fromhex("00a10131")
+    # The socket switched on at 6 W, then switched off by the 4102 above.
+    frame = Parameters.parse(device.negotiated_module.mcu.push(0x421).payload)
+    frame["b2"]["value"] = bytes.fromhex("010600")
+    device.set_push(0x421, Parameters.build(frame))
+    on = decode_field(
+        Parameters.parse(device.negotiated_module.mcu.push(0x421).payload),
+        "b2",
+        solix_c_gen2.DcOutput,
+    )
+    device.set_values(car_charge1_output_power=0)
     push = device.negotiated_module.mcu.push(
         0x421, values=device.negotiated_module.values
     )
     status = Parameters.parse(push.payload)
-    assert decode_field(status, "b2", solix_c_gen2.DcOutput).dc_output_status == 0
+    socket = decode_field(status, "b2", solix_c_gen2.DcOutput)
+    assert (on.car_charge1_output_status, on.car_charge1_output_power) == (1, 6)
+    assert (socket.car_charge1_output_status, socket.car_charge1_output_power) == (
+        0,
+        0,
+    )
     settings = decode_field(status, "a4", solix_c_gen2.Settings)
-    assert settings.dc_output_timeout_seconds == 3600
-    assert settings.dc_12v_output_mode == 0  # overwritten by the last send
+    assert settings.car_charger_timer_value == 3600
+    assert (
+        settings.car_charger_energy_saving_switch == 0
+    )  # overwritten by the last send
 
 
 async def test_a1783_system_group_applies_the_soc_firmware_clamp() -> None:
@@ -352,33 +402,36 @@ async def test_a1783_system_group_applies_the_soc_firmware_clamp() -> None:
         0x421, values=device.negotiated_module.values
     )
     settings = decode_field(Parameters.parse(push.payload), "a4", solix_c_gen2.Settings)
-    assert settings.display_switch == 1
-    assert settings.display_mode == 2
-    assert settings.display_timeout_seconds == 0x0708
-    assert settings.temp_unit_fahrenheit == 1
-    assert settings.device_timeout_minutes == 60
-    assert settings.port_memory_switch == 1
-    assert settings.display_language == 0
-    assert (settings.max_soc, settings.min_soc) == (100, 1)  # 80 <= 80 resets both
+    assert settings.screen_switch == 1
+    assert settings.lcd_backlight_brightness == 2
+    assert settings.screen_off_time == 0x0708
+    assert settings.temperature_unit == 1
+    assert settings.device_standby_time == 60
+    assert settings.memory_switch == 1
+    assert settings.device_language == 0
+    assert (settings.charging_limit_value, settings.discharge_limit_value) == (
+        100,
+        1,
+    )  # 80 <= 80 resets both
     assert settings.outage_alert_switch
     assert (
-        settings.ac_input_disable_state == 1
+        settings.ac_input_disable_switch == 1
     )  # the recording's, untouched by the alert
 
 
-async def test_a1783_power_status_ports_are_settable_by_name() -> None:
+async def test_a1783_ports_are_settable_by_their_app_names() -> None:
     device = A1783()
 
-    device.set_values(pd2_power=500, usba_status=1, dc_input_power=42)
+    device.set_values(pd2_output_power=500, usb1_output_status=1, pv1_input_power=42)
 
     push = device.negotiated_module.mcu.push(
         0x421, values=device.negotiated_module.values
     )
     status = Parameters.parse(push.payload)
-    pd2 = decode_field(status, "ab", solix_c_gen2.PowerStatus)
-    assert (pd2.status, pd2.power) == (1, 500)
-    assert decode_field(status, "ae", solix_c_gen2.PowerStatus).status == 1
-    assert decode_field(status, "a8", solix_c_gen2.PowerStatus).power == 42
+    pd2 = decode_field(status, "ab", solix_c_gen2.OutputPort)
+    assert (pd2.output_status, pd2.output_power) == (1, 500)
+    assert decode_field(status, "ae", solix_c_gen2.OutputPort).output_status == 1
+    assert decode_field(status, "a8", solix_c_gen2.DcInput).pv1_input_power == 42
 
 
 def test_a1783_layout_rejects_a_msgtype_with_no_command() -> None:
@@ -393,8 +446,8 @@ def test_a1783_layout_ignores_a_msgtype_with_no_telemetry() -> None:
     device = A1783()
 
     assert device.layout is not None
-    assert device.layout.build(0x999, {"display_switch": 1}) == b""
-    assert device.layout.update(0x999, b"payload", {"display_switch": 1}) == b"payload"
+    assert device.layout.build(0x999, {"screen_switch": 1}) == b""
+    assert device.layout.update(0x999, b"payload", {"screen_switch": 1}) == b"payload"
 
 
 async def test_a1763_tou_setter_lands_in_d9_beside_the_soc_limits() -> None:
@@ -428,12 +481,12 @@ async def test_a1763_tou_setter_lands_in_d9_beside_the_soc_limits() -> None:
     status = Parameters.parse(limits[1].plaintext)
     assert status["d9"]["length"] == 32  # type byte + 6 + 2 periods + 19
     tou = decode_field(status, "d9", solix_c_gen2.Tou)
-    assert tou["usage_mode"] == 1
-    assert tou["backup_soc"] == 25
-    assert tou["tou_mode_schedule"] == bytes.fromhex("02030017011718")
-    assert (tou["backup_charge_soc"], tou["backup_discharge_soc"]) == (95, 5)
+    assert tou["backup_mode"] == 1
+    assert tou["tou_reserve_power"] == 25
+    assert tou["tou_periods"] == bytes.fromhex("02030017011718")
+    assert (tou["charging_limit_value"], tou["discharge_limit_value"]) == (95, 5)
     settings = decode_field(status, "a4", solix_c_gen2.Settings)
-    assert (settings.max_soc, settings.min_soc) == (95, 5)
+    assert (settings.charging_limit_value, settings.discharge_limit_value) == (95, 5)
 
 
 async def test_a1783_clock_screen_setter_shows_in_da_and_the_4092_read() -> None:
@@ -467,14 +520,14 @@ async def test_a1783_clock_screen_setter_shows_in_da_and_the_4092_read() -> None
     )
     assert screen["screen_saver_switch"] is True
     assert screen["lcd_theme"] == 2
-    assert screen["day_start_minutes"] == 480
+    assert screen["lcd_start_time"] == 480
     assert screen["lcd_repeat_cycle"] == 0x24
     assert screen["day_brightness_level"] == 1
-    assert screen["night_end_minutes"] == 480  # untouched by the write
+    assert screen["night_end_time"] == 480  # untouched by the write
     fields = Parameters.parse(read[0].plaintext)
     head = decode_field(fields, "a2", solix_c_gen2.ClockScreenHead)
     assert (head.screen_saver_switch, head.lcd_theme) == (True, 2)
-    assert head.day_start_minutes == 480
+    assert head.lcd_start_time == 480
     assert head.lcd_repeat_cycle == 0x24
     assert fields["a3"]["type"] == 0x04
     assert decode_field(fields, "a3", GreedyBytes) == b"Theme 3"
@@ -503,7 +556,7 @@ def test_fault_versions_and_capability_flags_are_settable_by_name() -> None:
     flags = decode_field(status, "fa", solix_c_gen2.Capabilities)
     assert flags.support_ac_input_disable  # set by name
     assert flags.memory_switch_two  # the recording's own bits, kept
-    assert flags.support_pps_tou
+    assert flags.support_ppstou
 
 
 async def test_a1783_expansion_switch_and_block_fields() -> None:
@@ -528,26 +581,32 @@ async def test_a1783_expansion_switch_and_block_fields() -> None:
         )
 
     assert [cmd_hex(reply.frame) for reply in switch] == ["4904", "4421"]
-    device.set_values(exp_1_soc=42, device_1_mode=1, device_1_output_power=300)
+    device.set_values(
+        sub_package_battery_level=42,
+        external_device_mode=solix_c_gen2.ExternalDeviceMode.CHARGING,
+        external_device_output_power=300,
+    )
     push = device.negotiated_module.mcu.push(
         0x421, values=device.negotiated_module.values
     )
     status = Parameters.parse(push.payload)
     block = decode_field(status, "c0", solix_c_gen2.Expansion)
     assert status["c0"]["length"] == 44  # the attached shape is kept
-    assert block["exp_1_switch_status"] == 0
-    assert block["exp_1_soc"] == 42
-    assert block["exp_1_sn"] == b"APCDKJM0000000002"
-    assert block["exp_1_type"] == b"A1783_2kWh"
+    assert block["sub_package_switch_status"] == 0
+    assert block["sub_package_battery_level"] == 42
+    assert block["sub_package_sn"] == b"APCDKJM0000000002"
+    assert block["sub_package_type"] == b"A1783_2kWh"
     alternator = decode_field(status, "ce", solix_c_gen2.Alternator)
-    assert alternator["device_1_mode"] == 1
-    assert alternator["device_1_output_power"] == 300
+    assert (
+        alternator["external_device_mode"] == solix_c_gen2.ExternalDeviceMode.CHARGING
+    )
+    assert alternator["external_device_output_power"] == 300
 
 
 def test_a1785_unattached_expansion_block_keeps_its_short_shape() -> None:
     device = A1785()
 
-    device.set_values(exp_1_temperature=23, exp_1_connection_status=1)
+    device.set_values(sub_package_temperature=23, sub_package_connection_status=1)
 
     push = device.negotiated_module.mcu.push(
         0x421, values=device.negotiated_module.values
@@ -555,10 +614,10 @@ def test_a1785_unattached_expansion_block_keeps_its_short_shape() -> None:
     status = Parameters.parse(push.payload)
     block = decode_field(status, "c0", solix_c_gen2.Expansion)
     assert status["c0"]["length"] == 35
-    assert block["exp_1_sn"] == bytes(16)
-    assert block["exp_1_temperature"] == 23
-    assert block["exp_1_connection_status"] == 1
-    assert block["exp_1_type"] == b"  "
+    assert block["sub_package_sn"] == bytes(16)
+    assert block["sub_package_temperature"] == 23
+    assert block["sub_package_connection_status"] == 1
+    assert block["sub_package_type"] == b"  "
 
 
 def test_the_c1000_gen_2_has_no_expansion_port() -> None:
@@ -568,44 +627,339 @@ def test_the_c1000_gen_2_has_no_expansion_port() -> None:
     assert c1000.layout is not None
     assert c2000.layout is not None
     assert not c1000.layout.has_command(0x104)
-    assert c1000.layout.locate("exp_1_soc") == ()
-    assert c1000.layout.locate("device_1_mode") == ()
+    assert c1000.layout.locate("sub_package_battery_level") == ()
+    assert c1000.layout.locate("external_device_mode") == ()
     with pytest.raises(LayoutError):
-        c1000.set_values(device_1_mode=1)
+        c1000.set_values(external_device_mode=1)
     assert c2000.layout.has_command(0x104)
-    assert c2000.layout.locate("exp_1_soc") == (0x421, solix_c_gen2.MSGTYPE_900)
+    assert c2000.layout.locate("sub_package_battery_level") == (
+        0x421,
+        solix_c_gen2.MSGTYPE_900,
+    )
+
+
+@pytest.mark.parametrize("model", MODELS)
+@pytest.mark.parametrize("command", [0x051, 0x059])
+def test_a_table_command_nothing_records_gets_the_display_board_ack(
+    model: Model, command: int
+) -> None:
+    """``fid0f_ack_reply?``: a1783-control.md "Command map" ``4051``/``4059``."""
+    frames = model().mcu.respond(command)
+
+    assert [(frame.cmd.msgtype, frame.payload.hex()) for frame in frames] == [
+        (command | 0x800, "00a10131")
+    ]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(0x055, id="4055 not in the table"),
+        pytest.param(0x062, id="4062 not in the table"),
+        pytest.param(0x064, id="4064 before an OTA start"),
+        pytest.param(0x105, id="past the table"),
+    ],
+)
+def test_the_display_board_drops_what_it_doesnt_answer(command: int) -> None:
+    assert A1783().mcu.respond(command) == []
+
+
+@pytest.mark.parametrize("model", MODELS)
+def test_restore_defaults_writes_the_factory_block_and_turns_ultrafast_off(
+    model: Model,
+) -> None:
+    """a1783-control.md "``4051`` factory defaults" (block v1.2.1.1 0x08035324)."""
+    device = model()
+    layout = device.layout
+    assert layout is not None
+    device.set_values(
+        device_standby_time=0, charging_limit_value=80, super_fast_charge_status=1
+    )
+    request = bytes.fromhex("a10121")
+
+    changes = layout.state_changes(
+        0x051, request, device.mcu.state(device.negotiated_module.values)
+    )
+    device.set_values(**changes)
+
+    assert changes == solix_c_gen2.FACTORY_SETTINGS
+    state = device.mcu.state(device.negotiated_module.values)
+    assert state["device_standby_time"] == 720
+    assert state["charging_limit_value"] == 100
+    assert state["super_fast_charge_status"] == 0
+    assert state["tou_reserve_power"] == 6
+
+
+@pytest.mark.parametrize("model", MODELS)
+def test_the_log_size_read_reports_only_the_250_byte_header_chunk(
+    model: Model,
+) -> None:
+    """a1783-control.md "Command map" ``4065``: total, chunk size, chunk count."""
+    device = model()
+    request = bytes.fromhex("a10121")
+    layout = device.layout
+    assert layout is not None
+
+    frames = device.mcu.respond(0x065, request=request)
+
+    assert [(frame.cmd.msgtype, frame.payload.hex()) for frame in frames] == [
+        (0x865, "00a10131a30503fa000000a40503fa000000a5050301000000")
+    ]
+    assert layout.state_changes(0x065, request, device.mcu.state({})) == {}
+
+
+@pytest.mark.parametrize(
+    ("model", "serial", "versions"),
+    [
+        pytest.param(
+            A1763,
+            b"AXDDK96000000000",
+            b",11.2.6,11.2.6,0.0.0,5.0.5,5.0.5,10.3.5,0.0.0,2.2.0,0.0.0",
+            id="A1763",
+        ),
+        pytest.param(
+            A1765,
+            b"AXDDK96000000000",
+            b",11.2.6,11.2.6,0.0.0,5.0.5,5.0.5,10.3.5,0.0.0,2.2.0,0.0.0",
+            id="A1765",
+        ),
+        pytest.param(
+            A1783,
+            b"APCDKKE000000000",
+            b",12.1.6,12.1.6,0.0.0,1.2.6,1.2.6,19.3.3,19.3.3,3.3.0,0.0.0",
+            id="A1783",
+        ),
+        pytest.param(
+            A1785,
+            b"AXDDKVP000000000",
+            b",12.1.1,12.1.1,0.0.0,1.2.6,1.2.6,19.2.2,0.0.0,3.0.6,0.0.0",
+            id="A1785",
+        ),
+    ],
+)
+def test_log_chunk_0_is_the_rtc_serial_and_version_header(
+    model: Model, serial: bytes, versions: bytes
+) -> None:
+    """a1783-control.md "BLE log upload": RTC, SN[:16], nine versions, padded.
+
+    The versions are the recorded ``f9``'s, in the firmware's slot order (MCU
+    twice, aux/LCD, ACDC DSP, DCDC DSP, BMS, expansion, module, USB-PD); the
+    aux/LCD and USB-PD slots are 0, which no frame reports.
+    """
+    header = (b"[6AA730DA]" + serial + versions).ljust(249, b" ") + b"\n"
+
+    frames = model().mcu.respond(
+        0x066, request=bytes.fromhex("a10121a203020000"), rtc=0x6AA730DA
+    )
+
+    assert [(frame.cmd.msgtype, frame.payload.hex()) for frame in frames] == [
+        (0x866, "00a10131a203020000a30302fa00a4fb04" + header.hex())
+    ]
+
+
+@pytest.mark.parametrize("index", ["0100", "0500"])
+def test_a_log_chunk_past_the_header_replies_empty(index: str) -> None:
+    """a1783-control.md "BLE log upload": an index >= the chunk count, no data."""
+    request = bytes.fromhex(f"a10121a20302{index}")
+
+    frames = A1783().mcu.respond(0x066, request=request)
+
+    assert [(frame.cmd.msgtype, frame.payload.hex()) for frame in frames] == [
+        (0x866, f"00a10131a20302{index}a303020000a40104")
+    ]
+
+
+def test_the_log_header_carries_a_set_serial_and_needs_byte_values() -> None:
+    device = A1783()
+    layout = device.layout
+    assert layout is not None
+    device.set_values(device_sn=b"APCDKKE0000000009")
+    request = bytes.fromhex("a10121a203020000")
+
+    chunk = device.mcu.respond(
+        0x066, request=request, values=device.negotiated_module.values
+    )[0]
+    state = {**device.mcu.state({}), "device_sn": 9, "rtc": 0}
+
+    assert layout.locate("device_sn") == (0x421, solix_c_gen2.MSGTYPE_900)
+    assert decode_field(Parameters.parse(chunk.payload), "a4", GreedyBytes)[10:26] == (
+        b"APCDKKE000000000"
+    )
+    with pytest.raises(TypeError, match="device_sn is a bytes value"):
+        layout.reply_fields(0x066, request, state)
+
+
+async def test_the_log_header_reads_the_rtc_the_clock_set_put_on_local_time() -> None:
+    """a1783-control.md "Clock": RTC = ``0022 a1`` UTC less ``a3``, seconds west.
+
+    The handshake's ``0022`` sends 0x6aa7691a UTC at 14400 s west (EDT), so
+    local time is 0x6aa730da; until then the RTC counts from 0.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    clock.advance(5)
+    unset = device.negotiated_module.rtc
+    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
+        link = BleakLink(client, AppClient())
+        await link.start()
+        await link.negotiate(TOKEN)
+        device.press_button()
+        await settle()
+        clock.advance(90)
+        chunk = await link.send(
+            0x066, [(0xA1, b"\x21"), (0xA2, b"\x02\x00\x00")], SESSION
+        )
+
+    assert unset == 5
+    assert [cmd_hex(reply.frame) for reply in chunk] == ["4866"]
+    data = decode_field(Parameters.parse(chunk[0].plaintext), "a4", GreedyBytes)
+    assert data[:10] == b"[6AA73134]"
+
+
+def test_a_clock_set_before_the_sync_floor_is_acked_but_never_reaches_the_rtc() -> None:
+    """a1783-control.md "Clock": ``set_utc_time_to_mcu`` drops UTC < 0x6561aca0."""
+    module = A1783(clock=ManualClock()).negotiated_module
+    client = AppClient()
+    module.connect()
+    negotiate(module, client, TOKEN)
+    synced = module.rtc
+
+    early = exchange(
+        module, client, 0x022, [(0xA1, b"\x9f\xac\x61\x65"), (0xA3, b"\0\0\0\0")]
+    )
+    after_early = module.rtc
+    floor = exchange(
+        module, client, 0x022, [(0xA1, b"\xa0\xac\x61\x65"), (0xA3, b"\0\0\0\0")]
+    )
+
+    assert synced == 0x6AA730DA
+    assert [(reply.frame.cmd.msgtype, reply.status) for reply in early] == [(0x822, 0)]
+    assert after_early == synced
+    assert [(reply.frame.cmd.msgtype, reply.status) for reply in floor] == [(0x822, 0)]
+    assert module.rtc == 0x6561ACA0
 
 
 def test_partial_tou_and_clock_writes_mirrors_and_a_malformed_schedule() -> None:
     device = A1783()
     layout = device.layout
     assert layout is not None
+    state = device.negotiated_module.mcu.state({})
 
-    # a7 alone derives the count; a6 alone leaves the periods zero.
-    assert layout.state_changes(0x090, bytes.fromhex("a10121a2020101")) == {
-        "usage_mode": 1
+    # The recorded plan is 030017 011718. a7 alone overwrites from the first
+    # period and keeps the count; a6 alone recounts the stored periods.
+    assert layout.state_changes(0x090, bytes.fromhex("a10121a2020101"), state) == {
+        "backup_mode": 1
     }
-    assert layout.state_changes(0x090, bytes.fromhex("a10121a70404030017")) == {
-        "tou_mode_schedule": bytes.fromhex("01030017")
+    assert layout.state_changes(0x090, bytes.fromhex("a10121a70404011516"), state) == {
+        "tou_periods": bytes.fromhex("02011516011718")
     }
-    assert layout.state_changes(0x090, bytes.fromhex("a10121a6020101")) == {
-        "tou_mode_schedule": bytes.fromhex("01000000")
+    assert layout.state_changes(0x090, bytes.fromhex("a10121a6020101"), state) == {
+        "tou_periods": bytes.fromhex("01030017")
     }
+    assert layout.state_changes(0x090, bytes.fromhex("a10121a6020103"), state) == {
+        "tou_periods": bytes.fromhex("03030017011718000000")
+    }
+    # Seven periods overrun the handler's buffer: refused, nothing stored.
+    seven = "a7" + "16" + "04" + "030017" * 7
+    assert (
+        layout.state_changes(0x090, bytes.fromhex(f"a10121a2020101{seven}"), state)
+        == {}
+    )
     # A locate blink changes no field; a theme-id write touches only its leaf.
-    assert layout.state_changes(0x104, bytes.fromhex("a10121a5020101")) == {}
-    assert layout.state_changes(0x091, bytes.fromhex("a10121a3050304030201")) == {
-        "clock_theme_id": 0x01020304
-    }
-    device.set_values(backup_charge_soc=90)
+    assert layout.state_changes(0x104, bytes.fromhex("a10121a5020101"), state) == {}
+    assert layout.state_changes(
+        0x091, bytes.fromhex("a10121a3050304030201"), state
+    ) == {"network_theme_id": 0x01020304}
+    device.set_values(charging_limit_value=90)
     push = device.negotiated_module.mcu.push(
         0x421, values=device.negotiated_module.values
     )
     settings = decode_field(Parameters.parse(push.payload), "a4", solix_c_gen2.Settings)
-    assert settings.max_soc == 90
+    assert settings.charging_limit_value == 90
     with pytest.raises(TypeError):
-        device.set_values(tou_mode_schedule=b"\x02\x03")
+        device.set_values(tou_periods=b"\x02\x03")
     with pytest.raises(TypeError):
-        device.set_values(tou_mode_schedule=2)
+        device.set_values(tou_periods=2)
+
+
+async def test_the_bench_tou_writes_leave_the_plans_the_unit_reported() -> None:
+    """The A1783 bench run of 2026-10-21 over BLE (a1783-control.md "TOU (4090)").
+
+    Each ``4090`` (after ``a10121``, its ``fe`` left out) and the ``d9`` mode,
+    periods and active type the next ``c421`` carried.
+    """
+    device = A1783()
+    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
+        link = BleakLink(client, AppClient())
+        await link.start()
+        await link.negotiate(TOKEN)
+        device.press_button()
+        await settle()
+        acks, plans = [], []
+        for request, _ in TOU_BENCH:
+            fields = decode_fields(bytes.fromhex(request))
+            ack, status = await link.send(
+                0x090, [(0xA1, b"\x21"), *fields.items()], SESSION
+            )
+            tou = decode_field(
+                Parameters.parse(status.plaintext), "d9", solix_c_gen2.Tou
+            )
+            acks.append(ack.plaintext.hex())
+            plans.append(
+                (tou.backup_mode, tou.tou_periods.hex(), tou.tou_system_status)
+            )
+
+    assert acks == ["00a10131"] * len(TOU_BENCH)
+    assert plans == [plan for _, plan in TOU_BENCH]
+
+
+async def test_the_4100_a2_selects_the_silent_recharge_power() -> None:
+    """a1783-telemetry.md ``a3[10:12]``: bit 0 of ``a2``'s sixth value byte."""
+    device = A1783()
+    app_a2 = (0xA2, bytes.fromhex("04010003150101000000"))
+    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
+        link = BleakLink(client, AppClient())
+        await link.start()
+        await link.negotiate(TOKEN)
+        device.press_button()
+        await settle()
+        powers = []
+        for fields in ([app_a2], [(0xA2, b"\x04\x01")], [app_a2], []):
+            replies = await link.send(0x100, [(0xA1, b"\x21"), *fields], SESSION)
+            params = Parameters.parse(replies[0].plaintext)
+            powers.append(decode_field(params, "a3", solix_c_gen2.Status))
+
+    assert [status.silent_recharge_power for status in powers] == [1000, 600, 1000, 600]
+
+
+def test_the_v1_2_1_1_status_block_has_no_silent_recharge_power() -> None:
+    """The A1763 recording's 10-byte ``a3`` stays 10 bytes."""
+    module = A1763().negotiated_module
+    module.values["silent_recharge_power"] = 1000
+
+    push = module.mcu.push(0x421, values=module.values)
+
+    assert Parameters.parse(push.payload)["a3"]["length"] == 11
+
+
+def test_any_request_with_an_fd_sets_the_transaction_id() -> None:
+    """a1783-telemetry.md ``fd``: up to 15 B, kept by a request without one."""
+    device = A1783()
+    layout = device.layout
+    assert layout is not None
+    state = device.negotiated_module.mcu.state({})
+    stamp = b"\x00" + b"1799999999999"
+    long_stamp = b"\x00" + b"1234567890abcdefgh"
+
+    with_fd = layout.state_changes(
+        0x103, bytes.fromhex("a10121a2020101") + b"\xfd\x0e" + stamp, state
+    )
+    unknown = layout.state_changes(0x0EE, b"\xa1\x01\x21\xfd\x13" + long_stamp, state)
+    without = layout.state_changes(0x103, bytes.fromhex("a10121a2020101"), state)
+
+    assert with_fd == {"screen_switch": 1, "transaction_id": b"1799999999999"}
+    assert unknown == {"transaction_id": b"1234567890abcde"}
+    assert without == {"screen_switch": 1}
 
 
 def test_a1783_event_report_takes_window_epochs_or_the_grid_loss_soc() -> None:
@@ -633,7 +987,7 @@ def test_ota_readiness_is_set_in_the_push_and_the_reply_alike() -> None:
     """``0489``/``4089``: a1783-control.md "4089" (``0 4`` = blocked, "connect AC")."""
     device = A1763()
 
-    device.set_values(ota_allowed=0, ota_block_reason=4)
+    device.set_values(ota_enable=0, ota_block_reason=4)
 
     values = device.negotiated_module.values
     push = device.negotiated_module.mcu.push(0x489, values=values)

@@ -14,7 +14,7 @@ TOKEN = b"owner-token"
 #: ``b4``/``b5``/``b6`` of the ``0405`` telemetry: the three cutoffs (ui).
 OUTPUT_CUTOFF_TAG = 0xB4
 LOWPOWER_INPUT_TAG = 0xB5
-#: ``a3`` of the ``0405`` telemetry is ``battery_soc`` (ui).
+#: ``a3`` of the ``0405`` telemetry is ``battery_level`` (ui).
 BATTERY_SOC_TAG = 0xA3
 
 
@@ -53,7 +53,7 @@ async def test_a17c0_answers_its_status_request_with_its_recorded_telemetry() ->
 
 async def test_a17c0_setters_are_checked_and_show_in_its_telemetry() -> None:
     device = A17C0()
-    device.set_values(battery_soc=55)
+    device.set_values(battery_level=55)
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
         link = BleakLink(client, AppClient(encrypted_outer=False))
         await link.start()

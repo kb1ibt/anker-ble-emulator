@@ -34,12 +34,26 @@ def _rebuilt(frame: Frame, payload: bytes) -> Frame:
 
 #: A reply's cleartext: its status byte, then its fields.
 REPLY = Struct("status" / Int8ul, "fields" / GreedyBytes)
+#: The state name a read reply finds the MCU's RTC under: local seconds.
+RTC = "rtc"
 
 
-def _with_status(frame: Frame, status: int) -> Frame:
-    """Return a reply with its leading status byte set."""
-    fields = REPLY.parse(frame.payload).fields
-    return _rebuilt(frame, REPLY.build({"status": status, "fields": fields}))
+@dataclass(frozen=True)
+class Burst:
+    """A push the MCU repeats a fixed number of times after each trigger.
+
+    Attributes:
+        trigger: The request msgtype that starts the burst, or restarts its count.
+        push: The pushed msgtype.
+        count: Pushes per trigger; the first goes out with the trigger's reply.
+        period: Seconds between pushes.
+
+    """
+
+    trigger: int
+    push: int
+    count: int
+    period: float
 
 
 @dataclass(frozen=True)
@@ -59,6 +73,14 @@ class McuScript:
             not ``00`` (the C Gen 2 display board's acks).
         channel: The channel the MCU's frames travel on: ``0f``, or ``11`` on
             the Prime Charger 160W.
+        burst: The push a trigger repeats on a timer, where the MCU has one.
+        commands: The firmware's command table: request msgtype -> the status
+            it acks with when no recording or layout answers, or None for no
+            reply (or none known).
+        past_table_status: The ack status of a request past the table's last
+            op; None where those are dropped.
+        factory_reset: The request msgtype that factory-resets the device: it
+            clears the settings and pairing, then the link drops.
 
     """
 
@@ -68,6 +90,21 @@ class McuScript:
     push_490: CG2_490 | None = None
     rejects: bool = True
     channel: int = CHANNEL_SESSION
+    burst: Burst | None = None
+    commands: Mapping[int, int | None] = field(default_factory=dict)
+    past_table_status: int | None = None
+    factory_reset: int | None = None
+
+    def state(self, values: Mapping[str, Value]) -> dict[str, Value]:
+        """Return every named value the recorded frames carry, ``values`` over them."""
+        layout = self.layout
+        if layout is None:
+            return dict(values)
+        recorded: dict[str, Value] = {}
+        for frames in (*self.replies.values(), self.pushes.values()):
+            for frame in frames:
+                recorded |= layout.read(frame.cmd.msgtype, frame.payload)
+        return recorded | dict(values)
 
     def respond(
         self,
@@ -75,44 +112,69 @@ class McuScript:
         *,
         request: bytes = b"",
         values: Mapping[str, Value] | None = None,
+        before: Mapping[str, Value] | None = None,
+        rtc: int = 0,
     ) -> list[Frame]:
-        """Return the frames answering a request; none for an unknown one.
+        """Return the frames answering a request; none for one the MCU drops.
 
         A listed request answers with its frames, an empty list being silence.
-        Where the layout maps the command and the MCU rejects, the reply's
-        status is the layout's check of the request's values.
+        Where the layout maps the command, the reply's status is the layout's
+        check of the request's values (always ``00`` on an MCU that doesn't
+        reject), and an accepted reply carries back the fields the layout
+        echoes, followed by the pushes its change draws; a handler the layout
+        marks silent sends only the pushes. Anything else gets the command
+        table's ack, if it has one.
 
         Args:
             msgtype: The request's 12-bit message type.
             request: The request's cleartext fields, checked against the layout.
             values: The device's telemetry values by name, set in every frame
                 that carries them.
+            before: The values before the request applied; None if it changed
+                nothing.
+            rtc: The MCU's RTC, local seconds, for a read that reports it.
 
         """
         layout = self.layout
-        mapped = layout is not None and layout.has_command(msgtype)
-        scripted = msgtype in self.replies
-        if scripted:
+        if msgtype in self.replies:
             frames = list(self.replies[msgtype])
-        elif mapped:
-            ack = REPLY.build(
-                {
-                    "status": STATUS_ACCEPTED,
-                    "fields": ROUTE_FIELD.build({"route": BLE_REPLY_ROUTE}),
-                }
-            )
-            frames = [mcu_frame(msgtype | RESPONSE, ack, self.channel)]
+        elif layout is not None and layout.has_command(msgtype):
+            status = layout.check(msgtype, request) if self.rejects else STATUS_ACCEPTED
+            if status != STATUS_ACCEPTED:
+                frames = [self._ack(msgtype, status)]
+            else:
+                after = self.state(values or {})
+                prior = after if before is None else self.state(before)
+                echoed = layout.reply_fields(msgtype, request, {**after, RTC: rtc})
+                frames = [
+                    *([] if echoed is None else [self._ack(msgtype, status, echoed)]),
+                    *(
+                        mcu_frame(push, payload, self.channel)
+                        for push, payload in layout.follow_ups(
+                            msgtype, request, prior, after
+                        )
+                    ),
+                ]
         else:
-            return []
-        if not scripted and layout is not None and mapped and self.rejects:
-            status = layout.check(msgtype, request)
-            frames = [
-                _with_status(frame, status)
-                if frame.cmd.msgtype == msgtype | RESPONSE
-                else frame
-                for frame in frames
-            ]
+            table_status = self._table_status(msgtype)
+            if table_status is None:
+                return []
+            return [self._ack(msgtype, table_status)]
         return [self._with_values(frame, values) for frame in frames]
+
+    def _ack(self, msgtype: int, status: int, echoed: bytes = b"") -> Frame:
+        """Return the ``<status> a1 01 31`` reply to ``msgtype``, then ``echoed``."""
+        route = ROUTE_FIELD.build({"route": BLE_REPLY_ROUTE})
+        ack = REPLY.build({"status": status, "fields": route + echoed})
+        return mcu_frame(msgtype | RESPONSE, ack, self.channel)
+
+    def _table_status(self, msgtype: int) -> int | None:
+        """Return the command table's ack status for ``msgtype``; None to drop it."""
+        if msgtype in self.commands:
+            return self.commands[msgtype]
+        if self.commands and msgtype > max(self.commands):
+            return self.past_table_status
+        return None
 
     def push(self, msgtype: int, *, values: Mapping[str, Value] | None = None) -> Frame:
         """Return the scripted push of ``msgtype``.

@@ -23,6 +23,16 @@ def exchange(
     return [reply for data in out.frames if (reply := client.open(data)) is not None]
 
 
+def connected_client(module: Module) -> AppClient:
+    """Return an encrypted-outer client whose ``4001`` the module has answered.
+
+    The app opens every link with it; it puts the link on the static GCM key.
+    """
+    client = AppClient()
+    exchange(module, client, 0x001, [(0xA1, TIMESTAMP)])
+    return client
+
+
 def negotiation_steps(
     client: AppClient, token: bytes
 ) -> list[tuple[int, list[tuple[int, bytes]]]]:

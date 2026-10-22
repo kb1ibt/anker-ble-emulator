@@ -36,6 +36,7 @@ from construct import (
     Int8ub,
     Int16ub,
     Int32ul,
+    OneOf,
     Peek,
     Struct,
     this,
@@ -57,12 +58,15 @@ ROUTE_LAYOUT = Struct(
 )
 #: MCU to BLE client.
 BLE_ROUTE = 0x31
-#: Millisecond epoch timestamps written as ASCII digits.
-EPOCH_MS = re.compile(rb"(?<![0-9])1[6-9][0-9]{11}(?![0-9])")
+#: Millisecond epoch timestamps written as ASCII digits; the AS200 appends a
+#: 14th digit.
+EPOCH_MS = re.compile(rb"(?<![0-9])1[6-9][0-9]{11,12}(?![0-9])")
 FIXED_EPOCH_MS = b"1790812800000"
-#: The typed trailer ``fe 05 03 <u32 LE unix time>``.
+#: The fixed clock by the length of the epoch it replaces.
+FIXED_EPOCHS = {len(FIXED_EPOCH_MS): FIXED_EPOCH_MS, 14: FIXED_EPOCH_MS + b"0"}
+#: The typed trailer ``fe 05 <03|04> <u32 LE unix time>``; the AS200 types it ``04``.
 TRAILER_TAG = 0xFE
-TRAILER_VALUE = Struct("type" / Const(b"\x03"), "time" / Int32ul)
+TRAILER_VALUE = Struct("type" / OneOf(Bytes(1), {b"\x03", b"\x04"}), "time" / Int32ul)
 #: A reply payload (status byte, then fields) and a push payload (fields only).
 STATUS_AND_BODY = Struct("status" / Bytes(1), "body" / GreedyBytes)
 BODY_ONLY = Struct("status" / Bytes(0), "body" / GreedyBytes)
@@ -113,13 +117,15 @@ class Sanitizer:
         data = cleartext
         for real, fake in self.replacements.items():
             data = data.replace(real, fake)
-        data = EPOCH_MS.sub(FIXED_EPOCH_MS, data)
+        data = EPOCH_MS.sub(lambda match: FIXED_EPOCHS[len(match[0])], data)
         data = fix_trailer(data)
         for value in self.forbidden:
             if value in data:
                 msg = f"forbidden value {value.hex()} remains"
                 raise SanitizeError(msg)
-        allowed = self.allowed | set(self.replacements.values()) | {FIXED_EPOCH_MS}
+        allowed = (
+            self.allowed | set(self.replacements.values()) | set(FIXED_EPOCHS.values())
+        )
         unknown = sorted(
             {run.group() for run in SUSPECT_RUN.finditer(data)} - allowed,
         )
@@ -173,10 +179,10 @@ def _fixed_time(tag: int, value: bytes) -> bytes:
     if tag != TRAILER_TAG or len(value) != TRAILER_VALUE.sizeof():
         return value
     try:
-        TRAILER_VALUE.parse(value)
+        trailer = TRAILER_VALUE.parse(value)
     except ConstructError:
         return value
-    return TRAILER_VALUE.build({"time": FIXED_UNIX_TIME})
+    return TRAILER_VALUE.build({"type": trailer.type, "time": FIXED_UNIX_TIME})
 
 
 def newest_frames(

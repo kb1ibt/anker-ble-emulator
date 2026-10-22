@@ -18,6 +18,7 @@ from construct import (
     Container,
     FocusedSeq,
     GreedyBytes,
+    Int8sb,
     Int8ub,
     Int16ul,
     Int32sl,
@@ -28,7 +29,7 @@ from construct import (
     Struct,
 )
 
-from .tlv import decode_fields
+from .tlv import decode_fields, field_starts
 
 
 if TYPE_CHECKING:
@@ -45,6 +46,9 @@ def field(tag: int, value: Construct[Any, Any]) -> Construct[Any, Any]:
     )
 
 
+#: ``002b a3``: whole hours east of UTC, then tenths of an hour.
+TIMEZONE_LAYOUT = Struct("hours" / Int8sb, "tenths" / Int8ub)
+
 #: Request fields by msgtype: tag to (name, value layout).
 REQUEST_FIELDS: dict[int, dict[int, tuple[str, Construct[Any, Any]]]] = {
     0x001: {0xA2: ("account", GreedyBytes)},
@@ -58,11 +62,22 @@ REQUEST_FIELDS: dict[int, dict[int, tuple[str, Construct[Any, Any]]]] = {
     },
     0x023: {0xA2: ("account", GreedyBytes)},
     0x027: {0xA2: ("token", GreedyBytes)},
+    0x02B: {
+        0xA1: ("time", Int32ul),
+        0xA2: ("account", GreedyBytes),
+        0xA3: ("timezone", TIMEZONE_LAYOUT),
+    },
 }
+#: Fields a handler loads at their layout's width from where the value starts,
+#: with no length check: a short value runs into the bytes after it.
+LOADED_FIELDS: dict[int, frozenset[int]] = {0x02B: frozenset({0xA1, 0xA3})}
 
 
 def parse_request(msgtype: int, payload: bytes) -> Fields:
     """Return a request's known fields by name; absent or malformed ones are None.
+
+    A ``LOADED_FIELDS`` value is read at full width from its start, zeros past
+    the payload's end.
 
     Args:
         msgtype: The request's msgtype.
@@ -73,13 +88,20 @@ def parse_request(msgtype: int, payload: bytes) -> Fields:
 
     """
     known = REQUEST_FIELDS.get(msgtype, {})
+    loaded = LOADED_FIELDS.get(msgtype, frozenset())
     request = Container({name: None for name, _ in known.values()})
-    for tag, value in decode_fields(payload).items():
+    fields = decode_fields(payload)
+    starts = field_starts(payload) if loaded else {}
+    for tag, value in fields.items():
         if tag not in known:
             continue
         name, layout = known[tag]
+        raw = value
+        if tag in loaded:
+            width = layout.sizeof()
+            raw = payload[starts[tag] : starts[tag] + width].ljust(width, b"\0")
         try:
-            request[name] = layout.parse(value)
+            request[name] = layout.parse(raw)
         except ConstructError:
             request[name] = None
     return request

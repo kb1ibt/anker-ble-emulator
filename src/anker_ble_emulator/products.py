@@ -95,6 +95,9 @@ class ModuleBuild(StrEnum):
     #: The C300 module.
     V0_2_9_8 = "v0.2.9.8"
     V0_3_0_6 = "v0.3.0.6"
+    #: The Alternator Charger's module, named by its ``f9`` module version; its
+    #: ``0829`` and ``0830`` aren't recorded.
+    V0_3_2_7 = "v0.3.2.7"
     #: Refuses a cleartext connect and a non-ECDH method, and gates ``0027``.
     V0_3_3_0 = "v0.3.3.0"
     #: A product whose module build isn't recorded.
@@ -116,8 +119,11 @@ class ModuleBuild(StrEnum):
 C_SESSION_OPS = frozenset(
     {0x20, 0x22, 0x23, 0x24, 0x25, 0x27, 0x28, 0x2D, 0x2E, 0x2F, 0x30, 0x35, 0x36, 0x38}
 )
-#: Session ops the Prime module (v0.2.9.7) answers on fid ``0x0f``.
-PRIME_SESSION_OPS = frozenset({0x20, 0x28, 0x2D, 0x2F, 0x30, 0x36})
+#: Session ops the Prime module (v0.2.9.7) answers on fid ``0x0f``: its inline
+#: split, and the WiFi handler's ``0x22``-``0x25``.
+PRIME_SESSION_OPS = frozenset(
+    {0x20, 0x22, 0x23, 0x24, 0x25, 0x28, 0x2D, 0x2F, 0x30, 0x36}
+)
 #: Session ops by build; an unrecorded build is known to answer only what was seen.
 SESSION_OPS = {
     ModuleBuild.CHARGING_0_0_5_0: frozenset[int](),
@@ -128,13 +134,14 @@ SESSION_OPS = {
     ModuleBuild.V0_2_9_7: PRIME_SESSION_OPS,
     ModuleBuild.V0_2_9_8: frozenset({0x30}),
     ModuleBuild.V0_3_0_6: C_SESSION_OPS,
+    ModuleBuild.V0_3_2_7: frozenset[int](),
     ModuleBuild.V0_3_3_0: C_SESSION_OPS,
     ModuleBuild.UNRECORDED: frozenset[int](),
 }
 
 
 class Product(StrEnum):
-    """Anker part numbers with a BLE client class or BLE evidence."""
+    """Anker part numbers the emulator has a device for."""
 
     A110B = "A110B"
     A1722 = "A1722"
@@ -147,14 +154,13 @@ class Product(StrEnum):
     A1781 = "A1781"
     A1783 = "A1783"
     A1785 = "A1785"
-    A1790 = "A1790"
-    A1790P = "A1790P"
     A17C0 = "A17C0"
     A17C1 = "A17C1"
     A2345 = "A2345"
     A25X7 = "A25X7"
     A2687 = "A2687"
     A91B2 = "A91B2"
+    AS200 = "AS200"
     AS220 = "AS220"
 
 
@@ -192,8 +198,6 @@ PRODUCTS: dict[Product, ProductInfo] = {
     Product.A1781: ProductInfo("SOLIX F2600", "F2600", "pps"),
     Product.A1783: ProductInfo("SOLIX C2000 Gen 2", "C2000G2", "pps"),
     Product.A1785: ProductInfo("SOLIX C2000X Gen 2", "C2000G2", "pps"),
-    Product.A1790: ProductInfo("SOLIX F3800", "F3800", "pps"),
-    Product.A1790P: ProductInfo("SOLIX F3800 Plus", "F3800", "pps"),
     #: SolixBLE has no Solarbank 1 class.
     Product.A17C0: ProductInfo("Solarbank E1600", "", "solarbank_1"),
     Product.A17C1: ProductInfo("Solarbank 2 E1600 Pro", "Solarbank2", "solarbank_2"),
@@ -203,6 +207,8 @@ PRODUCTS: dict[Product, ProductInfo] = {
     Product.A91B2: ProductInfo(
         "Prime Charging Station 240W", "PrimeChargingStation240w", "charger"
     ),
+    #: SolixBLE has no Alternator Charger class.
+    Product.AS200: ProductInfo("SOLIX Alternator Charger", "", "charger"),
     #: SolixBLE's ``AS220`` is in PR #65, not yet merged.
     Product.AS220: ProductInfo("SOLIX S2000", "AS220", "pps"),
 }

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from cryptography.exceptions import InvalidTag
 
 from .crypto import (
+    AES_BLOCK,
     DEFAULT_ACCOUNT,
     STATIC_GCM,
     STATIC_IV,
@@ -27,6 +28,7 @@ from .frame import (
     CHANNEL_APP,
     CHANNEL_NEGOTIATION,
     CHANNEL_SESSION,
+    CHANNEL_WIFI,
     COMPOSER_SEND,
     RESPONSE,
     FrameError,
@@ -76,12 +78,17 @@ MCU_OPCODE_MIN = 0x40
 MSGTYPE_GRANT = RESPONSE | 0x027
 #: ``0030``: the module's version read.
 MSGTYPE_VERSIONS = 0x030
+MSGTYPE_CONNECT = 0x001
+MSGTYPE_KEY_EXCHANGE = 0x021
 #: ``0022``: the clock set in ECDH mode, the legacy getAesKey confer in modes 1/2.
 MSGTYPE_CONFER = 0x022
 
 STATUS_OK = 0x00
 STATUS_FAIL = 0x01
+STATUS_ACCOUNT = 0x02
 STATUS_PARAMETER = 0x04
+#: The dispatcher's reply to an empty payload or a CBC one not whole blocks.
+STATUS_LENGTH = 0x08
 STATUS_NEED_AUTHENTICATION = 0x09
 
 #: ``0803 a1``: base capability bits, ``0x02`` = AES.
@@ -103,6 +110,29 @@ UNAUTHORIZED_LIMIT = 30.0
 CONFIRMATION_GRACE = 5.0
 #: The authorize timer's period; drops fire on its ticks.
 TIMER_PERIOD = 10.0
+#: How often the MCU's timed pushes are checked: the Prime MCU's 100 ms tick.
+PUSH_PERIOD = 0.1
+#: A factory reset's link drop follows its ack by the MCU's 10-tick debounce.
+FACTORY_RESET_DELAY = 10 * PUSH_PERIOD
+#: The MCU's RTC is a 32-bit seconds counter.
+RTC_MODULUS = 1 << 32
+#: ``set_utc_time_to_mcu`` forwards no UTC below this (2023-11-25 08:13:20).
+RTC_SYNC_MIN = 0x6561ACA0
+#: Session ops the WiFi handler takes, on fid ``0x0f`` and ``0x13`` only.
+WIFI_OPS = range(0x022, 0x026)
+
+
+def _handled_on(op: int, channel: int) -> bool:
+    """Return whether the module answers or relays session op ``op`` on ``channel``.
+
+    The relay serves fid ``0x0f``; the module's own ops answer on ``0x0f`` and
+    ``0x11``, except the WiFi handler's, which answer on ``0x0f`` and ``0x13``.
+    """
+    if op >= MCU_OPCODE_MIN:
+        return channel == CHANNEL_SESSION
+    if op in WIFI_OPS:
+        return channel in {CHANNEL_SESSION, CHANNEL_WIFI}
+    return channel in {CHANNEL_SESSION, CHANNEL_APP}
 
 
 class AuthMode(IntEnum):
@@ -212,6 +242,9 @@ class DeviceModule(Protocol):
     def check_timers(self) -> Output:
         """Run the module's own timers once, if it has any."""
 
+    def check_pushes(self) -> Output:
+        """Send the MCU's timed pushes that are due, if it has any."""
+
     def press_button(self) -> Output:
         """Simulate a press of the device's physical button."""
 
@@ -229,9 +262,11 @@ class _Link:
     authorized: bool = False
     auth_started_at: float | None = None
     pending_token: bytes | None = None
-    #: The CBC key/IV ``_connect`` installed; the legacy confer's request cipher.
-    handshake_key: bytes | None = None
-    handshake_iv: bytes | None = None
+    #: The MCU's burst: pushes still owed, and when the next is due.
+    burst_left: int = 0
+    burst_due: float = 0.0
+    #: When a factory reset drops the link; None if none is pending.
+    drop_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -293,6 +328,14 @@ class Module:
         self.values: dict[str, Value] = {}
         self._key_pair_factory = key_pair_factory
         self._link: _Link | None = None
+        #: When the MCU's RTC was last set, and the local seconds it was set to.
+        self._rtc_set: tuple[float, int] = (clock.now(), 0)
+        #: The ``0023`` account: RAM only, so it outlives a link but not a reboot.
+        self._account = b""
+        #: The port's key and IV, zeros at boot: an encrypted frame with no
+        #: session opens under them, CBC unless the link connected encrypted.
+        #: A new link keeps them.
+        self._port_context = (bytes(AES_BLOCK), bytes(AES_BLOCK))
 
     @property
     def connected(self) -> bool:
@@ -308,6 +351,12 @@ class Module:
     def fragment_cap(self) -> int:
         """The largest frame the link carries (ATT MTU - 3)."""
         return self.config.fragment_cap
+
+    @property
+    def rtc(self) -> int:
+        """The MCU's RTC: local seconds, counting from 0 until a clock set."""
+        set_at, seconds = self._rtc_set
+        return (seconds + int(self.clock.now() - set_at)) % RTC_MODULUS
 
     def connect(self) -> None:
         """Bring a link up with fresh state."""
@@ -343,7 +392,7 @@ class Module:
             return Output()
         if whole.pattern.channel == CHANNEL_NEGOTIATION:
             return self._negotiate(link, whole)
-        if whole.pattern.channel in {CHANNEL_SESSION, CHANNEL_APP}:
+        if whole.pattern.channel in {CHANNEL_SESSION, CHANNEL_APP, CHANNEL_WIFI}:
             return self._session(link, whole)
         return Output()
 
@@ -381,6 +430,25 @@ class Module:
             return Output()
         return self._relay(link, [self.mcu.push(msgtype, values=self.values)])
 
+    def check_pushes(self) -> Output:
+        """Send the MCU's burst pushes due by now, on an authorized link.
+
+        Drops the link instead once a factory reset's debounce has run out.
+        """
+        link, burst = self._link, self.mcu.burst
+        if link is None or not link.authorized:
+            return Output()
+        if link.drop_at is not None and self.clock.now() >= link.drop_at:
+            return Output(disconnect=True)
+        if burst is None:
+            return Output()
+        frames = []
+        while link.burst_left and self.clock.now() >= link.burst_due:
+            frames.append(self.mcu.push(burst.push, values=self.values))
+            link.burst_left -= 1
+            link.burst_due += burst.period
+        return self._relay(link, frames)
+
     def check_timers(self) -> Output:
         """Run the authorize timer once: drop an unauthorized link past its limit."""
         link = self._link
@@ -395,21 +463,55 @@ class Module:
     def _encode(self, frame: Frame) -> list[bytes]:
         return [encode(part) for part in fragment(frame, self.config.fragment_cap)]
 
-    def _negotiate(self, link: _Link, frame: Frame) -> Output:
-        if (
-            frame.cmd.msgtype == MSGTYPE_CONFER
-            and link.capability_mode == CapabilityMode.LEGACY
+    def _link_cipher(self, link: _Link) -> Cipher:
+        """Return the cipher an encrypted frame meets: the session, else the port's."""
+        if link.session is not None:
+            return link.session
+        if link.gcm_connect:
+            return STATIC_GCM
+        return CbcCipher(*self._port_context)
+
+    def _open(self, cipher: Cipher, frame: Frame) -> bytes | Output:
+        """Decrypt a frame as the dispatcher does, or return what it answers instead.
+
+        An empty payload, or a CBC one that isn't whole blocks, gets ``08``; one
+        that fails to decrypt gets ``01``; both sealed under ``cipher``, and the
+        link stays up. A negotiation ``0021`` drops either failure, ``0022`` a
+        failed decrypt.
+        """
+        payload = frame.payload
+        if not payload or (isinstance(cipher, CbcCipher) and len(payload) % AES_BLOCK):
+            status = STATUS_LENGTH
+        else:
+            try:
+                return cipher.decrypt(payload)
+            except (InvalidTag, ValueError):
+                status = STATUS_FAIL
+        msgtype = frame.cmd.msgtype
+        if frame.pattern.channel == CHANNEL_NEGOTIATION and (
+            msgtype == MSGTYPE_KEY_EXCHANGE
+            or (msgtype == MSGTYPE_CONFER and status == STATUS_FAIL)
         ):
+            _LOGGER.warning("Dropped undecryptable %03x", msgtype)
+            return Output()
+        reply = cipher.encrypt(STATUS_REPLY.build({"status": status}))
+        return Output(self._encode(reply_frame(frame, reply)))
+
+    def _negotiate(self, link: _Link, frame: Frame) -> Output:
+        msgtype = frame.cmd.msgtype
+        if msgtype == MSGTYPE_CONNECT and frame.cmd.encrypted:
+            link.gcm_connect, link.session = True, None
+            self._port_context = (STATIC_KEY, STATIC_IV)
+        if msgtype == MSGTYPE_CONFER and link.capability_mode == CapabilityMode.LEGACY:
             return self._legacy_confer(link, frame)
         cipher: Cipher | None = None
         plaintext = frame.payload
         if frame.cmd.encrypted:
-            cipher = link.session or STATIC_GCM
-            try:
-                plaintext = cipher.decrypt(frame.payload)
-            except (InvalidTag, ValueError):
-                _LOGGER.warning("Dropped undecryptable %03x", frame.cmd.msgtype)
-                return Output()
+            cipher = self._link_cipher(link)
+            opened = self._open(cipher, frame)
+            if isinstance(opened, Output):
+                return opened
+            plaintext = opened
         try:
             fields = parse_request(frame.cmd.msgtype, plaintext)
         except FieldError:
@@ -427,24 +529,19 @@ class Module:
     def _legacy_confer(self, link: _Link, frame: Frame) -> Output:
         """Handle the legacy getAesKey exchange (``0022``, capability mode 1).
 
-        Decrypts under the handshake context ``_connect`` installed, never
-        the session or static-GCM cipher, and authorizes the link without a
-        ``0027``.
+        Decrypts CBC under the port context ``_connect`` installed, never the
+        session or static-GCM cipher, and authorizes the link without a
+        ``0027``. The derived key replaces the port's key.
         """
-        if (
-            not frame.cmd.encrypted
-            or link.handshake_key is None
-            or link.handshake_iv is None
-        ):
+        if not frame.cmd.encrypted:
             return Output()
-        request_cipher = CbcCipher(link.handshake_key, link.handshake_iv)
+        iv = self._port_context[1]
+        request_cipher = CbcCipher(*self._port_context)
+        opened = self._open(request_cipher, frame)
+        if isinstance(opened, Output):
+            return opened
         try:
-            plaintext = request_cipher.decrypt(frame.payload)
-        except ValueError:
-            _LOGGER.warning("Dropped undecryptable legacy confer")
-            return Output()
-        try:
-            fields = parse_request(frame.cmd.msgtype, plaintext)
+            fields = parse_request(frame.cmd.msgtype, opened)
         except FieldError:
             _LOGGER.warning("Dropped legacy confer with malformed fields")
             return Output()
@@ -456,8 +553,9 @@ class Module:
             link.session = GcmCipher(key, STATIC_NONCE)
             reply_payload = STATIC_GCM.encrypt(payload)
         else:
-            link.session = CbcCipher(key, link.handshake_iv)
+            link.session = CbcCipher(key, iv)
             reply_payload = request_cipher.encrypt(payload)
+        self._port_context = (key, iv)
         link.authorized = True
         return Output(self._encode(reply_frame(frame, reply_payload)))
 
@@ -472,6 +570,7 @@ class Module:
             0x022: self._clock,
             0x023: self._bind,
             0x027: self._authenticate,
+            0x02B: self._set_utc_time,
         }
         handler = handlers.get(request.frame.cmd.msgtype)
         return Output() if handler is None else handler(request)
@@ -487,12 +586,14 @@ class Module:
             return Output(disconnect=True)
         link.gcm_connect = encrypted
         link.capability_mode = CapabilityMode.NONE
-        if encrypted:
-            link.handshake_key, link.handshake_iv = STATIC_KEY, STATIC_IV
-        else:
+        if not encrypted:
             account = request.fields.account or DEFAULT_ACCOUNT
-            link.handshake_key = account[:16]
-            link.handshake_iv = (self.config.serial or b"")[:16]
+            serial = self.config.serial or b""
+            link.session = None
+            self._port_context = (
+                account[:AES_BLOCK].ljust(AES_BLOCK, b"\0"),
+                serial[:AES_BLOCK].ljust(AES_BLOCK, b"\0"),
+            )
         return _Reply(
             CONNECT_REPLY.build({"status": STATUS_OK, "connect_type": CONNECT_TYPE})
         )
@@ -565,6 +666,7 @@ class Module:
         except ValueError:
             return _status(STATUS_FAIL)
         link.session = session_gcm(secret) if link.gcm_connect else session_cbc(secret)
+        self._port_context = (secret[:AES_BLOCK], secret[AES_BLOCK : 2 * AES_BLOCK])
         link.ecdh_done = True
         if not link.gcm_connect:
             link.authorized = True
@@ -575,17 +677,49 @@ class Module:
         )
 
     def _clock(self, request: _Request) -> _Reply | Output:
+        """Set the MCU's RTC to local time: ``a1`` UTC less ``a3``, seconds west.
+
+        A UTC before ``RTC_SYNC_MIN`` is acked but never reaches the RTC.
+        """
         if request.link.capability_mode != CapabilityMode.ECDH:
             return Output()
         if not request.frame.cmd.encrypted:
             return _status(STATUS_FAIL)
-        if request.fields.time is None or request.fields.utc_offset is None:
+        time, utc_offset = request.fields.time, request.fields.utc_offset
+        if time is None or utc_offset is None:
             return _status(STATUS_PARAMETER)
+        self._set_rtc(time, utc_offset)
         return _status(STATUS_OK)
+
+    def _set_utc_time(self, request: _Request) -> _Reply:
+        """Set the RTC from ``a1`` UTC and the ``a3`` zone, for the bound account.
+
+        ``a2`` passes if the stored account starts with it. The zone's sign
+        reaches the hours only, so a zone west of UTC lands as many hours east.
+        """
+        fields = request.fields
+        if fields.time is None or fields.account is None or fields.timezone is None:
+            return _status(STATUS_PARAMETER)
+        account = fields.account
+        if self._account.ljust(len(account), b"\0")[: len(account)] != account:
+            return _status(STATUS_ACCOUNT)
+        hours, tenths = fields.timezone.hours, fields.timezone.tenths
+        east = abs(hours) * 3600 + (tenths * 360 if hours >= 0 else -tenths * 360)
+        self._set_rtc(fields.time, -east)
+        return _status(STATUS_OK)
+
+    def _set_rtc(self, time: int, utc_offset: int) -> None:
+        """Set the RTC to ``time`` less ``utc_offset`` seconds west.
+
+        A UTC before ``RTC_SYNC_MIN`` never reaches the RTC.
+        """
+        if time >= RTC_SYNC_MIN:
+            self._rtc_set = (self.clock.now(), (time - utc_offset) % RTC_MODULUS)
 
     def _bind(self, request: _Request) -> _Reply:
         if request.fields.account is None:
             return _status(STATUS_PARAMETER)
+        self._account = request.fields.account
         return _Reply(
             BIND_REPLY.build({"status": STATUS_OK, "serial": self.config.serial})
         )
@@ -619,15 +753,14 @@ class Module:
             return Output()
         plaintext = frame.payload
         if frame.cmd.encrypted:
-            try:
-                plaintext = session.decrypt(frame.payload)
-            except (InvalidTag, ValueError):
-                _LOGGER.warning("Dropped undecryptable %03x", frame.cmd.msgtype)
-                return Output()
+            opened = self._open(session, frame)
+            if isinstance(opened, Output):
+                return opened
+            plaintext = opened
         msgtype = frame.cmd.msgtype
+        if not _handled_on(msgtype & ~RESPONSE, frame.pattern.channel):
+            return Output()
         if msgtype & ~RESPONSE >= MCU_OPCODE_MIN:
-            if frame.pattern.channel == CHANNEL_APP:
-                return Output()
             return self._route(link, frame, plaintext)
         reply = self.config.session_replies.get(msgtype)
         versions = self.config.versions
@@ -651,17 +784,32 @@ class Module:
             return Output(self._encode(reply_frame(frame, reply)))
         if (route.destination, route.source) != (ROUTE_MCU, ROUTE_BLE):
             return Output()
+        before = dict(self.values)
         self._apply(frame.cmd.msgtype, plaintext)
         frames = self.mcu.respond(
-            frame.cmd.msgtype, request=plaintext, values=self.values
+            frame.cmd.msgtype,
+            request=plaintext,
+            values=self.values,
+            before=before,
+            rtc=self.rtc,
         )
+        if frame.cmd.msgtype == self.mcu.factory_reset:
+            self.enrolled.clear()
+            self.values.clear()
+            link.drop_at = self.clock.now() + FACTORY_RESET_DELAY
+        burst = self.mcu.burst
+        if burst is not None and frame.cmd.msgtype == burst.trigger:
+            frames.append(self.mcu.push(burst.push, values=self.values))
+            link.burst_left = burst.count - 1
+            link.burst_due = self.clock.now() + burst.period
         return self._relay(link, frames)
 
     def _apply(self, msgtype: int, plaintext: bytes) -> None:
         """Show an accepted command's settings in the telemetry that carries them."""
         layout = self.mcu.layout
         if layout is not None:
-            self.values.update(layout.state_changes(msgtype, plaintext))
+            state = self.mcu.state(self.values)
+            self.values.update(layout.state_changes(msgtype, plaintext, state))
 
     def _relay(self, link: _Link, frames: list[Frame]) -> Output:
         """Encrypt the MCU's cleartext frames for the session and send them."""

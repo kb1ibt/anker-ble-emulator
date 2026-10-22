@@ -73,7 +73,7 @@ async def test_control_command_is_silent_but_updates_the_next_poll() -> None:
         )
         await settle()
 
-    assert TELEMETRY_FRAME.parse(received[0]).body.value.ac_output == 0
+    assert TELEMETRY_FRAME.parse(received[0]).body.value.ac_output_status == 0
 
 
 def test_advertisement_shows_the_f2000_name_and_reversed_mac() -> None:

@@ -2,6 +2,7 @@
 """Emulated devices: profile defaults, options, the advertisement and recorded data."""
 
 import inspect
+from dataclasses import replace
 
 import pytest
 from construct import ConstructError
@@ -187,6 +188,17 @@ def test_recorded_replies_and_pushes_are_scripted() -> None:
         frame.pattern.channel == 0x0F and not frame.cmd.encrypted
         for frame in script.respond(0x100)
     )
+
+
+def test_an_mcu_state_is_its_recordings_named_values_under_the_set_ones() -> None:
+    script = A2345().mcu
+
+    state = script.state({"charging_mode": 3})
+
+    assert state["charging_mode"] == 3
+    assert state["custom_charge_profile"] == bytes.fromhex("010046412d2d18")
+    unnamed = replace(script, layout=None)
+    assert unnamed.state({"charging_mode": 3}) == {"charging_mode": 3}
 
 
 def test_recorded_identity_fields_are_the_synthetic_ones() -> None:

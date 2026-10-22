@@ -3,17 +3,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from anker_ble_emulator.module import AuthMode
-from anker_ble_emulator.products import ModuleBuild, Outer, Path, Product, Transport
+from anker_ble_emulator.products import ModuleBuild, Outer, Path, Product
 
 from . import solix_c_gen2
-from .base import DEFAULT_MAC, UNSET, Advert, EmulatedDevice, Profile, Unset, register
+from .base import Advert, ProductDevice, Profile, register
 
-
-if TYPE_CHECKING:
-    from anker_ble_emulator.clock import Clock
 
 #: Its frames report ``A1783``, so its version names do too.
 PROFILE = Profile(
@@ -44,30 +39,7 @@ PROFILE = Profile(
 register(Product.A1785, PROFILE)
 
 
-class A1785(EmulatedDevice):
+class A1785(ProductDevice):
     """SOLIX C2000X Gen 2: encrypted outer, ECDH, owner confirmation by button."""
 
-    def __init__(  # noqa: PLR0913  # the identity plus the four protocol choices
-        self,
-        serial: str | Unset | None = UNSET,
-        mac: str = DEFAULT_MAC,
-        transport: Transport | None = None,
-        *,
-        outer: Outer | None = None,
-        path: Path | None = None,
-        module: ModuleBuild | None = None,
-        clock: Clock | None = None,
-        mtu: int | None = None,
-    ) -> None:
-        """Build a C2000X Gen 2; see ``EmulatedDevice``."""
-        super().__init__(
-            Product.A1785,
-            serial,
-            mac,
-            transport,
-            outer=outer,
-            path=path,
-            module=module,
-            clock=clock,
-            mtu=mtu,
-        )
+    PRODUCT = Product.A1785

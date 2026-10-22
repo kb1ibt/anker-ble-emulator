@@ -12,8 +12,15 @@ from anker_ble_emulator.crypto import (
     CbcCipher,
     GcmCipher,
 )
-from anker_ble_emulator.frame import CHANNEL_APP, decode, encode, fragment, make_frame
-from anker_ble_emulator.module import AuthMode
+from anker_ble_emulator.frame import (
+    CHANNEL_APP,
+    CHANNEL_WIFI,
+    decode,
+    encode,
+    fragment,
+    make_frame,
+)
+from anker_ble_emulator.module import AuthMode, Output
 from anker_ble_emulator.tlv import encode_fields
 from tests.fixtures.client import (
     NEGOTIATION,
@@ -23,6 +30,7 @@ from tests.fixtures.client import (
     AppClient,
     cmd_hex,
     confer_request,
+    connected_client,
     exchange,
     negotiate,
     open_confer_reply,
@@ -47,8 +55,14 @@ FRAME_4803 = bytes.fromhex(
 )
 #: ``0830 a1``: the module firmware version.
 VERSION_REPLY = bytes.fromhex("00a10876302e332e332e30")
+#: ``0822`` on fid ``0x0f``: the scanWifi reply (A1783).
+SCAN_WIFI_REPLY = bytes.fromhex("00a10109")
 #: A session request's route: from BLE to the module or MCU.
 BLE_ROUTE = [(0xA1, b"\x21")]
+#: ``0023 a2``: the account a bind stores.
+ACCOUNT = b"an-account-id"
+#: ``002b a3``: five hours west of UTC, as hours then tenths.
+ZONE_WEST = b"\xfb\x00"
 
 
 def test_stage_one_and_two_replies_match_the_recorded_frames() -> None:
@@ -110,7 +124,7 @@ def test_session_replies_with_equal_plaintext_have_equal_bodies() -> None:
 
 def test_key_exchange_reply_is_under_the_static_key() -> None:
     rig = build_module()
-    client = AppClient()
+    client = connected_client(rig.module)
     exchange(rig.module, client, 0x005, [(0xA5, b"\x44")])
 
     replies = exchange(rig.module, client, 0x021, [(0xA1, client.public_point)])
@@ -175,6 +189,17 @@ def test_push_goes_out_once_authorized() -> None:
     assert reply.plaintext == PUSH
 
 
+def test_an_mcu_without_a_burst_has_no_timed_pushes() -> None:
+    rig = build_module()
+    negotiate(rig.module, AppClient(), ENROLLED_TOKEN)
+    rig.clock.advance(60)
+
+    out = rig.module.check_pushes()
+
+    assert rig.module.authorized
+    assert out == Output()
+
+
 def test_unauthorized_link_reaches_no_mcu() -> None:
     rig = build_module()
     client = AppClient()
@@ -230,7 +255,7 @@ def test_cleartext_connect_is_dropped_under_enforcement() -> None:
 
 def test_non_ecdh_method_is_refused_under_enforcement() -> None:
     rig = build_module()
-    client = AppClient()
+    client = connected_client(rig.module)
 
     replies = exchange(rig.module, client, 0x005, [(0xA5, b"\x02")])
 
@@ -249,14 +274,16 @@ def test_non_ecdh_method_is_refused_under_enforcement() -> None:
 def test_method_choice(method: bytes, status: int) -> None:
     rig = build_module()
 
-    replies = exchange(rig.module, AppClient(), 0x005, [(0xA5, method)])
+    replies = exchange(
+        rig.module, connected_client(rig.module), 0x005, [(0xA5, method)]
+    )
 
     assert replies[0].status == status
 
 
 def test_key_exchange_without_an_ecdh_choice_answers_bare() -> None:
     rig = build_module()
-    client = AppClient()
+    client = connected_client(rig.module)
 
     replies = exchange(rig.module, client, 0x021, [(0xA1, client.public_point)])
 
@@ -275,7 +302,7 @@ def test_key_exchange_rejects_a_bad_point(
     fields: list[tuple[int, bytes]], status: int
 ) -> None:
     rig = build_module()
-    client = AppClient()
+    client = connected_client(rig.module)
     exchange(rig.module, client, 0x005, [(0xA5, b"\x44")])
 
     replies = exchange(rig.module, client, 0x021, fields)
@@ -286,7 +313,9 @@ def test_key_exchange_rejects_a_bad_point(
 def test_capabilities_without_mtu_fields_is_a_parameter_error() -> None:
     rig = build_module()
 
-    replies = exchange(rig.module, AppClient(), 0x003, [(0xA1, TIMESTAMP)])
+    replies = exchange(
+        rig.module, connected_client(rig.module), 0x003, [(0xA1, TIMESTAMP)]
+    )
 
     assert replies[0].status == 0x04
 
@@ -296,7 +325,7 @@ def test_auth_method_is_absent_on_the_older_shape() -> None:
 
     replies = exchange(
         rig.module,
-        AppClient(),
+        connected_client(rig.module),
         0x003,
         [(0xA3, b"\x20"), (0xA4, bytes.fromhex("00f0"))],
     )
@@ -360,7 +389,9 @@ def test_authentication_rejects_a_bad_token(fields: list[tuple[int, bytes]]) -> 
 def test_authentication_before_the_key_exchange_fails_under_enforcement() -> None:
     rig = build_module()
 
-    replies = exchange(rig.module, AppClient(), 0x027, [(0xA2, ENROLLED_TOKEN)])
+    replies = exchange(
+        rig.module, connected_client(rig.module), 0x027, [(0xA2, ENROLLED_TOKEN)]
+    )
 
     assert replies[0].status == 0x01
 
@@ -378,13 +409,128 @@ def test_clock_needs_its_time_and_offset() -> None:
 def test_clock_before_an_ecdh_choice_gets_no_reply() -> None:
     rig = build_module()
 
-    assert exchange(rig.module, AppClient(), 0x022, [(0xA1, TIMESTAMP)]) == []
+    client = connected_client(rig.module)
+
+    assert exchange(rig.module, client, 0x022, [(0xA1, TIMESTAMP)]) == []
+
+
+@pytest.mark.parametrize(
+    ("zone", "east"),
+    [
+        pytest.param(b"\x05\x05", 19800, id="5.5 h east"),
+        pytest.param(ZONE_WEST, 18000, id="5 h west lands 5 h east"),
+        pytest.param(b"\xfb\x05", 16200, id="5.5 h west lands 4.5 h east"),
+    ],
+)
+def test_a_utc_time_set_puts_the_rtc_on_its_zone(zone: bytes, east: int) -> None:
+    """a1783-control.md ``0x02b``: west of UTC, only the hours lose their sign."""
+    rig = build_module()
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+    exchange(rig.module, client, 0x023, [(0xA2, ACCOUNT)])
+
+    replies = exchange(
+        rig.module, client, 0x02B, [(0xA1, TIMESTAMP), (0xA2, ACCOUNT), (0xA3, zone)]
+    )
+
+    assert [(cmd_hex(reply.frame), reply.status) for reply in replies] == [("482b", 0)]
+    assert rig.module.rtc == 0x6AA7691A + east
+
+
+@pytest.mark.parametrize(
+    ("account", "status"),
+    [
+        pytest.param(ACCOUNT, 0x00, id="bound account"),
+        pytest.param(ACCOUNT[:4], 0x00, id="prefix"),
+        pytest.param(b"", 0x00, id="empty"),
+        pytest.param(b"another-account", 0x02, id="other account"),
+    ],
+)
+def test_a_utc_time_set_checks_its_account_against_the_bind(
+    account: bytes, status: int
+) -> None:
+    rig = build_module()
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+    exchange(rig.module, client, 0x023, [(0xA2, ACCOUNT)])
+
+    replies = exchange(
+        rig.module,
+        client,
+        0x02B,
+        [(0xA1, TIMESTAMP), (0xA2, account), (0xA3, ZONE_WEST)],
+    )
+
+    assert [reply.status for reply in replies] == [status]
+
+
+@pytest.mark.parametrize("missing", [0xA1, 0xA2, 0xA3])
+def test_a_utc_time_set_needs_all_three_fields(missing: int) -> None:
+    rig = build_module()
+    fields = [(0xA1, TIMESTAMP), (0xA2, b""), (0xA3, ZONE_WEST)]
+
+    replies = exchange(
+        rig.module,
+        AppClient(encrypted_outer=False),
+        0x02B,
+        [(tag, value) for tag, value in fields if tag != missing],
+    )
+
+    assert [reply.status for reply in replies] == [0x04]
+
+
+def test_a_zero_length_zone_loads_the_bytes_after_it() -> None:
+    """a1783-control.md ``0x02b``: no length check, so ``a3`` reads ``a1 04``."""
+    rig = build_module()
+
+    replies = exchange(
+        rig.module,
+        AppClient(encrypted_outer=False),
+        0x02B,
+        [(0xA2, b""), (0xA3, b""), (0xA1, TIMESTAMP)],
+    )
+
+    assert [reply.status for reply in replies] == [0x00]
+    assert rig.module.rtc == 0x6AA7691A + 95 * 3600 - 4 * 360
+
+
+def test_a_cleartext_utc_time_set_before_the_sync_floor_is_acked_only() -> None:
+    rig = build_module()
+    rtc = rig.module.rtc
+
+    replies = exchange(
+        rig.module,
+        AppClient(encrypted_outer=False),
+        0x02B,
+        [(0xA1, b"\x9f\xac\x61\x65"), (0xA2, b""), (0xA3, ZONE_WEST)],
+    )
+
+    assert [(cmd_hex(reply.frame), reply.status) for reply in replies] == [("082b", 0)]
+    assert rig.module.rtc == rtc
+
+
+def test_the_bound_account_outlives_the_link_but_not_the_module() -> None:
+    rig = build_module()
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+    exchange(rig.module, client, 0x023, [(0xA2, ACCOUNT)])
+    set_time = [(0xA1, TIMESTAMP), (0xA2, ACCOUNT), (0xA3, ZONE_WEST)]
+    rig.module.disconnect()
+    rig.module.connect()
+
+    kept = exchange(rig.module, AppClient(encrypted_outer=False), 0x02B, set_time)
+    rebooted = exchange(
+        build_module().module, AppClient(encrypted_outer=False), 0x02B, set_time
+    )
+
+    assert [reply.status for reply in kept] == [0x00]
+    assert [reply.status for reply in rebooted] == [0x02]
 
 
 def test_unknown_negotiation_opcode_gets_no_reply() -> None:
     rig = build_module()
 
-    assert exchange(rig.module, AppClient(), 0x00B, []) == []
+    assert exchange(rig.module, connected_client(rig.module), 0x00B, []) == []
 
 
 def test_unrecorded_module_session_opcode_gets_no_reply() -> None:
@@ -481,6 +627,47 @@ def test_an_mcu_request_on_fid_0x11_gets_no_reply() -> None:
     assert out.frames == []
 
 
+@pytest.mark.parametrize(
+    ("msgtype", "channel", "patterns"),
+    [
+        pytest.param(0x022, SESSION, ["03000f"], id="WiFi op on 0x0f"),
+        pytest.param(0x022, CHANNEL_WIFI, ["030013"], id="WiFi op on 0x13"),
+        pytest.param(0x022, CHANNEL_APP, [], id="WiFi op on 0x11"),
+        pytest.param(0x030, CHANNEL_APP, ["030011"], id="module op on 0x11"),
+        pytest.param(0x030, CHANNEL_WIFI, [], id="module op on 0x13"),
+        pytest.param(0x100, CHANNEL_WIFI, [], id="MCU op on 0x13"),
+    ],
+)
+def test_a_session_op_answers_only_on_the_channels_its_handler_serves(
+    msgtype: int, channel: int, patterns: list[str]
+) -> None:
+    rig = build_module(session_replies={0x022: SCAN_WIFI_REPLY, 0x030: VERSION_REPLY})
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+
+    out = rig.module.write(client.request(msgtype, BLE_ROUTE, channel))
+
+    replies = [client.open(frame) for frame in out.frames]
+    assert [pattern_hex(reply.frame) for reply in replies if reply] == patterns
+
+
+def test_a_session_0022_is_the_wifi_scan_and_leaves_the_rtc_alone() -> None:
+    rig = build_module(session_replies={0x022: SCAN_WIFI_REPLY})
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+    rtc = rig.module.rtc
+    later = bytes.fromhex("00000070")
+
+    out = rig.module.write(
+        client.request(0x022, [(0xA1, later), (0xA3, UTC_OFFSET)], SESSION)
+    )
+
+    reply = client.open(out.frames[0])
+    assert reply is not None
+    assert reply.plaintext == SCAN_WIFI_REPLY
+    assert rig.module.rtc == rtc
+
+
 def test_a_request_with_malformed_fields_gets_no_reply() -> None:
     rig = build_module()
     client = AppClient()
@@ -500,13 +687,9 @@ def test_a_request_with_malformed_fields_gets_no_reply() -> None:
     [
         pytest.param(b"\x00\x01", id="not a frame"),
         pytest.param(
-            encode(make_frame(0x00, 0x01, 0x001, bytes(20), encrypted=True)),
-            id="bad tag",
-        ),
-        pytest.param(
             encode(make_frame(0x00, 0x01, 0x001, b"\xa1\x09")), id="bad fields"
         ),
-        pytest.param(encode(make_frame(0x00, 0x13, 0x022)), id="other channel"),
+        pytest.param(encode(make_frame(0x00, 0x10, 0x022)), id="other channel"),
     ],
 )
 def test_bad_writes_are_dropped(data: bytes) -> None:
@@ -518,15 +701,186 @@ def test_bad_writes_are_dropped(data: bytes) -> None:
     assert not out.disconnect
 
 
-def test_undecryptable_session_request_is_dropped() -> None:
+@pytest.mark.parametrize(
+    ("channel", "msgtype", "cmd", "pattern"),
+    [
+        pytest.param(SESSION, 0x100, "4900", "03000f", id="session"),
+        pytest.param(NEGOTIATION, 0x023, "4823", "030001", id="negotiation"),
+    ],
+)
+def test_an_undecryptable_request_gets_a_sealed_01_and_the_link_stays_up(
+    channel: int, msgtype: int, cmd: str, pattern: str
+) -> None:
+    """anker-crypto-and-negotiation.md "Decrypt-failure ``01``": 17 B, ``01`` + tag."""
     rig = build_module()
-    negotiate(rig.module, AppClient(), ENROLLED_TOKEN)
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
 
     out = rig.module.write(
-        encode(make_frame(0x00, SESSION, 0x100, bytes(20), encrypted=True))
+        encode(make_frame(0x00, channel, msgtype, bytes(20), encrypted=True))
+    )
+
+    reply = client.open(out.frames[0])
+    assert reply is not None
+    assert (cmd_hex(reply.frame), pattern_hex(reply.frame)) == (cmd, pattern)
+    assert len(reply.frame.payload) == 17
+    assert reply.plaintext == b"\x01"
+    assert not out.disconnect
+    assert rig.module.connected
+
+
+@pytest.mark.parametrize(
+    ("payload", "status"),
+    [
+        pytest.param(b"", 0x08, id="empty"),
+        pytest.param(bytes(8), 0x01, id="shorter than a tag"),
+    ],
+)
+def test_a_gcm_request_with_no_room_for_a_tag(payload: bytes, status: int) -> None:
+    rig = build_module()
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+
+    out = rig.module.write(
+        encode(make_frame(0x00, SESSION, 0x100, payload, encrypted=True))
+    )
+
+    reply = client.open(out.frames[0])
+    assert reply is not None
+    assert reply.plaintext == bytes([status])
+
+
+def test_an_encrypted_connect_with_a_bad_body_gets_01_under_the_static_key() -> None:
+    rig = build_module()
+
+    out = rig.module.write(
+        encode(make_frame(0x00, NEGOTIATION, 0x001, bytes(20), encrypted=True))
+    )
+
+    assert STATIC_GCM.decrypt(decode(out.frames[0]).payload) == b"\x01"
+
+
+def test_an_encrypted_request_before_any_connect_meets_the_zeroed_cbc_context() -> None:
+    """A GCM-sealed ``4003`` (29 B) isn't whole CBC blocks: ``08`` under zeros."""
+    rig = build_module()
+
+    replies = rig.module.write(
+        AppClient().request(
+            0x003, [(0xA1, TIMESTAMP), (0xA3, b"\x20"), (0xA4, b"\x00\xf0")]
+        )
+    )
+
+    reply = decode(replies.frames[0])
+    assert cmd_hex(reply) == "4803"
+    assert CbcCipher(bytes(16), bytes(16)).decrypt(reply.payload) == b"\x08"
+
+
+def test_a_new_link_keeps_the_last_links_port_context() -> None:
+    rig = build_module(auth_mode=AuthMode.OPEN, enforce=False)
+    exchange(rig.module, AppClient(encrypted_outer=False), 0x001, [(0xA2, ACCOUNT)])
+    rig.module.disconnect()
+    rig.module.connect()
+    context = CbcCipher(ACCOUNT.ljust(16, b"\0"), TEST_SERIAL[:16])
+    zero_pad = context.encrypt(bytes(16))[:16]
+
+    out = rig.module.write(
+        encode(make_frame(0x00, NEGOTIATION, 0x003, zero_pad, encrypted=True))
+    )
+
+    assert context.decrypt(decode(out.frames[0]).payload) == b"\x01"
+
+
+@pytest.mark.parametrize(
+    "payload", [pytest.param(b"", id="empty"), pytest.param(bytes(20), id="bad tag")]
+)
+def test_an_undecryptable_key_exchange_is_dropped(payload: bytes) -> None:
+    rig = build_module()
+    client = AppClient()
+    exchange(rig.module, client, 0x001, [])
+    exchange(rig.module, client, 0x005, [(0xA5, b"\x44")])
+
+    out = rig.module.write(
+        encode(make_frame(0x00, NEGOTIATION, 0x021, payload, encrypted=True))
     )
 
     assert out.frames == []
+
+
+@pytest.mark.parametrize(
+    ("payload", "statuses"),
+    [
+        pytest.param(b"", [0x08], id="empty"),
+        pytest.param(bytes(20), [], id="bad tag"),
+    ],
+)
+def test_an_undecryptable_clock_set_gets_08_or_nothing(
+    payload: bytes, statuses: list[int]
+) -> None:
+    rig = build_module()
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+
+    out = rig.module.write(
+        encode(make_frame(0x00, NEGOTIATION, 0x022, payload, encrypted=True))
+    )
+
+    replies = [client.open(data) for data in out.frames]
+    assert [reply.status for reply in replies if reply] == statuses
+
+
+def test_a_cbc_request_checks_only_its_last_pad_byte() -> None:
+    """``decrypt_aes_cbc``: pad ``09 09 09 04`` strips 4 bytes uncompared."""
+    rig = build_module(auth_mode=AuthMode.OPEN, enforce=False)
+    client = AppClient(encrypted_outer=False)
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+    assert client.session is not None
+    block = b"\xa1\x01\x21\xa2\x07" + bytes(7) + b"\x09\x09\x09\x04"
+
+    out = rig.module.write(
+        encode(
+            make_frame(
+                0x00, SESSION, 0x057, client.session.encrypt(block)[:16], encrypted=True
+            )
+        )
+    )
+
+    reply = client.open(out.frames[0])
+    assert reply is not None
+    assert reply.plaintext == ACK_REPLY
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [pytest.param(b"", id="empty"), pytest.param(bytes(20), id="part block")],
+)
+def test_a_cbc_request_that_is_not_whole_blocks_gets_08(payload: bytes) -> None:
+    rig = build_module(auth_mode=AuthMode.OPEN, enforce=False)
+    client = AppClient(encrypted_outer=False)
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+
+    out = rig.module.write(
+        encode(make_frame(0x00, SESSION, 0x100, payload, encrypted=True))
+    )
+
+    reply = client.open(out.frames[0])
+    assert reply is not None
+    assert reply.plaintext == b"\x08"
+
+
+def test_a_cbc_request_with_bad_padding_gets_01() -> None:
+    rig = build_module(auth_mode=AuthMode.OPEN, enforce=False)
+    client = AppClient(encrypted_outer=False)
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+    assert client.session is not None
+    unpadded = client.session.encrypt(bytes(16))[:16]
+
+    out = rig.module.write(
+        encode(make_frame(0x00, SESSION, 0x100, unpadded, encrypted=True))
+    )
+
+    reply = client.open(out.frames[0])
+    assert reply is not None
+    assert reply.plaintext == b"\x01"
 
 
 def test_write_without_a_link_raises() -> None:
@@ -583,7 +937,7 @@ def test_timer_without_a_link_does_nothing() -> None:
 
 def test_fragmented_request_is_answered_once_complete() -> None:
     rig = build_module()
-    client = AppClient()
+    client = connected_client(rig.module)
     exchange(rig.module, client, 0x005, [(0xA5, b"\x44")])
     whole = decode(client.request(0x021, [(0xA1, client.public_point)]))
     first, second = fragment(whole, 60)
@@ -621,7 +975,7 @@ def test_cleartext_session_request_is_relayed() -> None:
 
 def test_push_without_a_session_sends_nothing() -> None:
     rig = build_module(enforce=False, auth_mode=AuthMode.TIME_LIMITED)
-    exchange(rig.module, AppClient(), 0x027, [(0xA2, b"anyone")])
+    exchange(rig.module, connected_client(rig.module), 0x027, [(0xA2, b"anyone")])
 
     out = rig.module.push(0x421)
 

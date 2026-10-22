@@ -39,10 +39,10 @@ def test_baseline_frames_round_trip_through_the_telemetry_struct() -> None:
 @pytest.mark.parametrize(
     ("field_id", "path", "value"),
     [
-        pytest.param(FIELD_AC_OUTPUT, ("ac_output",), 0, id="ac_off"),
+        pytest.param(FIELD_AC_OUTPUT, ("ac_output_status",), 0, id="ac_off"),
         pytest.param(
             FIELD_POWER_SAVING_MODE,
-            ("settings", "power_saving_mode"),
+            ("settings", "ac_energy_saving_switch"),
             1,
             id="power_saving_on",
         ),
@@ -74,7 +74,7 @@ def test_dc_control_moves_both_physical_ports_together() -> None:
 
     for frame in module.write(legacy_request(CMD_POLL)).frames:
         fields = TELEMETRY_FRAME.parse(frame).body.value
-        assert fields.dc_output_1 == fields.dc_output_2 == 1
+        assert fields.car_charge1_output_status == fields.car_charge2_output_status == 1
 
 
 def test_control_command_with_a_short_payload_is_ignored() -> None:
@@ -110,10 +110,10 @@ def test_press_button_emits_a_state_ack_of_the_current_state() -> None:
     assert len(frame) == STATE_ACK.sizeof()
     assert ack.header == HEADER_NOTIFY
     assert ack.cmd == bytes([STATE_ACK_CMD_BYTE])
-    assert ack.ac_output == 0
-    assert ack.dc_output == baseline.dc_output_1
+    assert ack.ac_output_status == 0
+    assert ack.car_charge_output_status == baseline.car_charge1_output_status
     assert ack.light_mode == 3
-    assert ack.power_saving_mode == settings.power_saving_mode
+    assert ack.ac_energy_saving_switch == settings.ac_energy_saving_switch
 
 
 def test_unknown_cmd_gets_no_reply() -> None:
@@ -163,10 +163,11 @@ def test_a_notify_direction_write_is_ignored() -> None:
     assert out.frames == []
 
 
-def test_check_timers_does_nothing() -> None:
+def test_check_timers_and_pushes_do_nothing() -> None:
     module = build_legacy_module()
 
     assert module.check_timers().frames == []
+    assert module.check_pushes().frames == []
 
 
 def test_connect_and_disconnect_track_the_link() -> None:
@@ -201,7 +202,7 @@ def test_serial_number_is_none_when_the_frame_is_too_short() -> None:
 
 def test_serial_number_is_none_for_an_all_nul_serial() -> None:
     fields = TELEMETRY_FRAME.parse(TELEMETRY).body.value
-    fields.serial = bytes(16)
+    fields.device_sn = bytes(16)
     frame = TELEMETRY_FRAME.build({"body": {"value": fields}})
     profile = LegacyProfile(local_name="SOLIX F2000", telemetry=frame, extended=frame)
 

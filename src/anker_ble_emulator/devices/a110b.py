@@ -3,17 +3,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from anker_ble_emulator.frame import CHANNEL_APP
 from anker_ble_emulator.module import AuthMode
-from anker_ble_emulator.products import ModuleBuild, Outer, Path, Product, Transport
+from anker_ble_emulator.products import ModuleBuild, Outer, Path, Product
 
-from .base import DEFAULT_MAC, UNSET, Advert, EmulatedDevice, Profile, Unset, register
+from .base import Advert, ProductDevice, Profile, register
 
-
-if TYPE_CHECKING:
-    from anker_ble_emulator.clock import Clock
 
 PROFILE = Profile(
     serial="AJ7DL500000000001",
@@ -29,7 +24,7 @@ PROFILE = Profile(
     # No 0830 is recorded, so 0030 goes unanswered.
     device_version=None,
     # The recorded request; SolixBLE's 0x20A got no recorded answer.
-    known_commands=frozenset({0x200}),
+    known_commands=dict.fromkeys({0x200}),
     chip=b"Charging",
     lib_version=b"v0.0.5.1",
     serial_tail=11,
@@ -39,30 +34,7 @@ PROFILE = Profile(
 register(Product.A110B, PROFILE)
 
 
-class A110B(EmulatedDevice):
+class A110B(ProductDevice):
     """Prime Power Bank 20K: encrypted outer, ECDH, owner confirmation by button."""
 
-    def __init__(  # noqa: PLR0913  # the identity plus the four protocol choices
-        self,
-        serial: str | Unset | None = UNSET,
-        mac: str = DEFAULT_MAC,
-        transport: Transport | None = None,
-        *,
-        outer: Outer | None = None,
-        path: Path | None = None,
-        module: ModuleBuild | None = None,
-        clock: Clock | None = None,
-        mtu: int | None = None,
-    ) -> None:
-        """Build a Prime Power Bank 20K; see ``EmulatedDevice``."""
-        super().__init__(
-            Product.A110B,
-            serial,
-            mac,
-            transport,
-            outer=outer,
-            path=path,
-            module=module,
-            clock=clock,
-            mtu=mtu,
-        )
+    PRODUCT = Product.A110B

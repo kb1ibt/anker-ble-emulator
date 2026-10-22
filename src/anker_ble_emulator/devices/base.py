@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from importlib import resources
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
@@ -18,8 +18,9 @@ from anker_ble_emulator.clock import MonotonicClock
 from anker_ble_emulator.frame import CHANNEL_SESSION, RESPONSE
 from anker_ble_emulator.layouts import LayoutError, LayoutProtocol
 from anker_ble_emulator.legacy import LegacyModule, LegacyProfile
-from anker_ble_emulator.mcu import McuScript, mcu_frame
+from anker_ble_emulator.mcu import Burst, McuScript, mcu_frame
 from anker_ble_emulator.module import (
+    PUSH_PERIOD,
     TIMER_PERIOD,
     AuthMode,
     DeviceModule,
@@ -148,7 +149,10 @@ class Profile:
         module_replies: Msgtypes of recorded module session-op replies, by the
             build they were recorded on.
         known_commands: The MCU firmware's command table: every request it
-            handles, emulated or not.
+            handles -> the status it acks with when no recording or layout
+            answers, or None for no reply (or none known).
+        past_table_status: The ack status of a request past the table's last
+            op; None where the MCU drops those.
         rejects: The MCU answers a setting it refuses with ``04``; otherwise
             it acks ``00`` and leaves the setting unapplied.
         push_490: The ``0490`` push's field names in ``devices/data/``, where
@@ -162,6 +166,8 @@ class Profile:
         mcu_channel: The channel the MCU's frames travel on.
         layout: The product's own command/telemetry code, hand-written
             directly in its module.
+        burst: The push a trigger repeats on a timer, where the MCU has one.
+        factory_reset: The request msgtype that factory-resets the device.
 
     """
 
@@ -177,7 +183,8 @@ class Profile:
     device_version: str | None
     version_names: tuple[str, str, str] | None = None
     module_replies: Mapping[ModuleBuild, tuple[int, ...]] = field(default_factory=dict)
-    known_commands: frozenset[int] = frozenset()
+    known_commands: Mapping[int, int | None] = field(default_factory=dict)
+    past_table_status: int | None = None
     rejects: bool = True
     push_490: str | None = None
     expansion: bool = True
@@ -187,6 +194,8 @@ class Profile:
     fragment_cap: int = 253
     mcu_channel: int = CHANNEL_SESSION
     layout: LayoutProtocol | None = None
+    burst: Burst | None = None
+    factory_reset: int | None = None
 
     def frames(self) -> dict[int, bytes]:
         """Return the recorded cleartext payloads by msgtype."""
@@ -241,6 +250,10 @@ class Profile:
             else CG2_490.from_json(data_resource(self.push_490)),
             rejects=self.rejects,
             channel=channel,
+            burst=self.burst,
+            commands=self.known_commands,
+            past_table_status=self.past_table_status,
+            factory_reset=self.factory_reset,
         )
 
 
@@ -346,6 +359,8 @@ class EmulatedDevice:
         #: Seconds between runs of the module's authorize timer; unused outside
         #: the negotiated transport, which is the only one with such a timer.
         self.timer_period = TIMER_PERIOD
+        #: Seconds between checks for the MCU's due timed pushes (its burst).
+        self.push_period = PUSH_PERIOD
         #: On WiFi to the cloud, with no BLE link (``set_cloud``).
         self.cloud = False
         self._listener: Callable[[Output], None] | None = None
@@ -562,3 +577,34 @@ class EmulatedDevice:
     def _emit(self, output: Output) -> None:
         if self._listener is not None:
             self._listener(output)
+
+
+class ProductDevice(EmulatedDevice):
+    """An ``EmulatedDevice`` whose product is its class's ``PRODUCT``."""
+
+    PRODUCT: ClassVar[Product]
+
+    def __init__(  # noqa: PLR0913  # the identity plus the four protocol choices
+        self,
+        serial: str | Unset | None = UNSET,
+        mac: str = DEFAULT_MAC,
+        transport: Transport | None = None,
+        *,
+        outer: Outer | None = None,
+        path: Path | None = None,
+        module: ModuleBuild | None = None,
+        clock: Clock | None = None,
+        mtu: int | None = None,
+    ) -> None:
+        """Build the product's device; see ``EmulatedDevice``."""
+        super().__init__(
+            self.PRODUCT,
+            serial,
+            mac,
+            transport,
+            outer=outer,
+            path=path,
+            module=module,
+            clock=clock,
+            mtu=mtu,
+        )

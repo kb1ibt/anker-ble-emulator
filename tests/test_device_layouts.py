@@ -26,16 +26,16 @@ def test_every_device_loads_its_layout() -> None:
 def test_a_telemetry_value_set_by_name_reaches_the_recorded_frame() -> None:
     device = A1783()
 
-    device.set_values(battery_soc=55)
+    device.set_values(battery_level=55)
 
     push = device.negotiated_module.mcu.push(
         0x421, values=device.negotiated_module.values
     )
     battery = decode_field(Parameters.parse(push.payload), "a5", Battery)
-    assert battery.battery_soc == 55
+    assert battery.battery_level == 55
     recorded = device.negotiated_module.mcu.push(0x421)
     recorded_battery = decode_field(Parameters.parse(recorded.payload), "a5", Battery)
-    assert recorded_battery.battery_soc != 55
+    assert recorded_battery.battery_level != 55
 
 
 def test_a_value_set_on_the_device_reaches_every_message_that_carries_it() -> None:
@@ -43,31 +43,31 @@ def test_a_value_set_on_the_device_reaches_every_message_that_carries_it() -> No
     script, push_490 = device.mcu, device.mcu.push_490
     assert push_490 is not None
 
-    device.set_values(battery_soc=55)
+    device.set_values(battery_level=55)
 
     status, telemetry = script.respond(0x100, values=device.negotiated_module.values)
     post = script.push(0x490, values=device.negotiated_module.values)
     for frame in (status, telemetry):
         fields = Parameters.parse(frame.payload)
-        assert decode_field(fields, "a5", Battery).battery_soc == 55
-    assert push_490.read(post.payload)["battery_soc"] == 55
+        assert decode_field(fields, "a5", Battery).battery_level == 55
+    assert push_490.read(post.payload)["battery_level"] == 55
 
 
 def test_a_settings_value_lands_in_the_settings_block() -> None:
     device = A1783()
 
-    device.set_values(display_timeout_seconds=300)
+    device.set_values(screen_off_time=300)
 
     push = device.mcu.push(0x421, values=device.negotiated_module.values)
     settings = decode_field(Parameters.parse(push.payload), "a4", Settings)
-    assert settings.display_timeout_seconds == 300
+    assert settings.screen_off_time == 300
 
 
 def test_an_mcu_without_a_layout_sends_its_frames_as_recorded() -> None:
     script = A1783().mcu
     quiet = McuScript(pushes=script.pushes)
 
-    push = quiet.push(0x421, values={"battery_soc": 55})
+    push = quiet.push(0x421, values={"battery_level": 55})
 
     assert push.payload == script.push(0x421).payload
 
@@ -84,7 +84,7 @@ def test_a_device_without_a_layout_or_push_490_takes_no_values() -> None:
     device.layout = None
 
     with pytest.raises(LayoutError, match="sends no typed field"):
-        device.set_values(battery_soc=1)
+        device.set_values(battery_level=1)
 
 
 async def test_a_mapped_command_without_a_recording_gets_a_checked_ack() -> None:
@@ -98,17 +98,17 @@ async def test_a_mapped_command_without_a_recording_gets_a_checked_ack() -> None
         port = [(0xA1, b"\x21"), (0xA2, b"\x01\x00")]
         on = await link.send(0x207, [*port, (0xA3, b"\x01\x01")], SESSION)
         bad = await link.send(0x207, [*port, (0xA3, b"\x01\x05")], SESSION)
-        unmapped = await link.send(0x201, [(0xA1, b"\x21")], SESSION)
+        unmapped = await link.send(0x215, [(0xA1, b"\x21")], SESSION)
 
-    assert [cmd_hex(reply.frame) for reply in on] == ["4a07"]
-    assert on[0].plaintext == bytes.fromhex("00a10131")
+    assert [cmd_hex(reply.frame) for reply in on] == ["4a07", "4302"]
+    assert on[0].plaintext == bytes.fromhex("00a10131a2020100")
     assert bad[0].plaintext == bytes.fromhex("04a10131")
     assert unmapped == []
 
 
 async def test_a_value_set_by_name_reaches_the_client() -> None:
     device = A1783()
-    device.set_values(battery_soc=42)
+    device.set_values(battery_level=42)
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
         link = BleakLink(client, AppClient())
         await link.start()
@@ -119,7 +119,7 @@ async def test_a_value_set_by_name_reaches_the_client() -> None:
 
     telemetry = next(reply for reply in status if cmd_hex(reply.frame) == "4421")
     fields = Parameters.parse(telemetry.plaintext)
-    assert decode_field(fields, "a5", Battery).battery_soc == 42
+    assert decode_field(fields, "a5", Battery).battery_level == 42
 
 
 def test_replies_and_pushes_can_be_set_and_silenced() -> None:

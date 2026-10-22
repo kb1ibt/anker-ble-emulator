@@ -9,7 +9,6 @@ from construct import (
     Bytes,
     BytesInteger,
     Construct,
-    Struct,
 )
 
 
@@ -33,11 +32,30 @@ class LayoutProtocol(Protocol):
     def check(self, msgtype: int, plaintext: bytes) -> int:
         """Return the status a command's values earn: accepted, or rejected."""
 
-    def state_changes(self, msgtype: int, plaintext: bytes) -> dict[str, Value]:
-        """Return the telemetry values an accepted command sets, by field name."""
+    def state_changes(
+        self, msgtype: int, plaintext: bytes, state: Mapping[str, Value]
+    ) -> dict[str, Value]:
+        """Return the values an accepted command sets, given the device's state."""
+
+    def reply_fields(
+        self, msgtype: int, plaintext: bytes, state: Mapping[str, Value]
+    ) -> bytes | None:
+        """Return the fields an accepted reply carries; None for no reply."""
+
+    def follow_ups(
+        self,
+        msgtype: int,
+        plaintext: bytes,
+        before: Mapping[str, Value],
+        after: Mapping[str, Value],
+    ) -> list[tuple[int, bytes]]:
+        """Return the (msgtype, payload) pushes an accepted command's change draws."""
 
     def names(self, msgtype: int) -> frozenset[str]:
         """Return the names of a message's typed fields and parts; none if unmapped."""
+
+    def read(self, msgtype: int, payload: bytes) -> dict[str, Value]:
+        """Return the named values a message's payload carries."""
 
     def locate(self, name: str) -> tuple[int, ...]:
         """Return the messages with a typed field or part called ``name``."""
@@ -51,13 +69,14 @@ class LayoutProtocol(Protocol):
         """Return a telemetry payload with named values set."""
 
 
-#: Type bytes (anker-solix-api ``DeviceHexDataTypes``).
+#: Type bytes, every code the firmware writes (names from anker-solix-api's
+#: ``DeviceHexDataTypes``): string, u8, u16, 4 bytes, a raw block, and a
+#: record of length-prefixed sub-fields.
 TYPE_STR = 0x00
 TYPE_UI = 0x01
 TYPE_SILE = 0x02
 TYPE_VAR = 0x03
 TYPE_BIN = 0x04
-TYPE_SFLE = 0x05
 TYPE_STRB = 0x06
 
 STATUS_ACCEPTED = 0x00
@@ -75,11 +94,6 @@ def ui(size: int, *, signed: bool = False) -> Construct[Any, Any]:
     for a whole TLV field's outer type byte.
     """
     return BytesInteger(size, signed=signed, swapped=True)
-
-
-#: A port's status/voltage/current/power, byte-identical on the A91B2 and A2345.
-PORT_FIELDS = ("status", "voltage", "current", "power")
-PortStatus = Struct(*(name / ui(1 if name == "status" else 2) for name in PORT_FIELDS))
 
 
 class ScalarField(NamedTuple):
