@@ -87,3 +87,11 @@ def test_a17c0_builds_its_telemetry_from_zero() -> None:
     assert built[0xA2] == b"\x00" + bytes(16)
     assert layout.locate("min_load") == (0x405,)
     assert layout.names(0x408) == frozenset()
+
+
+def test_a17c0_holds_back_no_message_it_builds() -> None:
+    """Its layout leaves no message's publishing to the device's state."""
+    layout = A17C0().layout
+    assert layout is not None
+
+    assert layout.publishes(0x405, layout.build)

@@ -1370,6 +1370,17 @@ class CGen2Layout(TableLayout):
             _check_switch(POWER_STAGE_AC_INPUT, given[POWER_STAGE_AC_INPUT])
         return super().build(msgtype, values)
 
+    def publishes(self, msgtype: int, payload_of: Callable[[int], bytes]) -> bool:
+        """Whether ``msgtype`` publishes now: ``0503`` only in an active TOU period.
+
+        The period is the cloud ``0421``'s ``d9[0]`` (a1783-telemetry.md "0503").
+        """
+        if msgtype != MSGTYPE_503:
+            return super().publishes(msgtype, payload_of)
+        params = Parameters.parse(payload_of(MSGTYPE_421))
+        period = decode_field(params, "d9", Tou).tou_system_status
+        return bool(period != TouPeriodType.NONE)
+
     def finish(
         self, msgtype: int, params: ParameterDict, values: Mapping[str, Value]
     ) -> None:

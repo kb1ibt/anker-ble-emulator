@@ -593,7 +593,9 @@ class EmulatedDevice:
         Built from the device's state on the cloud; nothing is sent on a link.
 
         Raises:
-            RuntimeError: If the device isn't on the cloud (``set_cloud``).
+            RuntimeError: If the device isn't on the cloud (``set_cloud``), or
+                its state holds the message back (a C Gen 2 ``0503`` outside an
+                active TOU period).
             LayoutError: If it publishes no such message to MQTT.
 
         """

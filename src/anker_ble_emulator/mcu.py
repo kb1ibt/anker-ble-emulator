@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import partial
 from typing import TYPE_CHECKING
 
 from construct import GreedyBytes, Int8ul, Struct
@@ -218,31 +219,56 @@ class McuScript:
 
         Raises:
             LayoutError: If the MCU publishes no such message to MQTT.
+            RuntimeError: If the layout holds it back in the current state.
 
         """
         layout = self.layout
         route = self.mqtt_routes.get(msgtype)
-        recorded = self._mqtt_source(msgtype)
-        if layout is None or route is None or recorded is None:
+        if layout is None or route is None:
             msg = f"the MCU publishes no {msgtype:04x} to MQTT"
             raise LayoutError(msg)
-        names = layout.names(msgtype)
-        named = {name: value for name, value in (values or {}).items() if name in names}
-        payload = layout.update(
-            msgtype, recorded.payload, {**named, RTC: rtc, CLOUD: True}
-        )
-        params = Parameters.parse(payload)
+        recorded = self._mqtt_source(msgtype)
+        payload_of = partial(self._cloud_payload, layout, values or {}, rtc)
+        if not layout.publishes(msgtype, payload_of):
+            msg = f"the MCU publishes no {msgtype:04x} to MQTT in this state"
+            raise RuntimeError(msg)
+        params = Parameters.parse(payload_of(msgtype))
         params["a1"] = ParameterContainer(key=b"\xa1", type=None, value=route)
         return _rebuilt(recorded, Parameters.build(params))
 
-    def _mqtt_source(self, msgtype: int) -> Frame | None:
-        """Return the recorded push or reply ``msgtype`` is built from, if any."""
+    def _cloud_payload(
+        self,
+        layout: LayoutProtocol,
+        values: Mapping[str, Value],
+        rtc: int,
+        msgtype: int,
+    ) -> bytes:
+        """Return ``msgtype``'s recorded payload with ``values`` set, on the cloud."""
+        names = layout.names(msgtype)
+        named = {name: value for name, value in values.items() if name in names}
+        return layout.update(
+            msgtype,
+            self._mqtt_source(msgtype).payload,
+            {**named, RTC: rtc, CLOUD: True},
+        )
+
+    def _mqtt_source(self, msgtype: int) -> Frame:
+        """Return the recorded push or reply ``msgtype`` is built from.
+
+        Raises:
+            LayoutError: If nothing recorded is a ``msgtype``.
+
+        """
         if msgtype in self.pushes:
             return self.pushes[msgtype]
         if msgtype in self.cloud_pushes:
             return self.cloud_pushes[msgtype]
         replies = (frame for frames in self.replies.values() for frame in frames)
-        return next((frame for frame in replies if frame.cmd.msgtype == msgtype), None)
+        recorded = next((f for f in replies if f.cmd.msgtype == msgtype), None)
+        if recorded is None:
+            msg = f"the MCU records no {msgtype:04x}"
+            raise LayoutError(msg)
+        return recorded
 
     def _with_values(
         self, frame: Frame, values: Mapping[str, Value] | None, rtc: int | None

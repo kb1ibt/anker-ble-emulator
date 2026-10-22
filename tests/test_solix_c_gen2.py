@@ -146,6 +146,9 @@ MQTT_0503 = bytes.fromhex(
     "ff092f0003010f0503a10112a219040000000000000000d200000030070000820000006e"
     "140000a3050380a2bd6a92"
 )
+#: ``4090 a7`` Peak records: all day, and 15:00-16:00 (outside a 10:00 RTC).
+TOU_ALL_DAY = "010018"
+TOU_PEAK_15 = "010f10"
 #: The same day's cloud ``0090`` fields, in order, after ``TOU_BENCH``.
 TOU_BENCH_CLOUD = [
     "a2020100a6020102a70704030011011118",
@@ -1299,8 +1302,19 @@ def test_the_cloud_frame_needs_the_cloud_and_a_cloud_message() -> None:
 
 @pytest.mark.parametrize("model", MODELS)
 def test_the_0503_totals_are_the_doc_example_and_settable(model: Model) -> None:
-    """a1783-telemetry.md "0503": cloud only, ``a1 12``; the values set show next."""
-    device = model()
+    """a1783-telemetry.md "0503": cloud only, ``a1 12``; the values set show next.
+
+    Built in an active Peak period, the only time the firmware sends it.
+    """
+    clock = ManualClock()
+    device = model(clock=clock)
+    layout = device.layout
+    assert layout is not None
+    module = device.negotiated_module
+    device.set_values(**TOU_UNIT)
+    plan = bytes.fromhex(f"a10121a2020101a5020132a6020101a70404{TOU_ALL_DAY}")
+    device.set_values(**layout.state_changes(0x090, plan, module.mcu.state({})))
+    clock.advance(10 * 3600)
     device.set_cloud(True)
 
     seeded = device.mqtt_frame(0x503)
@@ -1318,6 +1332,41 @@ def test_the_0503_totals_are_the_doc_example_and_settable(model: Model) -> None:
         "off_peak_time": 5230,
     }
     assert decode_field(totals, "a3", ui(4)) == 7
+
+
+@pytest.mark.parametrize("model", MODELS)
+@pytest.mark.parametrize(
+    ("mode", "record"),
+    [
+        pytest.param("00", TOU_ALL_DAY, id="tou-off"),
+        pytest.param("01", TOU_PEAK_15, id="outside-the-window"),
+    ],
+)
+def test_no_0503_outside_an_active_tou_period(
+    model: Model, mode: str, record: str
+) -> None:
+    """a1783-telemetry.md "0503" trigger: sent only in an active TOU period.
+
+    At 10:00 RTC, TOU off or a 15-16 Peak window leaves ``d9[0]`` 0; an
+    all-day Peak window then publishes the doc example.
+    """
+    clock = ManualClock()
+    device = model(clock=clock)
+    layout = device.layout
+    assert layout is not None
+    module = device.negotiated_module
+    device.set_values(**TOU_UNIT)
+    plan = bytes.fromhex(f"a10121a20201{mode}a5020132a6020101a70404{record}")
+    device.set_values(**layout.state_changes(0x090, plan, module.mcu.state({})))
+    clock.advance(10 * 3600)
+    device.set_cloud(True)
+
+    with pytest.raises(RuntimeError, match="0503"):
+        device.mqtt_frame(0x503)
+    active = bytes.fromhex(f"a10121a2020101a5020132a6020101a70404{TOU_ALL_DAY}")
+    state = module.mcu.state(module.values)
+    device.set_values(**layout.state_changes(0x090, active, state))
+    assert device.mqtt_frame(0x503) == MQTT_0503
 
 
 async def test_a_count_over_six_periods_is_refused_and_telemetry_builds() -> None:

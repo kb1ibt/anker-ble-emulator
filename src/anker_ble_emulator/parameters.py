@@ -410,6 +410,14 @@ class TableLayout(StructFieldLayout, CommandDispatchLayout):
         """Return the further values that setting ``values`` sets: none."""
         return {}
 
+    def publishes(
+        self,
+        msgtype: int,  # noqa: ARG002  # every message publishes whenever built
+        payload_of: Callable[[int], bytes],  # noqa: ARG002
+    ) -> bool:
+        """Whether ``msgtype`` publishes to MQTT now: always."""
+        return True
+
     def read(self, msgtype: int, payload: bytes) -> dict[str, Value]:
         """Return the named values ``payload`` carries."""
         fields = self.FIELDS.get(msgtype, {})
@@ -502,6 +510,14 @@ class ScalarFieldLayout:
     ) -> dict[str, Value]:
         """Return the further values that setting ``values`` sets: none."""
         return {}
+
+    def publishes(
+        self,
+        msgtype: int,  # noqa: ARG002  # every message publishes whenever built
+        payload_of: Callable[[int], bytes],  # noqa: ARG002
+    ) -> bool:
+        """Whether ``msgtype`` publishes to MQTT now: always."""
+        return True
 
     def read(self, msgtype: int, payload: bytes) -> dict[str, Value]:
         """Return the named values ``payload`` carries."""

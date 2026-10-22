@@ -17,7 +17,7 @@ from construct import (
 
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
 #: A layout value: an integer for numeric types, bytes for strings and blocks.
 Value = int | float | bytes
@@ -74,6 +74,9 @@ class LayoutProtocol(Protocol):
         self, msgtype: int, payload: bytes, values: Mapping[str, Value]
     ) -> bytes:
         """Return a telemetry payload with named values set."""
+
+    def publishes(self, msgtype: int, payload_of: Callable[[int], bytes]) -> bool:
+        """Whether ``msgtype`` publishes to MQTT now; ``payload_of`` builds others."""
 
 
 #: Type bytes, every code the firmware writes (names from anker-solix-api's
