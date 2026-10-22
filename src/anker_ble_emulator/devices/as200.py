@@ -23,7 +23,7 @@ from enum import IntEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
-from construct import Bytes, Const, Struct
+from construct import Bytes, Int8ul, Prefixed, Struct
 
 from anker_ble_emulator.layouts import TYPE_BIN, ui
 from anker_ble_emulator.module import AuthMode
@@ -134,10 +134,8 @@ Station = Struct(
     "external_device_remaining_discharge_time" / ui(2),
     "external_device_battery_level" / ui(1),
     "_reserved_9" / Bytes(2),
-    Const(bytes([STATION_SN_SIZE])),
-    "external_device_sn" / Bytes(STATION_SN_SIZE),
-    Const(bytes([STATION_PN_SIZE])),
-    "external_device_product_code" / Bytes(STATION_PN_SIZE),
+    "external_device_sn" / Prefixed(Int8ul, Bytes(STATION_SN_SIZE)),
+    "external_device_product_code" / Prefixed(Int8ul, Bytes(STATION_PN_SIZE)),
     "_reserved_42" / Bytes(1),
 )
 

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
-from construct import Bytes, Int8ub, Optional, Struct
+from construct import Bytes, ByteSwapped, Int8ub, Optional, Struct
 
 from anker_ble_emulator.c_g2_490 import CG2_490
 from anker_ble_emulator.clock import MonotonicClock
@@ -73,6 +73,8 @@ ADVERT_LAYOUT = Struct(
     "sku" / Bytes(lambda this: SKU_LENGTHS[this.version_code]),
     "capability" / Optional(Int8ub),
 )
+#: The legacy transport's record: the MAC, byte-reversed.
+LEGACY_ADVERT_LAYOUT = ByteSwapped(Bytes(MAC_LEN))
 
 
 class Unset(Enum):
@@ -301,8 +303,8 @@ class EmulatedDevice:
     profile: Profile | LegacyProfile
     #: The provisioned serial; None for none.
     serial: str | None
-    #: The product's layout, from its own code or anker-solix-api's maps;
-    #: None where it has none, which is every transport but the negotiated one.
+    #: The product's layout, hand-written in its device module; None where it
+    #: has none, which is every transport but the negotiated one.
     layout: LayoutProtocol | None
     #: What answers writes and generates notifications; the transport's module.
     module: DeviceModule
@@ -532,7 +534,7 @@ class EmulatedDevice:
         if isinstance(self.profile, LegacyProfile):
             #: This transport advertises no manufacturer record, only the MAC
             #: reversed under the Anker company id (observed on the wire).
-            record: bytes | None = bytes(reversed(self.mac))
+            record: bytes | None = LEGACY_ADVERT_LAYOUT.build(self.mac)
         else:
             record = self.profile.advert.manufacturer_data(self.mac)
         return AdvertisementData(

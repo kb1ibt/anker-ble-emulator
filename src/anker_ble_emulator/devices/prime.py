@@ -210,7 +210,7 @@ def timed_task_push(port_by_select: Mapping[int, str]) -> PushBuilder:
         return ParameterDict(
             {
                 "a2": request["a2"],
-                "a3": container("a3", TYPE_UI, bytes([other_slot])),
+                "a3": container("a3", TYPE_UI, ui(1).build(other_slot)),
                 "a4": container(
                     "a4", TYPE_BIN, ScheduleHalf.build(_half(after, port, half))
                 ),

@@ -266,7 +266,7 @@ def _charging_mode_change(
         {
             "a2": container("a2", TYPE_UI, ui(1).build(after["charging_mode"])),
             "a3": container("a3", TYPE_BIN, CustomChargeProfile.build(profile)),
-            "a4": container("a4", TYPE_UI, bytes([_designated_ports(after)])),
+            "a4": container("a4", TYPE_UI, ui(1).build(_designated_ports(after))),
         }
     )
 
@@ -280,7 +280,7 @@ def _designated_ports_change(
     mask = _designated_ports(after)
     if _designated_ports(before) == mask:
         return None
-    return ParameterDict({"a3": container("a3", TYPE_UI, bytes([mask]))})
+    return ParameterDict({"a3": container("a3", TYPE_UI, ui(1).build(mask))})
 
 
 def _set_button_rotate_direction(request: ParameterDict) -> dict[str, Value] | None:
@@ -330,10 +330,13 @@ def _upload_easter_egg_trigger(
     before: Mapping[str, Value],  # noqa: ARG001  # every nonzero request triggers
     after: Mapping[str, Value],  # noqa: ARG001
 ) -> ParameterDict | None:
-    """``0305``: trigger 0, after a ``420d`` with a nonzero value (0x0001475c)."""
-    if not any(request["a2"]["value"]):
+    """``0305``: trigger 0, after a ``420d`` whose first value byte is nonzero.
+
+    ``cmd20d_secret_features`` (0x00043938) stores only that byte (0x0001475c).
+    """
+    if not decode_field(request, "a2", ui(1)):
         return None
-    return ParameterDict({"a2": container("a2", TYPE_UI, bytes([0]))})
+    return ParameterDict({"a2": container("a2", TYPE_UI, ui(1).build(0))})
 
 
 def _set_port_widgets_switch(request: ParameterDict) -> dict[str, Value] | None:

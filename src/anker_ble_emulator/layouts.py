@@ -9,6 +9,10 @@ from construct import (
     Bytes,
     BytesInteger,
     Construct,
+    ExprAdapter,
+    FixedSized,
+    GreedyBytes,
+    Select,
 )
 
 
@@ -97,6 +101,20 @@ def ui(size: int, *, signed: bool = False) -> Construct[Any, Any]:
     for a whole TLV field's outer type byte.
     """
     return BytesInteger(size, signed=signed, swapped=True)
+
+
+def at_most(size: int) -> Construct[Any, Any]:
+    """Return a codec that parses the first ``size`` bytes, or all of a shorter run."""
+    return Select(Bytes(size), GreedyBytes)
+
+
+def fitted(size: int) -> Construct[Any, Any]:
+    """Return ``size`` bytes: a longer value builds cut, a shorter one zero-padded."""
+    return ExprAdapter(
+        FixedSized(size, GreedyBytes),
+        decoder=lambda data, _: data,
+        encoder=lambda data, _: at_most(size).parse(data),
+    )
 
 
 class ScalarField(NamedTuple):

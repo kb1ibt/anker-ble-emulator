@@ -34,6 +34,8 @@ def _rebuilt(frame: Frame, payload: bytes) -> Frame:
 
 #: A reply's cleartext: its status byte, then its fields.
 REPLY = Struct("status" / Int8ul, "fields" / GreedyBytes)
+#: An MCU ack: its status, the ``a1`` route, then the fields it carries back.
+ACK = Struct("status" / Int8ul, "route" / ROUTE_FIELD, "fields" / GreedyBytes)
 #: The state name a read reply finds the MCU's RTC under: local seconds.
 RTC = "rtc"
 
@@ -164,8 +166,9 @@ class McuScript:
 
     def _ack(self, msgtype: int, status: int, echoed: bytes = b"") -> Frame:
         """Return the ``<status> a1 01 31`` reply to ``msgtype``, then ``echoed``."""
-        route = ROUTE_FIELD.build({"route": BLE_REPLY_ROUTE})
-        ack = REPLY.build({"status": status, "fields": route + echoed})
+        ack = ACK.build(
+            {"status": status, "route": {"route": BLE_REPLY_ROUTE}, "fields": echoed}
+        )
         return mcu_frame(msgtype | RESPONSE, ack, self.channel)
 
     def _table_status(self, msgtype: int) -> int | None:

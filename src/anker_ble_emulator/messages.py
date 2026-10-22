@@ -25,6 +25,8 @@ from construct import (
     Int32ul,
     Nibble,
     Optional,
+    Padded,
+    Pointer,
     Prefixed,
     Struct,
 )
@@ -96,12 +98,13 @@ def parse_request(msgtype: int, payload: bytes) -> Fields:
         if tag not in known:
             continue
         name, layout = known[tag]
-        raw = value
-        if tag in loaded:
-            width = layout.sizeof()
-            raw = payload[starts[tag] : starts[tag] + width].ljust(width, b"\0")
         try:
-            request[name] = layout.parse(raw)
+            if tag in loaded:
+                buffer = Padded(len(payload) + layout.sizeof(), GreedyBytes)
+                loaded_layout = Pointer(starts[tag], layout)
+                request[name] = loaded_layout.parse(buffer.build(payload))
+            else:
+                request[name] = layout.parse(value)
         except ConstructError:
             request[name] = None
     return request

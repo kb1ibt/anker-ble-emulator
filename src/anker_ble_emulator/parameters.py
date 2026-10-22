@@ -141,12 +141,6 @@ class FieldGroup:
 class ParameterContainer(dict[str, Any]):
     """One field's key, optional type, and value bytes."""
 
-    @property
-    def value_legacy(self) -> bytes:
-        """The type byte (if any) prepended to the value bytes."""
-        type_byte = bytes([self["type"]]) if self.get("type") is not None else b""
-        return type_byte + (self.get("value") or b"")
-
 
 Parameter = ExprAdapter(
     Struct(
@@ -338,7 +332,7 @@ class CommandDispatchLayout:
             return []
         request = Parameters.parse(plaintext)
         route = ParameterContainer(
-            key=b"\xa1", type=None, value=bytes([BLE_REPLY_ROUTE])
+            key=b"\xa1", type=None, value=Int8ul.build(BLE_REPLY_ROUTE)
         )
         clock = {"fe": request["fe"]} if "fe" in request else {}
         frames = []
@@ -531,7 +525,7 @@ class ScalarFieldLayout:
         params = ParameterDict(
             {
                 "a1": ParameterContainer(
-                    key=b"\xa1", type=None, value=bytes([BLE_REPLY_ROUTE])
+                    key=b"\xa1", type=None, value=Int8ul.build(BLE_REPLY_ROUTE)
                 )
             }
         )

@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from construct import (
+    Computed,
     Const,
     GreedyBytes,
     GreedyRange,
@@ -32,10 +33,11 @@ from construct import (
     Struct,
     Switch,
     VarInt,
+    ZigZag,
     this,
 )
 
-from .layouts import LayoutError
+from .layouts import LayoutError, fitted
 from .messages import ROUTE_FIELD
 
 
@@ -56,6 +58,7 @@ EXPANSION_SOC = ".23.1#1"
 
 PB_FIELD = Struct(
     "key" / VarInt,
+    "number" / Computed(this.key >> 3),
     "value"
     / Switch(
         this.key & 7, {WIRE_VARINT: VarInt, WIRE_LEN: Prefixed(VarInt, GreedyBytes)}
@@ -172,7 +175,7 @@ def _walk(data: bytes, prefix: str, visit: Callable[[str, Leaf], Leaf]) -> bytes
     seen: Counter[int] = Counter()
     fields: list[dict[str, Any] | None] = []
     for item in PB_MESSAGE.parse(data):
-        number = item.key >> 3
+        number = item.number
         path = f"{prefix}.{number}" + (f"#{seen[number]}" if seen[number] else "")
         seen[number] += 1
         value: Leaf
@@ -192,15 +195,15 @@ def _encode(kind: Kind, value: Value, recorded: Leaf) -> Leaf:
 
     """
     if isinstance(value, bytes) and isinstance(recorded, bytes):
-        return value[: len(recorded)].ljust(len(recorded), b"\x00")
+        return bytes(fitted(len(recorded)).build(value))
     if not isinstance(value, int):
         msg = f"a {kind} leaf takes an integer, got {value!r}"
         raise TypeError(msg)
-    return (value << 1) ^ (value >> 63) if kind == "sint" else value
+    return int(VarInt.parse(ZigZag.build(value))) if kind == "sint" else value
 
 
 def _decode(kind: Kind, leaf: Leaf) -> Value:
     """Return a leaf's value: a zigzag varint unfolded to its signed integer."""
     if kind == "sint" and isinstance(leaf, int):
-        return (leaf >> 1) ^ -(leaf & 1)
+        return int(ZigZag.parse(VarInt.build(leaf)))
     return leaf

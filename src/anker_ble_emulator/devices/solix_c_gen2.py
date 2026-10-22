@@ -27,10 +27,12 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from construct import (
+    Array,
     BitsInteger,
     BitStruct,
     Bytes,
     Const,
+    Construct,
     ConstructError,
     Container,
     ExprAdapter,
@@ -38,11 +40,14 @@ from construct import (
     GreedyBytes,
     GreedyRange,
     Int8ul,
+    NullTerminated,
     Optional,
+    Padded,
     Padding,
     Prefixed,
     Struct,
     Terminated,
+    this,
 )
 
 from anker_ble_emulator.layouts import (
@@ -51,6 +56,8 @@ from anker_ble_emulator.layouts import (
     TYPE_SILE,
     TYPE_VAR,
     Value,
+    at_most,
+    fitted,
     ui,
 )
 from anker_ble_emulator.mcu import RTC
@@ -317,14 +324,17 @@ TouRecords = Struct(
     Terminated,
 )
 #: The plan ``4090`` stores (T at ``0x20003efe``, from T[1]): the raw count,
-#: then the record buffer ``a7`` is copied over. The app has no name for it;
-#: ``d9``'s ``tou_periods`` is read from it.
+#: then the record buffer ``a7`` is copied over, zero past what was written.
+#: The app has no name for it; ``d9``'s ``tou_periods`` is read from it.
 TOU_TABLE = "tou_period_table"
 TouTable = Struct(
     "count" / ui(1),
-    "records" / Bytes(TOU_RECORDS_SIZE),
+    "records" / fitted(TOU_RECORDS_SIZE),
     Terminated,
 )
+#: The record buffer as ``4090 a7`` overwrites it: the bytes ``a7`` covers,
+#: then the stored rest.
+TouOverwrite = Struct("covered" / Bytes(this._.covered_size), "kept" / GreedyBytes)
 
 
 def _tou_schedule_decode(obj: Container[Any], _: object) -> bytes:
@@ -453,6 +463,12 @@ VERSION_NAMES = (
     "module_version",
 )
 VERSION_ZEROS = leaf_zeros(**dict.fromkeys(VERSION_NAMES, bytes(VERSION_SIZE)))
+#: One ``f9`` version as the integer its digits spell (``06 01 02 01`` -> 1216).
+VersionNumber: Construct[int, int] = ExprAdapter(
+    Array(VERSION_SIZE, Int8ul),
+    decoder=lambda digits, _: sum(d * 10**i for i, d in enumerate(digits)),
+    encoder=lambda number, _: [number // 10**i % 10 for i in range(VERSION_SIZE)],
+)
 
 #: ``fa`` configNegotiation (20 B): the capability flags, constants per
 #: build; bits LSB first. a1783-telemetry.md "Capability flags (fa)"; names
@@ -634,11 +650,9 @@ class ExternalDeviceMode(IntEnum):
 PN_SIZE = 16
 SN_SIZE = 17
 Alternator = Struct(
-    Const(b"\x10"),
-    "external_device_product_code" / Bytes(PN_SIZE),
+    "external_device_product_code" / Prefixed(Int8ul, Bytes(PN_SIZE)),
     Const(b"\x01"),
-    Const(b"\x11"),
-    "external_device_sn" / Bytes(SN_SIZE),
+    "external_device_sn" / Prefixed(Int8ul, Bytes(SN_SIZE)),
     Padding(4),
     "external_device_mode" / ui(1),
     "external_device_output_power" / ui(2),
@@ -792,7 +806,7 @@ def _set_system_params(request: ParameterDict) -> dict[str, Value] | None:
     changes = decode_request(request, SYSTEM_GROUP)
     if "aa" in request or "ab" in request:
         changes.update(_soc_limits(request))
-    if "b0" in request and request["b0"]["length"] > 1:
+    if "b0" in request and request["b0"]["type"] is not None:
         changes["outage_alert_switch"] = decode_field(request, "b0", Flag)
     return changes
 
@@ -814,8 +828,7 @@ def _set_tou_system_params(request: ParameterDict) -> dict[str, Value] | None:
 def _tou_table_of(periods: bytes) -> bytes:
     """Return the stored plan a ``tou_periods`` value implies, zero past its periods."""
     schedule = TouRecords.parse(periods)
-    records = schedule.records[:TOU_RECORDS_SIZE].ljust(TOU_RECORDS_SIZE, b"\0")
-    return TouTable.build({"count": schedule.count, "records": records})
+    return TouTable.build({"count": schedule.count, "records": schedule.records})
 
 
 def _check_tou_table(table: Value) -> None:
@@ -840,8 +853,7 @@ def _tou_periods_of(table: bytes) -> bytes:
     Periods past the record buffer read zero.
     """
     stored = TouTable.parse(table)
-    size = stored.count * TOU_RECORD_SIZE
-    records = stored.records[:size].ljust(size, b"\0")
+    records = fitted(stored.count * TOU_RECORD_SIZE).build(stored.records)
     return TouRecords.build({"count": stored.count, "records": records})
 
 
@@ -859,11 +871,13 @@ def _tou_periods(
         return {}
     stored = TouTable.parse(_bytes_value(state, TOU_TABLE))
     count = decode_field(request, "a6", ui(1)) if "a6" in request else stored.count
-    buffer = bytearray(stored.records)
-    if "a7" in request:
-        periods = decode_field(request, "a7", GreedyBytes)
-        buffer[: len(periods)] = periods
-    table = TouTable.build({"count": count, "records": bytes(buffer)})
+    periods = decode_field(request, "a7", GreedyBytes) if "a7" in request else b""
+    size = len(periods)
+    buffer = TouOverwrite.parse(stored.records, covered_size=size)
+    records = TouOverwrite.build(
+        {"covered": periods, "kept": buffer.kept}, covered_size=size
+    )
+    table = TouTable.build({"count": count, "records": records})
     return {TOU_TABLE: table, "tou_periods": _tou_periods_of(table)}
 
 
@@ -929,8 +943,7 @@ def _ac_input_disabled(params: ParameterDict) -> bool:
     Assumed: both ``a4[31]`` input states, 1 (``4101 ab``) and 2 (auto-off).
     """
     versions = decode_field(params, "f9", DeviceVersions)
-    version = _version_number({"mcu_version": versions.mcu_version}, "mcu_version")
-    if version < AC_INPUT_DISABLE_GATE_VERSION:
+    if VersionNumber.parse(versions.mcu_version) < AC_INPUT_DISABLE_GATE_VERSION:
         return False
     return bool(decode_field(params, "a4", Settings).ac_input_disable_switch)
 
@@ -1077,6 +1090,55 @@ LOG_AUX_VERSION = 0
 LOG_USB_PD_VERSION = 0
 #: Chunk 0 carries the SN's first 16 bytes.
 LOG_SN_SIZE = 16
+#: Chunk 0's version slots (v1.2.1.1: the fw slot, then indices 0, 10, 3,
+#: 4, 5, 6, 9 and 7).
+LOG_VERSION_COUNT = 9
+#: ASCII decimal digits.
+DecimalText: Construct[int, int] = ExprAdapter(
+    GreedyBytes,
+    decoder=lambda text, _: int(text),
+    encoder=lambda number, _: str(number).encode(),
+)
+DecimalDigit: Construct[int, int] = ExprAdapter(
+    Bytes(1),
+    decoder=lambda text, _: int(text),
+    encoder=lambda number, _: str(number).encode(),
+)
+#: One chunk-0 version ``v``: ``,`` then ``(v/100).(v%100/10).(v%10)``.
+LogVersion: Construct[int, int] = ExprAdapter(
+    Struct(
+        Const(b","),
+        "hundreds" / NullTerminated(DecimalText, term=b"."),
+        "tens" / DecimalDigit,
+        Const(b"."),
+        "units" / DecimalDigit,
+    ),
+    decoder=lambda text, _: text.hundreds * 100 + text.tens * 10 + text.units,
+    encoder=lambda v, _: {"hundreds": v // 100, "tens": v % 100 // 10, "units": v % 10},
+)
+#: The RTC counter as ``%08X``.
+RtcHex: Construct[int, int] = ExprAdapter(
+    Bytes(8),
+    decoder=lambda text, _: int(text, 16),
+    encoder=lambda rtc, _: f"{rtc:08X}".encode(),
+)
+#: Chunk 0: ``[<RTC>]``, the SN's first 16 bytes and the versions, space-padded,
+#: a newline last. a1783-control.md "BLE log upload".
+LogHeader = Struct(
+    "head"
+    / Padded(
+        LOG_CHUNK_SIZE - 1,
+        Struct(
+            Const(b"["),
+            "rtc" / RtcHex,
+            Const(b"]"),
+            "sn" / fitted(LOG_SN_SIZE),
+            "versions" / Array(LOG_VERSION_COUNT, LogVersion),
+        ),
+        pattern=b" ",
+    ),
+    Const(b"\n"),
+)
 
 
 def _get_log_chunk(
@@ -1102,15 +1164,11 @@ def _bytes_value(state: Mapping[str, Value], name: str) -> bytes:
 
 def _version_number(state: Mapping[str, Value], name: str) -> int:
     """Return ``f9`` version ``name`` as its digits' integer (v1.2.1.6 -> 1216)."""
-    return int("".join(str(digit) for digit in reversed(_bytes_value(state, name))))
+    return int(VersionNumber.parse(_bytes_value(state, name)))
 
 
 def _log_header(state: Mapping[str, Value]) -> bytes:
-    """Return chunk 0: ``[<RTC as 8 hex>]``, the SN's first 16 bytes, nine versions.
-
-    Each version integer ``v`` prints as ``,(v/100).(v%100/10).(v%10)``; the
-    rest is spaces, with a newline last. a1783-control.md "BLE log upload".
-    """
+    """Return chunk 0: the RTC, the SN's first 16 bytes and nine versions."""
     mcu = _version_number(state, "mcu_version")
     slots = (
         mcu,
@@ -1123,10 +1181,12 @@ def _log_header(state: Mapping[str, Value]) -> bytes:
         _version_number(state, "module_version"),
         LOG_USB_PD_VERSION,
     )
-    versions = "".join(f",{v // 100}.{v % 100 // 10}.{v % 10}" for v in slots)
-    sn = _bytes_value(state, "device_sn")[:LOG_SN_SIZE]
-    head = f"[{int(state[RTC]):08X}]".encode() + sn + versions.encode()
-    return head.ljust(LOG_CHUNK_SIZE - 1, b" ") + b"\n"
+    head = {
+        "rtc": int(state[RTC]),
+        "sn": _bytes_value(state, "device_sn"),
+        "versions": slots,
+    }
+    return bytes(LogHeader.build({"head": head}))
 
 
 def _log_chunk(request: ParameterDict, state: Mapping[str, Value]) -> ParameterDict:
@@ -1147,7 +1207,6 @@ def _log_chunk(request: ParameterDict, state: Mapping[str, Value]) -> ParameterD
 
 #: ``4100 a2``'s first six value bytes; bit 0 of the sixth marks an app session.
 SessionDescriptor = Struct(Padding(5), "session" / BitStruct(Padding(7), "app" / Flag))
-SESSION_DESCRIPTOR_SIZE = 6
 #: ``a3[10:12]`` in an app session, and in any other.
 APP_SILENT_RECHARGE_POWER = 1000
 SILENT_RECHARGE_POWER = 600
@@ -1160,8 +1219,8 @@ def _get_all_device_info(request: ParameterDict) -> dict[str, Value] | None:
     power.
     """
     descriptor = decode_field(request, "a2", GreedyBytes) if "a2" in request else b""
-    padded = descriptor[:SESSION_DESCRIPTOR_SIZE].ljust(SESSION_DESCRIPTOR_SIZE, b"\0")
-    app = SessionDescriptor.parse(padded).session.app
+    session = Optional(SessionDescriptor).parse(descriptor)
+    app = session is not None and session.session.app
     return {
         "silent_recharge_power": APP_SILENT_RECHARGE_POWER
         if app
@@ -1250,8 +1309,8 @@ class CGen2Layout(TableLayout):
         changes = super().state_changes(msgtype, plaintext, state)
         request = Parameters.parse(plaintext)
         if "fd" in request:
-            transaction_id = decode_field(request, "fd", GreedyBytes)
-            changes["transaction_id"] = transaction_id[:TRANSACTION_ID_SIZE]
+            stored = at_most(TRANSACTION_ID_SIZE)
+            changes["transaction_id"] = decode_field(request, "fd", stored)
         return changes
 
     def build(self, msgtype: int, values: Mapping[str, Value] | None = None) -> bytes:

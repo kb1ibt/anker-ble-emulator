@@ -10,7 +10,7 @@ from anker_ble_emulator import (
     ModuleBuild,
     Outer,
 )
-from anker_ble_emulator.parameters import Parameters
+from anker_ble_emulator.parameters import Parameter, Parameters
 from tests.fixtures.client import SESSION, AppClient, BleakLink, cmd_hex, settle
 
 
@@ -49,7 +49,7 @@ async def test_the_c800_reports_its_versions_and_the_c1000_telemetry() -> None:
         c800_fields, c1000_fields = Parameters.parse(ours), Parameters.parse(theirs)
         assert set(c800_fields) == set(c1000_fields) - C1000_ONLY_TAGS
         assert all(
-            c800_fields[tag].value_legacy == c1000_fields[tag].value_legacy
+            Parameter.build(c800_fields[tag]) == Parameter.build(c1000_fields[tag])
             for tag in c800_fields
         )
 

@@ -27,7 +27,7 @@ from anker_ble_emulator.devices.a2345 import (
 from anker_ble_emulator.devices.base import data_resource
 from anker_ble_emulator.devices.prime import OutputPort
 from anker_ble_emulator.layouts import ui
-from anker_ble_emulator.parameters import Parameters, decode_field
+from anker_ble_emulator.parameters import Parameter, Parameters, decode_field
 from tests.fixtures.client import (
     SESSION,
     TIMESTAMP,
@@ -310,9 +310,9 @@ def test_a91b2_display_charging_and_clock_fields_are_all_settable_by_name() -> N
 
     snapshot = device.mcu.respond(0x200, values=device.negotiated_module.values)[0]
     params = Parameters.parse(snapshot.payload)
-    assert params["ac"].value_legacy == bytes.fromhex("0185")
-    assert params["ad"].value_legacy == bytes.fromhex("01a0")
-    assert params["ae"].value_legacy == bytes.fromhex("040100")
+    assert Parameter.build(params["ac"]) == bytes.fromhex("ac020185")
+    assert Parameter.build(params["ad"]) == bytes.fromhex("ad0201a0")
+    assert Parameter.build(params["ae"]) == bytes.fromhex("ae03040100")
     assert decode_field(params, "b4", ui(1)) == 1
     assert decode_field(params, "b5", ui(1)) == 1
 
@@ -334,9 +334,8 @@ async def test_a91b2_screen_timeout_set_matches_the_captured_byte() -> None:
     assert on[0].plaintext == bytes.fromhex("00a10131")
     assert rejected[0].plaintext == bytes.fromhex("04a10131")
     snapshot = device.mcu.respond(0x200, values=device.negotiated_module.values)[0]
-    assert Parameters.parse(snapshot.payload)["ad"].value_legacy == bytes.fromhex(
-        "0124"
-    )
+    ad = Parameters.parse(snapshot.payload)["ad"]
+    assert Parameter.build(ad) == bytes.fromhex("ad020124")
 
 
 async def test_a91b2_charging_mode_rejects_an_invalid_submode() -> None:
@@ -797,6 +796,12 @@ def test_a_prime_mcu_answers_what_nothing_records_as_its_firmware_does(
             id="420d nonzero acks and triggers 0305",
         ),
         pytest.param(0x20D, "a2020200", [(0xA0D, "00a10131")], id="420d zero acks"),
+        pytest.param(
+            0x20D,
+            "a203020001",
+            [(0xA0D, "00a10131")],
+            id="420d reads only its first value byte",
+        ),
         pytest.param(
             0x20D, "a2020101", [(0xA0D, "04a10131")], id="420d a2 typed 01 refused"
         ),
