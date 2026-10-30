@@ -22,6 +22,8 @@ from construct import (
     Padding,
     Struct,
 )
+from cryptography.hazmat.primitives.ciphers import Cipher as AesCipher
+from cryptography.hazmat.primitives.ciphers import algorithms, modes
 
 from anker_ble_emulator.layouts import (
     STATUS_ACCEPTED,
@@ -116,7 +118,8 @@ Theme = BitStruct(
 )
 #: ``4a02``, the ``4202`` read: ``a2`` the screensaver switch, holiday switch
 #: and theme (bit 7 / 6 / low 6), ``a3`` the theme id (doc "Commands" ``4202``),
-#: ``af``'s own names, so one value sets both; ``a6`` the flag ``4222`` sets.
+#: ``af``'s own names, so one value sets both; ``a6`` the custom screensaver's
+#: Time Display, which ``4222`` sets (the app's Custom Clock page, doc ``4222``).
 MSGTYPE_A02 = 0xA02
 ScreensaverRead = BitStruct(
     "screen_saver_switch" / Flag,
@@ -132,7 +135,7 @@ SCREENSAVER_READ_FIELDS: dict[str, FieldSpec] = {
         ),
     ),
     "a3": one_field("screen_saver_theme_id", ui(4), 0x04),
-    "a6": one_field("port_widgets_switch", ui(1), 0x01),
+    "a6": one_field("time_display", ui(1), 0x01),
 }
 #: ``b9``: screensaver active-hours window, 0a00-only; the app names none of it.
 SCREENSAVER_FIELDS = (
@@ -321,6 +324,27 @@ UPLOAD_NEXT = "_upload_next"
 UPLOAD_CRC = "_upload_crc"
 UPLOAD_STATUS = "_upload_status"
 UPLOAD_ANSWER_INDEX = "_upload_answer_index"
+#: The upload's bytes as flash holds them so far, and, for a custom photo, the
+#: last cipher block, which chains into the next chunk (doc "Theme upload").
+UPLOAD_IMAGE = "_upload_image"
+UPLOAD_IV = "_upload_iv"
+#: Kind 2, a custom photo, is AES-128-CBC encrypted on the device: one stream
+#: per ``4220``, each chunk over its length rounded up to 16 (zeros past it),
+#: flash keeping only the received length (doc "Theme upload", :483-485).
+CUSTOM_KIND = 2
+CUSTOM_KEY = bytes.fromhex("789b783678ec78e278a37834781878aa")
+CUSTOM_IV = bytes.fromhex("e16ee1d8e1b3e18be18ee1d0e160e1aa")
+AES_BLOCK = 16
+#: Erased flash, what a read past the stored bytes finds.
+ERASED = 0xFF
+#: The draw (doc "Theme image display"): a stored size of 1 to 65 534 B, else
+#: the slot is erased and screens 3 / 5 fall back to screen 1. The bench's
+#: ``af`` reads index 1 after it, the photo's id kept (2026-10-30 ``c1``).
+MAX_DRAWN = 0xFFFE
+FALLBACK_THEME = 1
+#: Each draw the screen asks for, carried in no frame: a count the timed hook
+#: runs ``_draw`` on.
+DRAWS = "_screen_draws"
 #: ``4a21`` statuses (doc "Theme upload"); ``NO_ANSWER`` sends nothing.
 UPLOAD_OK = 0x00
 UPLOAD_DONE = 0x10
@@ -390,6 +414,21 @@ def _stored(theme_id: int) -> str:
     return f"_theme_crc_{theme_id}"
 
 
+def _slot(theme_id: int, part: str) -> str:
+    """Return the hidden name of ``theme_id``'s slot ``part``: size, kind, image."""
+    return f"_theme_{part}_{theme_id}"
+
+
+def _slot_names(theme_id: int) -> tuple[str, ...]:
+    """Return every hidden name of ``theme_id``'s slot: its record and its bytes."""
+    return (_stored(theme_id), *(_slot(theme_id, p) for p in ("size", "kind", "image")))
+
+
+def _draw_asked(state: Mapping[str, Value]) -> dict[str, Value]:
+    """Return the values that ask the screen to draw what it shows."""
+    return {DRAWS: int(state.get(DRAWS, 0)) + 1}
+
+
 def _theme_staging(
     request: ParameterDict, state: Mapping[str, Value]
 ) -> dict[str, Value]:
@@ -403,7 +442,7 @@ def _theme_staging(
         return {}
     theme, theme_id, crc = taken
     if state.get(_stored(theme_id)) == crc:
-        return _shown(theme, theme_id)
+        return _shown(theme, theme_id) | _draw_asked(state)
     if state.get(WIFI_UP):
         return {FETCH_THEME: theme, FETCH_ID: theme_id, FETCH_CRC: crc}
     return {STAGED_THEME_ID: theme_id}
@@ -538,6 +577,8 @@ def _prepare_upload(request: ParameterDict) -> dict[str, Value] | None:
         UPLOAD_COUNT: decode_field(request, "a8", ui(2)),
         UPLOAD_NEXT: 0,
         UPLOAD_CRC: 0,
+        UPLOAD_IMAGE: b"",
+        UPLOAD_IV: CUSTOM_IV,
     }
 
 
@@ -579,27 +620,174 @@ def _upload_step(
             return {UPLOAD_STATUS: UPLOAD_RESEND, UPLOAD_ANSWER_INDEX: expected}
         return {UPLOAD_STATUS: NO_ANSWER}
     count, step = int(state[UPLOAD_COUNT]), int(state[UPLOAD_CHUNK])
-    data = request["a3"].get("value") or b""
+    received = request["a3"].get("value") or b""
     last = index + 1 == count
-    if last:
-        data = data[: int(state[UPLOAD_SIZE]) % step or step]
+    data = received[: int(state[UPLOAD_SIZE]) % step or step] if last else received
     crc = zlib.crc32(data, int(state[UPLOAD_CRC]))
-    changes: dict[str, Value] = {UPLOAD_NEXT: index + 1, UPLOAD_CRC: crc}
+    kind = int(state[UPLOAD_KIND])
+    written, chain = received, stored_bytes(state, UPLOAD_IV)
+    if kind == CUSTOM_KIND:
+        written, chain = _encrypted_chunk(received, chain)
+    image = stored_bytes(state, UPLOAD_IMAGE).ljust(step * index, bytes((ERASED,)))
+    image = image[: step * index] + written
+    changes: dict[str, Value] = {
+        UPLOAD_NEXT: index + 1,
+        UPLOAD_CRC: crc,
+        UPLOAD_IMAGE: image,
+        UPLOAD_IV: chain,
+    }
     if not last:
         status = UPLOAD_OK if window_end else NO_ANSWER
         return changes | {UPLOAD_STATUS: status, UPLOAD_ANSWER_INDEX: index + 1}
     if crc != state[UPLOAD_WANT]:
         return changes | {UPLOAD_STATUS: UPLOAD_BAD_CRC, UPLOAD_ANSWER_INDEX: count}
     theme_id = int(state.get(STAGED_THEME_ID, 0))
-    theme = THEME_BY_KIND[int(state[UPLOAD_KIND])]
+    slot: dict[str, Value] = {
+        _stored(theme_id): crc,
+        _slot(theme_id, "size"): int(state[UPLOAD_SIZE]),
+        _slot(theme_id, "kind"): kind,
+        _slot(theme_id, "image"): image,
+    }
     return (
         changes
-        | _shown(theme, theme_id)
-        | {
-            _stored(theme_id): crc,
-            UPLOAD_STATUS: UPLOAD_DONE,
-            UPLOAD_ANSWER_INDEX: count,
-        }
+        | slot
+        | _shown(THEME_BY_KIND[kind], theme_id)
+        | _draw_asked(state)
+        | {UPLOAD_STATUS: UPLOAD_DONE, UPLOAD_ANSWER_INDEX: count}
+    )
+
+
+def _encrypted_chunk(chunk: bytes, chain: bytes) -> tuple[bytes, bytes]:
+    """Return a custom chunk as flash keeps it, and the cipher block it chains on.
+
+    It's encrypted over its length rounded up to 16 (zeros past it), from the
+    cipher block before it; flash keeps only the received length (:485).
+    """
+    padded = chunk + bytes(-len(chunk) % AES_BLOCK)
+    encryptor = AesCipher(algorithms.AES(CUSTOM_KEY), modes.CBC(chain)).encryptor()
+    sealed = encryptor.update(padded) + encryptor.finalize()
+    return sealed[: len(chunk)], sealed[-AES_BLOCK:] or chain
+
+
+def _drawn(kind: int, size: int, crc: int, image: bytes) -> bool:
+    """Whether a stored image draws (doc "Theme image display").
+
+    Its size is 1 to 65 534 B; a custom one is decrypted in one CBC pass from
+    the fixed IV over the size rounded up to 16, flash past the stored bytes
+    reading erased; then the CRC over the size, and the JPEG header.
+    """
+    if not 1 <= size <= MAX_DRAWN:
+        return False
+    span = size + -size % AES_BLOCK if kind == CUSTOM_KIND else size
+    plain = image.ljust(span, bytes((ERASED,)))[:span]
+    if kind == CUSTOM_KIND:
+        decryptor = AesCipher(
+            algorithms.AES(CUSTOM_KEY), modes.CBC(CUSTOM_IV)
+        ).decryptor()
+        plain = decryptor.update(plain) + decryptor.finalize()
+    return zlib.crc32(plain[:size]) == crc and _jpeg_decodes(plain[:size])
+
+
+#: The markers the header parse skips by their length: APP0-APP15, COM, DRI.
+SKIPPED_MARKERS = frozenset({*range(0xE0, 0xF0), 0xFE, 0xDD})
+MARKER, SOI, DQT, DHT, SOF0, SOS = 0xFF, 0xD8, 0xDB, 0xC4, 0xC0, 0xDA
+#: SOF0's luma sampling the decoder takes: 4:4:4, 4:2:2, 4:2:0.
+LUMA_SAMPLING = frozenset({0x11, 0x21, 0x22})
+JPEG_COMPONENTS = 3
+JPEG_PRECISION = 8
+MAX_QUANT_ID = 2
+MAX_HUFFMAN_ID = 1
+QUANT_TABLE = 64
+HUFFMAN_COUNTS = 16
+SCAN_SPECTRAL = b"\x00\x3f\x00"
+
+
+def _jpeg_decodes(data: bytes) -> bool:  # one return per rule
+    """Whether the hardware decoder takes ``data``'s header (``jpeg_header_parse``).
+
+    From byte 0: SOI; APPn, COM and DRI skipped by length; DQT, DHT, SOF0 and
+    SOS checked; any other marker before SOS fails, fill bytes and RSTn too.
+    """
+    if data[:2] != bytes((MARKER, SOI)):
+        return False
+    pos = 2
+    while pos + 4 <= len(data):
+        if data[pos] != MARKER:
+            return False
+        marker = data[pos + 1]
+        length = int.from_bytes(data[pos + 2 : pos + 4], "big")
+        if pos + 2 + length > len(data):
+            return False
+        body = data[pos + 4 : pos + 2 + length]
+        if marker == SOS:
+            return _scan_decodes(body)
+        if marker not in SKIPPED_MARKERS and not _segment_decodes(marker, body):
+            return False
+        pos += 2 + length
+    return False
+
+
+def _segment_decodes(marker: int, body: bytes) -> bool:
+    """Whether a DQT, DHT or SOF0 segment passes; any other marker fails."""
+    if marker == DQT:
+        return all(
+            body[at] >> 4 == 0 and body[at] & 0x0F <= MAX_QUANT_ID
+            for at in range(0, len(body), 1 + QUANT_TABLE)
+        )
+    if marker == DHT:
+        at = 0
+        while at < len(body):
+            if body[at] & 0x0F > MAX_HUFFMAN_ID:
+                return False
+            at += 1 + HUFFMAN_COUNTS + sum(body[at + 1 : at + 1 + HUFFMAN_COUNTS])
+        return True
+    if marker == SOF0:
+        return (
+            body[0] == JPEG_PRECISION
+            and body[5] == JPEG_COMPONENTS
+            and body[7] in LUMA_SAMPLING
+        )
+    return False
+
+
+def _scan_decodes(body: bytes) -> bool:
+    """Whether SOS is one scan of 3 components with Ss/Se/Ah-Al ``00 3f 00``."""
+    count = body[0]
+    return count == JPEG_COMPONENTS and body[1 + 2 * count : 4 + 2 * count] == (
+        SCAN_SPECTRAL
+    )
+
+
+def _draw_events(
+    before: Mapping[str, Value], after: Mapping[str, Value]
+) -> tuple[Timed, ...]:
+    """Return the screen's draw, when a change asked for one."""
+    if after.get(DRAWS) != before.get(DRAWS):
+        return (Timed(0, "screen_draw", _draw),)
+    return ()
+
+
+def _draw(
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Draw the theme shown: a stored image that fails is erased, screen 1.
+
+    An image whose bytes the emulator doesn't hold (fetched, or recorded)
+    draws as shown.
+    """
+    theme_id = int(state["screen_saver_theme_id"])
+    image = state.get(_slot(theme_id, "image"))
+    if state["screen_saver_theme"] not in IMAGE_THEMES or not isinstance(image, bytes):
+        return Step()
+    kind, size = (
+        int(state[_slot(theme_id, "kind")]),
+        int(state[_slot(theme_id, "size")]),
+    )
+    if _drawn(kind, size, int(state[_stored(theme_id)]), image):
+        return Step()
+    return Step(
+        values={"screen_saver_theme": FALLBACK_THEME}, unset=_slot_names(theme_id)
     )
 
 
@@ -620,13 +808,16 @@ def _upload_done(
     before: Mapping[str, Value],  # noqa: ARG001
     after: Mapping[str, Value],
 ) -> ParameterDict | None:
-    """``4311`` 1, before the last chunk's ``4a21 10``: the image stored and shown."""
+    """``4311`` 1, before the last chunk's ``4a21 10``: the image stored and shown.
+
+    It names the upload's own id and kind, whatever its first draw then does.
+    """
     if after[UPLOAD_STATUS] != UPLOAD_DONE:
         return None
     return _theme_state(
-        int(after["screen_saver_theme_id"]),
+        int(after.get(STAGED_THEME_ID, 0)),
         IMAGE_SHOWN,
-        int(after["screen_saver_theme"]),
+        THEME_BY_KIND[int(after[UPLOAD_KIND])],
     )
 
 
@@ -1470,15 +1661,31 @@ def _secret_prompt(
     return {PROMPTS: int(state.get(PROMPTS, 0)) + 1}
 
 
-def _set_port_widgets_switch(request: ParameterDict) -> dict[str, Value] | None:
-    """Return the ``4a02 a6`` switch for ``a2`` 0 or 1; any other value changes nothing.
+def _set_time_display(request: ParameterDict) -> dict[str, Value] | None:
+    """Return Time Display (``4a02 a6``) for ``a2`` 0 or 1; other values change nothing.
 
     The handler (0x0004ff84) refuses only a request without ``a2``.
     """
     if "a2" not in request:
         return None
     switch = decode_field(request, "a2", ui(1))
-    return {"port_widgets_switch": switch} if switch in {0, 1} else {}
+    return {"time_display": switch} if switch in {0, 1} else {}
+
+
+def _time_display_redraw(
+    request: ParameterDict, state: Mapping[str, Value]
+) -> dict[str, Value]:
+    """Redraw on a change of Time Display, and only while the screen is 5.
+
+    ``time_display_set``: the custom photo with the time shown or hidden (doc
+    ``4222``); on screen 1 it sets the flag and draws nothing.
+    """
+    switch = _set_time_display(request)
+    if not switch or switch["time_display"] == state["time_display"]:
+        return {}
+    if state["screen_saver_theme"] != CUSTOM_THEME:
+        return {}
+    return _draw_asked(state)
 
 
 def _get_usbc_status(
@@ -1572,7 +1779,7 @@ class A2345Layout(TableLayout):
             0x218: _get_usbc_status,
             0x220: _prepare_upload,
             0x221: _upload_chunk,
-            0x222: _set_port_widgets_switch,
+            0x222: _set_time_display,
             0x223: _set_equipment_identification_switch,
         }
     )
@@ -1600,6 +1807,7 @@ class A2345Layout(TableLayout):
             0x211: _custom_mode_switch_off,
             0x212: _holiday_schedule,
             0x221: _upload_step,
+            0x222: _time_display_redraw,
         }
     )
     #: The MCU's change watchers, by the commands that can trip them (doc "MCU
@@ -1700,6 +1908,7 @@ class A2345Layout(TableLayout):
             *_power_expert(before, after),
             *_theme_fetch(before, after),
             *_holiday_fetch(before, after),
+            *_draw_events(before, after),
             *wifi_events(before, after, PERIODICS),
         )
         if before["charging_mode"] == after["charging_mode"]:

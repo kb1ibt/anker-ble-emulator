@@ -2,10 +2,13 @@
 """Prime rigs for the MCU's timed behavior."""
 
 from .prime_fixtures import (
+    CUSTOM_PHOTO,
+    CUSTOM_PHOTO_2,
     HOLIDAY_URL,
     PRIME_EPOCH,
     advance,
     arm,
+    baseline_jpeg,
     command,
     device_clock,
     holiday_schedule,
@@ -20,15 +23,19 @@ from .prime_fixtures import (
     unit_change,
     upload_chunk,
     upload_prepare,
+    upload_theme,
     usbc_identity,
 )
 
 
 __all__ = [
+    "CUSTOM_PHOTO",
+    "CUSTOM_PHOTO_2",
     "HOLIDAY_URL",
     "PRIME_EPOCH",
     "advance",
     "arm",
+    "baseline_jpeg",
     "command",
     "device_clock",
     "holiday_schedule",
@@ -43,5 +50,6 @@ __all__ = [
     "unit_change",
     "upload_chunk",
     "upload_prepare",
+    "upload_theme",
     "usbc_identity",
 ]
