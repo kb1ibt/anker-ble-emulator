@@ -1303,32 +1303,37 @@ OFF_BUS = (3, 3)
 #: "Pack selection", 10 ms steps), re-checked on every change:
 #: - main -> expansion charge (:159): the charge-cap latch, 100 steps charging
 #:   at the cap (:187); the expansion below its cap;
-#: - main -> expansion discharge (:158): the discharge latch, the main above its
-#:   line and a >= 1.0 % drop in its SoC since it last charged (:188 (a)); the
-#:   expansion at or above ``min_soc`` + 0.9 %, never inside the band under it
-#:   (2026-09-03 03:29-08:00 frames; the firmware gate is unnamed, likely
-#:   :188 (a)'s displayed SoC); more than 200 steps since the last switch;
+#: - main -> expansion discharge (:158): the discharge latch (:188 (a): the
+#:   main's own SoC above ``min_soc`` + 0.9 % and a >= 1.0 % drop in it since it
+#:   last charged); the expansion's discharge allowance non-zero (the stand-in
+#:   below; the path doesn't re-check the expansion's SoC); more than 200 steps
+#:   since the last switch;
 #: - expansion -> main discharge (:164): 300 steps on the expansion, not
 #:   charging (the charge-cap latch clear), its SoC under ``min_soc`` + 0.9 %,
-#:   checked every step; the main's CAN-reported charge allowance (record 1
-#:   +0xe0) is taken as non-zero, its value at the cap being unread.
-#: The allowances are the packs' own CAN reports, which the host never re-gates
-#: by SoC: a pack may charge below its cap; the BP2000 zeroes its discharge
-#: allowance at or under ``min_soc`` (CAN ``0x046e``), the main's stays 60.0 A.
-#: :166 (the expansion's discharge allowance at 0 for 300 steps) moves the bus
-#: only once :164 would have. Not modeled: the once-per-boot switch (:157), the
+#:   checked every step; the main's charge allowance as :164 reads it is taken
+#:   as non-zero (which record holds it, and its value at the cap, are open).
+#: The emulator's allowance stand-ins: a pack may charge below its cap; the
+#: expansion's discharge allowance reads 0 under ``min_soc`` + 0.9 %, unconfirmed
+#: (on 2026-09-03 03:29-08:00 the allowance or ``raw+0x95`` held :158 off over
+#: the band, which one unread). :166 (that allowance at 0 for 300 steps) would
+#: move the bus only once :164 has. Not modeled: the once-per-boot switch (:157), the
 #: pack-switch code (:161, :167), the allowance-only rows (:162, :163, :165),
 #: ``raw+0x95``, the expansion's share of the discharge latch and the latches'
 #: other paths. Hidden: the pack
 #: on the bus (1 main, 2 expansion; unset, the expansion when one is attached,
 #: as on the A1783 recording, else the main), when it took it (UTC s), and the
-#: main's 0.1 % SoC the discharge latch counts its drop from (first seen, then
-#: raised as the main charges; a switch doesn't reset it).
+#: discharge latch (``0x20000b65``) and the main's 0.1 % SoC it counts its drop
+#: from: re-taken only while the latch is clear, as the main charges (its SoC
+#: when charging stops; the 1 s settle isn't modeled) and when the latch arms or
+#: the charge-cap latch sets, never on a switch or a rise without charging
+#: (firmware/mainbms-control-fsms.md, the list after "Latches"); first seen,
+#: the main's SoC before the change.
 BUS_PACK = "pack_on_bus"
 BUS_MAIN = 1
 BUS_EXPANSION = 2
 BUS_TAKEN = "bus_taken"
 LATCH_FROM = "discharge_latch_from"
+LATCH_SET = "discharge_latch"
 EXPANSION_PACK_SOC = "sub_package_pack_soc"
 BUS_DWELL = 3.01
 SWITCH_GAP = 2.01
@@ -1398,19 +1403,12 @@ def _cap_latch_due(state: Mapping[str, Value]) -> bool:
     )
 
 
-def _discharge_latch_due(state: Mapping[str, Value], start: int) -> bool:
-    """Return whether the latch, counting from ``start``, hands the expansion discharge.
+def _expansion_may_discharge(state: Mapping[str, Value]) -> bool:
+    """Return the stand-in for the expansion's discharge allowance being non-zero.
 
-    The main must not be charging (:188 (a)'s current >= -0.1 A); the expansion
-    must be at or above its line, which puts it above its floor.
+    Zero under ``min_soc`` + 0.9 % (unconfirmed: the allowance or ``raw+0x95``).
     """
-    return (
-        state["charge_discharge_status"] != FLOW_CHARGE
-        and _main_soc(state) <= start - DISCHARGE_LATCH_DROP
-        and start > _expansion_floor_line(state)
-        and _expansion_soc(state) >= _expansion_floor_line(state)
-        and _expansion_on(state)
-    )
+    return _expansion_soc(state) >= _expansion_floor_line(state)
 
 
 def _main_due(state: Mapping[str, Value]) -> bool:
@@ -1443,23 +1441,57 @@ def _main_handovers(
         charge = partial(_charge_to_expansion, own)
         return [Timed(CHARGE_CAP_LATCH, PACK_HANDOVER, charge)]
     stored = after.get(LATCH_FROM)
-    start = _main_soc(before) if stored is None else int(stored)
-    if after["charge_discharge_status"] == FLOW_CHARGE or _main_soc(after) > start:
-        start = _main_soc(after)
+    base = _main_soc(before) if stored is None else int(stored)
+    latched = bool(after.get(LATCH_SET))
+    if not latched and after["charge_discharge_status"] == FLOW_CHARGE:
+        base = _main_soc(after)
+    elif not latched and _latch_arms(after, base):
+        latched, base = True, _main_soc(after)
+    marks: dict[str, Value] = {}
+    if stored is None or base != int(stored):
+        marks[LATCH_FROM] = base
+    if latched and not after.get(LATCH_SET):
+        marks[LATCH_SET] = 1
     events = []
-    if stored is None or start != int(stored):
-        events.append(Timed(0.0, LATCH_REFERENCE, partial(_latch_from, start)))
-    if _discharge_latch_due(after, start) and not _discharge_latch_due(before, start):
+    if marks:
+        events.append(Timed(0.0, LATCH_REFERENCE, partial(_latch_marks, marks)))
+    held = latched and _expansion_may_discharge(after) and _expansion_on(after)
+    if held and not _latch_hands_over(before):
         gap = max(0.0, SWITCH_GAP - _held_for(after, SWITCH_GAP))
         events.append(Timed(gap, PACK_HANDOVER, _discharge_to_expansion))
     return events
 
 
-def _latch_from(
-    soc: int, _values: Mapping[str, Value], _state: Mapping[str, Value]
+def _latch_arms(state: Mapping[str, Value], base: int) -> bool:
+    """Return whether the main's >= 1.0 % drop from ``base`` arms the latch (:188 (a)).
+
+    The main must not be charging (current >= -0.1 A) and its own SoC must be
+    above ``min_soc`` + 0.9 %.
+    """
+    soc = _main_soc(state)
+    return (
+        state["charge_discharge_status"] != FLOW_CHARGE
+        and soc > _expansion_floor_line(state)
+        and soc <= base - DISCHARGE_LATCH_DROP
+    )
+
+
+def _latch_hands_over(state: Mapping[str, Value]) -> bool:
+    """Return whether :158 holds: the latch set, the expansion able to discharge."""
+    return (
+        bool(state.get(LATCH_SET))
+        and _expansion_may_discharge(state)
+        and _expansion_on(state)
+    )
+
+
+def _latch_marks(
+    marks: Mapping[str, Value],
+    _values: Mapping[str, Value],
+    _state: Mapping[str, Value],
 ) -> Step:
-    """Count the discharge latch's drop from ``soc``: first seen, or after a charge."""
-    return Step(values={LATCH_FROM: soc})
+    """Store the discharge latch's new baseline, or its arming."""
+    return Step(values=dict(marks))
 
 
 def _charge_to_expansion(
@@ -1467,7 +1499,8 @@ def _charge_to_expansion(
 ) -> Step:
     """Hand the main's charge to the expansion, the latch set (2026-10-06 20:20:03).
 
-    ``a3[0]`` and ``a5[1]`` read 0 at once, the expansion holding the bus.
+    ``a3[0]`` and ``a5[1]`` read 0 at once, the expansion holding the bus; the
+    charge-cap latch setting clears the discharge latch and re-takes its baseline.
     """
     if not _cap_latch_due(state):
         return Step()
@@ -1475,6 +1508,8 @@ def _charge_to_expansion(
         "work_status": FLOW_IDLE,
         "charge_discharge_status": FLOW_IDLE,
         "sub_package_status": FLOW_CHARGE,
+        LATCH_SET: 0,
+        LATCH_FROM: _main_soc(state),
         **_bus_to(BUS_EXPANSION, state, flowing=True),
     }
     return Step(values=_without(changes, own))
@@ -1487,7 +1522,7 @@ def _discharge_to_expansion(
 
     ``a3[0]`` and ``a5[1]`` read 0 at once and ``c0[24]`` the port flow.
     """
-    if not _discharge_latch_due(state, int(state[LATCH_FROM])):
+    if not _latch_hands_over(state):
         return Step()
     output = bool(state["total_output_power"])
     changes: dict[str, Value] = {

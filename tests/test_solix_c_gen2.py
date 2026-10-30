@@ -3775,7 +3775,7 @@ def test_a_main_below_its_cap_takes_the_bus_at_8() -> None:
 
 
 def test_a_main_at_its_cap_takes_the_bus_too() -> None:
-    """:164 reads the main's CAN-reported charge allowance, taken as non-zero."""
+    """:164's charge-allowance test on the main is taken as passing at its cap."""
     device = A1783(clock=ManualClock())
     device.set_values(**{**OFF_GRID_EXPANSION, "pack_soc": 980})
 
@@ -3820,8 +3820,28 @@ def test_an_expansion_put_on_the_bus_under_its_line_hands_it_back() -> None:
     assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
 
 
-def test_a_charge_restarts_the_discharge_latch() -> None:
-    """The >= 1.0 % drop counts from the main's SoC after its last charge."""
+def test_a_charge_retakes_the_discharge_latch_baseline() -> None:
+    """The >= 1.0 % drop counts from the main's SoC when its charging stopped."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**FLOOR_LEVER, "battery_level": 80, "pack_soc": 800})
+    device.set_values(discharge_limit_value=60)
+    clock.advance(5)
+    device.negotiated_module.check_pushes()
+    device.set_values(discharge_limit_value=5, total_output_power=60)
+
+    device.set_values(pack_soc=805, charge_discharge_status=2)
+    device.set_values(charge_discharge_status=1)
+    device.set_values(pack_soc=796)
+    kept = tuple(next_0490(device)[name] for name in SLOTS)
+    device.set_values(pack_soc=795)
+
+    assert kept == (8, 9, 3, 3)
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
+
+
+def test_a_rise_without_charging_keeps_the_discharge_latch_baseline() -> None:
+    """A SoC rise with no charge doesn't re-take the baseline."""
     clock = ManualClock()
     device = A1783(clock=clock)
     device.set_values(**{**FLOOR_LEVER, "battery_level": 80, "pack_soc": 800})
@@ -3831,12 +3851,56 @@ def test_a_charge_restarts_the_discharge_latch() -> None:
     device.set_values(discharge_limit_value=5, total_output_power=60)
 
     device.set_values(pack_soc=805)
-    device.set_values(pack_soc=796)
+    device.set_values(pack_soc=791)
     kept = tuple(next_0490(device)[name] for name in SLOTS)
-    device.set_values(pack_soc=795)
+    device.set_values(pack_soc=790)
 
     assert kept == (8, 9, 3, 3)
     assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
+
+
+def test_a_latch_set_over_the_band_hands_over_once_the_expansion_leaves_it() -> None:
+    """The latch arms on the main's drop and stays set; :158 waits for the allowance."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**FLOOR_LEVER)
+    device.set_values(discharge_limit_value=60)
+    clock.advance(10)
+    device.negotiated_module.check_pushes()
+    device.set_values(discharge_limit_value=5, total_output_power=60)
+    device.set_values(sub_package_pack_soc=55)
+
+    device.set_values(pack_soc=990)
+    held = tuple(next_0490(device)[name] for name in SLOTS)
+    device.set_values(sub_package_pack_soc=60)
+
+    assert held == (3, 9, 3, 3)
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
+
+
+def test_the_charge_cap_latch_clears_the_discharge_latch() -> None:
+    """Armed over the band, then the cap handover: the latch is clear when it's back."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**FLOOR_LEVER)
+    device.set_values(discharge_limit_value=60)
+    clock.advance(10)
+    device.negotiated_module.check_pushes()
+    device.set_values(discharge_limit_value=5, total_output_power=60)
+    device.set_values(sub_package_pack_soc=55)
+    device.set_values(pack_soc=990)
+
+    device.set_values(pack_soc=1000, charge_discharge_status=2)
+    clock.advance(1)
+    device.negotiated_module.check_pushes()
+    charging = tuple(next_0490(device)[name] for name in SLOTS)
+    device.set_values(sub_package_status=0)
+    clock.advance(4)
+    device.negotiated_module.check_pushes()
+    device.set_values(sub_package_pack_soc=60)
+
+    assert charging == (3, 3, 8, 9)
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
 
 
 #: ``4104`` ``a4``: the expansion's switch, off (0) or on (1).
