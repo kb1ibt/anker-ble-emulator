@@ -173,6 +173,8 @@ class Profile:
         cloud_pushes: Msgtypes the MCU sends only to the cloud, never to BLE.
         mqtt_routes: The ``a1`` value of each message the MCU publishes to
             MQTT on the cloud, by msgtype; none where it isn't modeled.
+        clock_floor: The earliest UTC the MCU's clock set takes.
+        clock_lead: Seconds the MCU's clock set puts its clock ahead of the UTC.
 
     """
 
@@ -203,6 +205,8 @@ class Profile:
     factory_reset: int | None = None
     cloud_pushes: tuple[int, ...] = ()
     mqtt_routes: Mapping[int, bytes] = field(default_factory=dict)
+    clock_floor: int = 0
+    clock_lead: int = 0
 
     def frames(self) -> dict[int, bytes]:
         """Return the recorded cleartext payloads by msgtype."""
@@ -266,6 +270,8 @@ class Profile:
                 for msgtype in self.cloud_pushes
             },
             mqtt_routes=self.mqtt_routes,
+            clock_floor=self.clock_floor,
+            clock_lead=self.clock_lead,
         )
 
 
@@ -464,7 +470,8 @@ class EmulatedDevice:
     def set_values(self, **values: Value) -> None:
         """Set telemetry values by field name in every later frame that carries them.
 
-        Names are the Anker app's, in snake_case, plus the ``0490`` push's.
+        Names are the Anker app's, in snake_case, plus the ``0490`` push's. The
+        timed events the change starts run once due; those due at once run here.
 
         Raises:
             LayoutError: If no message the device sends has a field so named.
@@ -484,9 +491,13 @@ class EmulatedDevice:
             if not known:
                 msg = f"{self.pn} sends no typed field {name!r}"
                 raise LayoutError(msg)
-        self.negotiated_module.values.update(values)
+        module = self.negotiated_module
+        before = dict(module.values)
+        module.values.update(values)
         if layout is not None:
-            self.negotiated_module.values.update(layout.implied(values))
+            module.values.update(layout.implied(values))
+            module.start_timed(before)
+            self._emit(module.check_pushes())
 
     @property
     def mcu(self) -> McuScript:

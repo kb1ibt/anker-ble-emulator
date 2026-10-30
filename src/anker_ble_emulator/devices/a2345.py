@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
@@ -32,6 +33,7 @@ from anker_ble_emulator.parameters import (
     one_field,
 )
 from anker_ble_emulator.products import ModuleBuild, Outer, Path, Product
+from anker_ble_emulator.timed import Step, Timed
 from anker_ble_emulator.validators import OptionsValidator
 
 from .base import Advert, ProductDevice, Profile, register
@@ -47,7 +49,10 @@ from .prime import (
     ac_port_countdown_task,
     ac_port_timed_task,
     countdown_push,
+    countdown_timers,
+    schedule_timers,
     set_screen_timeout,
+    timed_push,
     timed_task_conflict,
     timed_task_push,
 )
@@ -154,6 +159,8 @@ SNAPSHOT_FIELDS: dict[str, FieldSpec] = {
 #: on that mapping) -- shared by 4207/4208/4209's port selector.
 PORT_BY_SELECT = {0: "pd1", 1: "pd2", 2: "pd3", 3: "pd4", 4: "usb"}
 PORT_SELECT = OptionsValidator(ui(1), *PORT_BY_SELECT)
+#: The ports whose countdown disarm (or expiry) zeroes the remaining time: all.
+DISARM_CLEARS = frozenset(PORT_BY_SELECT.values())
 CHARGING_MODE = OptionsValidator(ui(1), 0, 1, 2, 3, 4)
 #: ``4205 a2``: the screensaver switch (bit 7) over the theme (bits 0-5).
 ScreensaverRequest = BitStruct(
@@ -166,16 +173,6 @@ PORT_PRIORITY_MODE = 2
 UNSET = 0
 NORMAL = 1
 DESIGNATED = 2
-
-
-def _output_ports(port_select: int) -> tuple[str, ...]:
-    """Return the output port(s) a port selector's switch affects.
-
-    The one combined USB-A selector drives both telemetry ports (a8/a9); every
-    other selector names exactly one.
-    """
-    name = PORT_BY_SELECT[port_select]
-    return ("usb1", "usb2") if name == "usb" else (name,)
 
 
 def _set_screen_brightness(request: ParameterDict) -> dict[str, Value] | None:
@@ -210,10 +207,9 @@ def _set_charging_mode(request: ParameterDict) -> dict[str, Value] | None:
 
 
 def _set_dc_relay_switch(request: ParameterDict) -> dict[str, Value] | None:
-    """Return a port's output status, if ``a2`` (port) and ``a3`` (state) fit."""
-    port_select = decode_field(request, "a2", PORT_SELECT)
-    switch = decode_field(request, "a3", SWITCH)
-    return {f"{name}_output_status": switch for name in _output_ports(port_select)}
+    """Return a port's switch (its record's ``[0]``), if ``a2`` and ``a3`` fit."""
+    name = PORT_BY_SELECT[decode_field(request, "a2", PORT_SELECT)]
+    return {f"{name}_relay_switch": bool(decode_field(request, "a3", SWITCH))}
 
 
 def _set_port_priority(request: ParameterDict) -> dict[str, Value] | None:
@@ -246,28 +242,67 @@ def _switch_change(
     request: ParameterDict, before: Mapping[str, Value], after: Mapping[str, Value]
 ) -> ParameterDict | None:
     """``0302``: a port's switch, when a ``4207`` changed it (doc "MCU pushes")."""
-    ports = _output_ports(decode_field(request, "a2", PORT_SELECT))
-    name = "{}_output_status"
-    if all(before[name.format(p)] == after[name.format(p)] for p in ports):
+    name = f"{PORT_BY_SELECT[decode_field(request, 'a2', PORT_SELECT)]}_relay_switch"
+    if before[name] == after[name]:
         return None
     return ParameterDict({"a2": request["a2"], "a3": request["a3"]})
 
 
-def _charging_mode_change(
-    request: ParameterDict,  # noqa: ARG001  # a change watcher: state only
-    before: Mapping[str, Value],
-    after: Mapping[str, Value],
-) -> ParameterDict | None:
-    """``030d``: the mode, ``b8`` and the designated ports, on a mode change."""
-    if before["charging_mode"] == after["charging_mode"]:
-        return None
-    profile = {"custom_charge_profile": after["custom_charge_profile"]}
-    return ParameterDict(
-        {
-            "a2": container("a2", TYPE_UI, ui(1).build(after["charging_mode"])),
-            "a3": container("a3", TYPE_BIN, CustomChargeProfile.build(profile)),
-            "a4": container("a4", TYPE_UI, ui(1).build(_designated_ports(after))),
-        }
+#: ``030d`` follows a mode change by the fixed mode-apply settle counter, on
+#: ``420c`` entry and a ``4206`` alike (~3.3 s observed; doc "MCU pushes" ``030f``).
+MODE_SETTLE = 3.3
+#: How long a mode change holds every port at 0 W while they renegotiate (doc
+#: "Commands" ``4206``: "all drop to 0 W for ~8 s").
+RENEGOTIATION = 8.0
+#: The port-block fields a renegotiation zeroes, in both ``0303`` and ``4a00``.
+RENEGOTIATED = tuple(
+    f"{port}_{field}"
+    for port in PORT_GROUPS[MSGTYPE_303].tags
+    for field in ("output_status", "output_power")
+)
+#: Set while the ports renegotiate: a further mode change keeps the one window.
+RENEGOTIATING = "_ports_renegotiating"
+
+
+def _mode_report(
+    values: Mapping[str, Value],  # noqa: ARG001  # built from the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """``030d``: the mode, ``b8`` and the designated ports, once the mode settles."""
+    profile = {"custom_charge_profile": state["custom_charge_profile"]}
+    fields = {
+        "a2": container("a2", TYPE_UI, ui(1).build(state["charging_mode"])),
+        "a3": container("a3", TYPE_BIN, CustomChargeProfile.build(profile)),
+        "a4": container("a4", TYPE_UI, ui(1).build(_designated_ports(state))),
+    }
+    return Step(frames=(timed_push(0x30D, fields, state),))
+
+
+def _renegotiate(
+    values: Mapping[str, Value],
+    state: Mapping[str, Value],  # noqa: ARG001  # keeps only what was set
+) -> Step:
+    """Zero every port block, then give each back what it had when the window ends."""
+    prior = {name: values[name] for name in RENEGOTIATED if name in values}
+    return Step(
+        values={**dict.fromkeys(RENEGOTIATED, 0), RENEGOTIATING: True},
+        then=(Timed(RENEGOTIATION, "renegotiation", partial(_renegotiated, prior)),),
+    )
+
+
+def _renegotiated(
+    prior: Mapping[str, Value],
+    values: Mapping[str, Value],
+    state: Mapping[str, Value],  # noqa: ARG001  # restores only what was set
+) -> Step:
+    """Restore each zeroed field: its set value back, else its recording.
+
+    A field set during the window keeps that value.
+    """
+    zeroed = [name for name in RENEGOTIATED if values.get(name) == 0]
+    return Step(
+        values={name: prior[name] for name in zeroed if name in prior},
+        unset=(RENEGOTIATING, *(name for name in zeroed if name not in prior)),
     )
 
 
@@ -427,9 +462,7 @@ class A2345Layout(TableLayout):
             0x206: _set_charging_mode,
             0x207: _set_dc_relay_switch,
             0x208: ac_port_timed_task(PORT_BY_SELECT),
-            0x209: ac_port_countdown_task(
-                PORT_BY_SELECT, disarm_clears=frozenset(PORT_BY_SELECT.values())
-            ),
+            0x209: ac_port_countdown_task(PORT_BY_SELECT, disarm_clears=DISARM_CLEARS),
             0x20C: _set_port_priority,
             0x20D: _set_easter_egg,
             0x20E: _set_button_rotate_direction,
@@ -451,23 +484,16 @@ class A2345Layout(TableLayout):
     )
     #: The MCU's change watchers, by the commands that can trip them (doc "MCU
     #: pushes"): ``0302`` a switch, ``0305`` an easter-egg trigger, ``0307`` a
-    #: countdown arming or disarming, ``0308`` a collision-disabled half,
-    #: ``030f`` the designated ports and ``030d`` the mode, in the order the
-    #: app logs them.
+    #: countdown arming or disarming, ``0308`` a collision-disabled half and
+    #: ``030f`` the designated ports; ``030d`` is timed (``timed``).
     FOLLOW_UPS = MappingProxyType(
         {
             0x20D: ((0x305, _upload_easter_egg_trigger),),
-            0x206: (
-                (0x30F, _designated_ports_change),
-                (0x30D, _charging_mode_change),
-            ),
+            0x206: ((0x30F, _designated_ports_change),),
             0x207: ((0x302, _switch_change),),
             0x208: ((0x308, timed_task_push(PORT_BY_SELECT)),),
             0x209: ((0x307, countdown_push(PORT_BY_SELECT, remaining_first=False)),),
-            0x20C: (
-                (0x30F, _designated_ports_change),
-                (0x30D, _charging_mode_change),
-            ),
+            0x20C: ((0x30F, _designated_ports_change),),
         }
     )
     FIELDS = MappingProxyType(
@@ -480,6 +506,37 @@ class A2345Layout(TableLayout):
         }
     )
 
+    def timed(
+        self, before: Mapping[str, Value], after: Mapping[str, Value]
+    ) -> tuple[Timed, ...]:
+        """Return the events a change starts: countdowns, timed tasks, a mode change's.
+
+        A mode change sends ``030d`` once it settles and zeroes the ports while
+        they renegotiate. The zero is documented for ``4206`` (doc "Commands");
+        it is assumed for ``420c`` entry too, the same mode-apply path (doc "MCU
+        pushes" ``030f``).
+        """
+        events = (
+            *countdown_timers(
+                PORT_BY_SELECT,
+                before,
+                after,
+                disarm_clears=DISARM_CLEARS,
+                remaining_first=False,
+            ),
+            *schedule_timers(PORT_BY_SELECT, before, after),
+        )
+        if before["charging_mode"] == after["charging_mode"]:
+            return events
+        report = Timed(MODE_SETTLE, "charging_mode_report", _mode_report)
+        if after.get(RENEGOTIATING):
+            return (*events, report)
+        return (*events, report, Timed(0, "renegotiation", _renegotiate))
+
+
+#: ``esp_op26_set_clock`` takes a UTC from 2024-04-30 00:00:00 on (doc fid 0x10
+#: op ``0x26``).
+CLOCK_FLOOR = 0x66303480
 
 PROFILE = Profile(
     serial="AQLQJB0000000001",
@@ -511,6 +568,7 @@ PROFILE = Profile(
     known_commands=COMMAND_TABLE,
     past_table_status=STATUS_ACCEPTED,
     factory_reset=0x201,
+    clock_floor=CLOCK_FLOOR,
 )
 register(Product.A2345, PROFILE)
 

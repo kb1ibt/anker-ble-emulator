@@ -23,6 +23,7 @@ produce a wire-visible ``04``.
 from __future__ import annotations
 
 from enum import IntEnum
+from functools import partial
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -40,7 +41,6 @@ from construct import (
     GreedyBytes,
     GreedyRange,
     Int8ul,
-    NullTerminated,
     Optional,
     Padded,
     Padding,
@@ -84,6 +84,7 @@ from anker_ble_emulator.parameters import (
     one_field,
     struct_zeros,
 )
+from anker_ble_emulator.timed import Step, Timed
 
 
 if TYPE_CHECKING:
@@ -145,11 +146,11 @@ MSGTYPE_900 = 0x900
 
 
 #: ``a4`` setUpData: the AC/DC/system settings block every group command
-#: (4101-4103) writes into; 26 B on MainMcu v1.2.1.1 (the A1763 recording),
-#: 33 B on v1.2.1.6, which appends reserved zeros and the ``[31]`` flags
-#: byte. PiField/docs/re/a1783-control.md "Telemetry from local state
-#: (display board)" for the offsets; names are the app's
-#: (reference/app-names.md).
+#: (4101-4103) writes into; 26 B through MainMcu v1.2.1.1 (the A1763 recording
+#: on v1.1.2.6, the A1785's on v1.2.1.1), 33 B on v1.2.1.6, which appends
+#: reserved zeros and the ``[31]`` flags byte. PiField/docs/re/a1783-control.md
+#: "Telemetry from local state (display board)" for the offsets; names are the
+#: app's (reference/app-names.md).
 SETTINGS_FIELDS = (
     "ac_timer_value",
     "ac_recharge_power",
@@ -241,6 +242,16 @@ AcOutput = Struct(
     "ac_input_status" / ui(1),
     "ac_input_power" / ui(2),
 )
+#: ``a6`` mainData (9 B): the port totals, the time left and the main pack's
+#: SoC. a1783-telemetry.md ``a6`` rows. Each quantity another tag also carries
+#: (``a7[4:6]``, ``a8[1:3]``, ``a5[2]``) shares its name, so one value sets both.
+MainData = Struct(
+    "total_output_power" / ui(2),
+    "ac_input_power" / ui(2),
+    "pv1_input_power" / ui(2),
+    "remaining_time" / ui(2),
+    "battery_level" / ui(1),
+)
 #: ``b2``: 12 V car socket (3 B), its status and output power (u16 LE, W);
 #: a1783-telemetry.md ``b2`` rows. Names are the app's.
 DcOutput = Struct(
@@ -258,8 +269,9 @@ Battery = Struct(
     Padding(1),
 )
 
-#: ``a3`` StatusData: 10 B on v1.2.1.1, 13 B on v1.2.1.6, which appends the
-#: silent recharge power and the weak-light lock. a1783-telemetry.md ``a3``
+#: ``a3`` StatusData: 10 B on v1.1.2.6 (the A1763 recording), 13 B from v1.2.1.1
+#: (the A1785's) on, which appends the silent recharge power and the weak-light
+#: lock. a1783-telemetry.md ``a3``
 #: rows; names are the app's.
 STATUS_TAIL_FIELDS = ("silent_recharge_power", "weak_light_lock_flag")
 StatusTail = Struct("silent_recharge_power" / ui(2), "weak_light_lock_flag" / ui(1))
@@ -577,6 +589,7 @@ SINGLE_FIELDS: dict[str, FieldSpec] = {
         0x04,
         leaf_zeros("temperature", "charge_discharge_status", "battery_level", "health"),
     ),
+    "a6": (MainData, 0x04, struct_zeros(MainData)),
     "a7": (
         AcOutput,
         0x04,
@@ -754,9 +767,9 @@ MESSAGE_FIELDS: dict[int, Mapping[str, FieldSpec]] = {
 # captured or firmware-documented payload shape. 4057 sets only what its stop
 # is seen to do, the device-point switch off; its streaming countdown is a
 # module timer, not a telemetry field. 405e (backup-plan group: which table a
-# plan lands in and when its window goes active depend on the clock),
-# 4063/4064 (BLE OTA) and 4072 (daily update window) stay unanswered rather
-# than guessed.
+# plan lands in and when its window goes active depend on the clock), 4063
+# (BLE OTA start) and 4072 (daily update window) answer only with their
+# recorded replies and change nothing; 4064 (BLE OTA data) gets no reply.
 
 
 #: ``4101`` AC group: tag -> (the field it sets, its codec).
@@ -931,11 +944,13 @@ SOC_STEPS_PER_PERCENT = 10
 SOC_FULL = 1000
 #: The MainMcu build (v1.2.1.6) from which Battery-Only Power blocks TOU.
 AC_INPUT_DISABLE_GATE_VERSION = 1216
+#: ``a7[3]`` ``ac_input_status``: no mains at the inlet; 1 mains, 2 mains with
+#: Battery-Only Power on (a1783-telemetry.md "Presence is not current").
+AC_INPUT_NONE = 0
+AC_INPUT_MAINS = 1
+AC_INPUT_BATTERY_ONLY = 2
 #: One plan record: ``{type, start hour, end hour}``, whole hours.
 TouRecord = Struct("type" / ui(1), "start_hour" / ui(1), "end_hour" / ui(1))
-#: TOU condition 3, the power stage's AC input report (``0x2000054a`` bit 0),
-#: which no ``0421`` field carries; unset, it reads reported. Descriptive name.
-POWER_STAGE_AC_INPUT = "power_stage_ac_input"
 #: The module's cloud device-point switch (``device_get_device_point_switch``),
 #: which the ``0490`` push needs on; no field carries it, and the app has no
 #: name for it. Unset, it reads on. a1783-telemetry.md "When the display board
@@ -1007,11 +1022,14 @@ def _active_period(params: ParameterDict, values: Mapping[str, Value]) -> int:
     """Return ``d9[0]``: the active record's type, else 0 (``tou_active_period_get?``).
 
     a1783-control.md "TOU (4090)" conditions 1-6, in order; the hour is the
-    RTC's. Assumed: the first record in order wins where two match.
+    RTC's. Assumed: the first record in order wins where two match, and
+    condition 3 (the power stage's AC input, ``0x2000054a`` bit 0) is mains at
+    the inlet, ``a7[3]`` != 0: the two differ only in a power-stage fault.
     """
     tou = decode_field(params, "d9", Tou)
     on = tou.backup_mode == TOU_MODE_ON
-    online = values.get(CLOUD) and values.get(POWER_STAGE_AC_INPUT, 1)
+    mains = decode_field(params, "a7", AcOutput).ac_input_status != AC_INPUT_NONE
+    online = values.get(CLOUD) and mains
     if not on or not online or _alternator_attached(params):
         return TouPeriodType.NONE
     if _ac_input_disabled(params):
@@ -1039,6 +1057,244 @@ def _charge_held(
     floor = max(tou.tou_reserve_power, tou.discharge_limit_value + TOU_MIN_MARGIN)
     threshold = min(SOC_FULL, floor * SOC_STEPS_PER_PERCENT)
     return bool(int(values[PACK_SOC]) >= threshold)
+
+
+#: ``a4[31]`` bits 2-3 (``ac_input_disable_switch``): Battery-Only Power off, on
+#: (``4101 ab``), and cleared by the firmware (the mains auto-off, or the
+#: low-battery exit), which accepts AC input (a1783-operation.md 05:45:40).
+DISABLE = "ac_input_disable_switch"
+BATTERY_ONLY_OFF = 0
+BATTERY_ONLY_ON = 1
+BATTERY_ONLY_AUTO_OFF = 2
+#: ``a3[0]``, ``a5[1]`` and ``c0[24]``: no flow, output on, charging.
+FLOW_IDLE = 0
+FLOW_OUT = 1
+FLOW_CHARGE = 2
+#: The mains sequence, a1783-control.md "``a4[31]`` witnesses": the 2026-10-26
+#: run's timings, with the range both bench runs measured.
+#: The auto-off after mains goes: 0 s (0-1 s).
+AUTO_OFF_DELAY = 0.0
+#: The 0x59 off-grid alert after mains goes: 4 s (4-5 s).
+GRID_LOSS_ALERT_DELAY = 4.0
+#: The auto-off clearing after mains returns: 3 s (2-3 s).
+AUTO_OFF_CLEAR_DELAY = 3.0
+#: AC charging after mains returns: 11 s (10-16 s).
+MAINS_CHARGE_DELAY = 11.0
+#: AC charging after Battery-Only Power goes off with mains in: the median of
+#: 6 s (2026-10-06 19:40:42) and 9 s (2026-10-26 16:34:10).
+BATTERY_ONLY_CHARGE_DELAY = 7.5
+#: The AC charge power: 1208 W (1208-1225 W).
+AC_CHARGE_POWER = 1208
+
+
+def _without(changes: dict[str, Value], own: frozenset[str]) -> dict[str, Value]:
+    """Return ``changes`` less the names the triggering change set itself."""
+    return {name: value for name, value in changes.items() if name not in own}
+
+
+def _auto_off(
+    own: frozenset[str], _values: Mapping[str, Value], _state: Mapping[str, Value]
+) -> Step:
+    """Clear Battery-Only Power with mains out, the screen woken (06:02:35)."""
+    return Step(
+        values=_without({DISABLE: BATTERY_ONLY_AUTO_OFF, "screen_switch": 1}, own)
+    )
+
+
+def _grid_loss_alert(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Push the 0x59 off-grid alert with the SoC, if mains is still out.
+
+    Assumed: mains back before it is due cancels it, the loss being debounced.
+    """
+    if state["ac_input_status"] != AC_INPUT_NONE:
+        return Step()
+    alert = {"event_code": EVENT_GRID_LOSS, EVENT_SOC: state["battery_level"]}
+    return Step(values=alert, pushes=(MSGTYPE_425,))
+
+
+def _auto_off_clear(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Accept AC input again once mains is back (06:02:52, 15:28:54)."""
+    if (
+        state["ac_input_status"] == AC_INPUT_NONE
+        or state[DISABLE] != BATTERY_ONLY_AUTO_OFF
+    ):
+        return Step()
+    return Step(values={DISABLE: BATTERY_ONLY_OFF})
+
+
+def _ac_charge(
+    own: frozenset[str], _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Start AC charging into the pack below its cap (a1783-telemetry.md "Flow state").
+
+    The main below its cap charges (``a3[0]`` and ``a5[1]`` 2); at it, an
+    attached expansion below its own takes the charge (``c0[24]`` 2, 06:03:06);
+    with every pack at its cap no AC input comes.
+    """
+    if state["ac_input_status"] == AC_INPUT_NONE or state[DISABLE] == BATTERY_ONLY_ON:
+        return Step()
+    cap = int(state["charging_limit_value"])
+    if int(state["battery_level"]) < cap:
+        changes: dict[str, Value] = {
+            "ac_input_power": AC_CHARGE_POWER,
+            "work_status": FLOW_CHARGE,
+            "charge_discharge_status": FLOW_CHARGE,
+        }
+    elif state.get("sub_package_connection_status") and (
+        int(state["sub_package_battery_level"]) < cap
+    ):
+        changes = {"ac_input_power": AC_CHARGE_POWER, "sub_package_status": FLOW_CHARGE}
+    else:
+        return Step()
+    return Step(values=_without(changes, own))
+
+
+def _mains_back(after: Mapping[str, Value], own: frozenset[str]) -> list[Timed]:
+    """Return the auto-off's clearing and the AC charge start mains returning draws."""
+    events = []
+    if after[DISABLE] == BATTERY_ONLY_AUTO_OFF and DISABLE not in own:
+        events.append(Timed(AUTO_OFF_CLEAR_DELAY, "auto_off_clear", _auto_off_clear))
+    if "ac_input_power" not in own:
+        events.append(Timed(MAINS_CHARGE_DELAY, "ac_charge", partial(_ac_charge, own)))
+    return events
+
+
+def _battery_only_switched(
+    before: Mapping[str, Value], after: Mapping[str, Value], own: frozenset[str]
+) -> list[Timed]:
+    """Return what switching Battery-Only Power with mains in does.
+
+    On, ``a7[3]`` reads 2 and AC input stops (19:39:18); off, it reads 1 and AC
+    charging restarts (19:40:42, 6-9 s later).
+    """
+    switched_on = after[DISABLE] == BATTERY_ONLY_ON
+    changes: dict[str, Value] = {
+        "ac_input_status": AC_INPUT_BATTERY_ONLY if switched_on else AC_INPUT_MAINS
+    }
+    if switched_on:
+        changes["ac_input_power"] = 0
+    events = [Timed(0.0, "battery_only", partial(_step, _without(changes, own)))]
+    if before[DISABLE] == BATTERY_ONLY_ON and "ac_input_power" not in own:
+        charge = partial(_ac_charge, own)
+        events.append(Timed(BATTERY_ONLY_CHARGE_DELAY, "ac_charge", charge))
+    return events
+
+
+def _step(
+    changes: Mapping[str, Value],
+    _values: Mapping[str, Value],
+    _state: Mapping[str, Value],
+) -> Step:
+    """Return a step that sets ``changes``."""
+    return Step(values=changes)
+
+
+def _other_input_charging(params: ParameterDict) -> bool:
+    """Whether a DC input or the alternator charger feeds the unit."""
+    if decode_field(params, "a8", DcInput).pv1_input_power:
+        return True
+    if "ce" not in params:
+        return False
+    mode = decode_field(params, "ce", Alternator).external_device_mode
+    return bool(mode == ExternalDeviceMode.CHARGING)
+
+
+def _battery_only_on(params: ParameterDict) -> bool:
+    """Whether ``a4[31]`` holds Battery-Only Power on (state 1, AC input disabled)."""
+    return bool(decode_field(params, "a4", Settings)[DISABLE] == BATTERY_ONLY_ON)
+
+
+#: ``b2[0]``: the 12 V car socket's output status, whose edges renegotiate the
+#: USB-C ports (a1783-control.md "``4102 a2`` and the USB-C ports").
+CAR_SOCKET = "car_charge1_output_status"
+#: The USB-C PD ports (``aa``/``ab``/``ac``) a car-socket edge re-attaches.
+USB_C_PORTS = ("pd1", "pd2", "pd3")
+#: Hidden per-port inputs no field carries and the app has no name for: a device
+#: in the port (0/1) and the W it draws once attached. Unset, PD1 holds the A1783
+#: recording's 86 W load (86 W x34, 87 W x17 in the collector logs); PD2 and PD3
+#: hold none.
+DEVICE_PLUGGED = "device_plugged"
+DEVICE_POWER = "device_power"
+USB_C_DEVICES = MappingProxyType(
+    {
+        "pd1_device_plugged": 1,
+        "pd1_device_power": 86,
+        "pd2_device_plugged": 0,
+        "pd2_device_power": 0,
+        "pd3_device_plugged": 0,
+        "pd3_device_power": 0,
+    }
+)
+#: A detached port's status 1 after the edge: 1 s (0-3 s; the median of the 55
+#: collector clusters with PD1 detached, 5 s once on an off edge alone).
+PORT_ATTACH_DELAY = 1.0
+#: Its device's power after the status: 3 s (+3-8 s from the edge, median +4 s).
+PORT_POWER_DELAY = 3.0
+
+
+def _usb_c_device(state: Mapping[str, Value], port: str, field: str) -> int:
+    """Return a port's hidden device input, its default unless set."""
+    name = f"{port}_{field}"
+    return int(state.get(name, USB_C_DEVICES[name]))
+
+
+def _socket_edge(after: Mapping[str, Value], own: frozenset[str]) -> list[Timed]:
+    """Return the re-attach of each detached USB-C port with a device in it.
+
+    A port reading 1 holds through the edge (2026-10-07 21:05:16).
+    """
+    return [
+        Timed(PORT_ATTACH_DELAY, f"{port}_attach", partial(_port_attach, port, own))
+        for port in USB_C_PORTS
+        if after[f"{port}_output_status"] == 0
+        and _usb_c_device(after, port, DEVICE_PLUGGED)
+    ]
+
+
+def _port_attach(
+    port: str,
+    own: frozenset[str],
+    _values: Mapping[str, Value],
+    _state: Mapping[str, Value],
+) -> Step:
+    """Re-attach ``port`` (status 1), its device's power following.
+
+    A power the edge's own change set stands, so no power step follows it.
+    """
+    power = f"{port}_output_power"
+    then = (
+        ()
+        if power in own
+        else (
+            Timed(PORT_POWER_DELAY, f"{port}_power", partial(_port_power, port, own)),
+        )
+    )
+    return Step(values=_without({f"{port}_output_status": 1}, own), then=then)
+
+
+def _port_power(
+    port: str,
+    own: frozenset[str],
+    _values: Mapping[str, Value],
+    state: Mapping[str, Value],
+) -> Step:
+    """Draw the device's power on an attached ``port``, into the output total.
+
+    ``a5[1]`` goes 0 -> 1 when that makes the unit discharge (2026-09-01 02:26:46).
+    A port detached again first draws nothing (2026-09-24 05:18:22).
+    """
+    if state[f"{port}_output_status"] != 1:
+        return Step()
+    power = _usb_c_device(state, port, DEVICE_POWER)
+    total = int(state["total_output_power"]) + power
+    total -= int(state[f"{port}_output_power"])
+    changes: dict[str, Value] = {
+        f"{port}_output_power": power,
+        "total_output_power": total,
+    }
+    if state["charge_discharge_status"] == FLOW_IDLE and total:
+        changes["charge_discharge_status"] = FLOW_OUT
+    return Step(values=_without(changes, own))
 
 
 #: ``4091`` tag -> (the ``da`` leaf it writes, its width): a1783-control.md
@@ -1143,34 +1399,60 @@ def _log_size(
 
 #: ``4066 a2``: the chunk index.
 LOG_CHUNK_REQUEST = {"a2": ("index", ui(2))}
-#: Chunk 0's auxiliary (LCD board) and USB-PD controller versions, which no
-#: frame reports.
-LOG_AUX_VERSION = 0
-LOG_USB_PD_VERSION = 0
-#: Chunk 0 carries the SN's first 16 bytes.
-LOG_SN_SIZE = 16
-#: Chunk 0's version slots (v1.2.1.1: the fw slot, then indices 0, 10, 3,
-#: 4, 5, 6, 9 and 7).
-LOG_VERSION_COUNT = 9
-#: ASCII decimal digits.
-DecimalText: Construct[int, int] = ExprAdapter(
-    GreedyBytes,
-    decoder=lambda text, _: int(text),
-    encoder=lambda number, _: str(number).encode(),
+#: The first MainMcu build whose chunk 0 takes the v1.2.1.6 layout.
+LOG_LAYOUT_VERSION = 1216
+#: ``version_get`` values no frame reports (a1783-control.md "BLE log upload"):
+#: index 1, the bootloader's constant; 2, no case; 7 and 8, the SW2505PD USB-PD
+#: controllers; 10, the LCD pack; 11, the LCD boot version, runtime only.
+LOG_BOOT_VERSION = 1000
+LOG_UNSET_VERSION = 0
+LOG_USB_PD_VERSION = 310
+LOG_LCD_VERSION = 196
+LOG_LCD_BOOT_VERSION = 0
+#: The v1.2.1.6 layout's slots after the fw one: indices 0-11.
+LOG_INDEX_COUNT = 12
+#: The v1.2.1.1 layout's slots after the fw one, as ``version_get`` indices.
+LOG_V1211_INDICES = (0, 10, 3, 4, 5, 6, 9, 7)
+#: The SN bytes chunk 0 carries: 17 from v1.2.1.6, 16 on v1.2.1.1.
+LOG_SN_SIZE = 17
+LOG_SN_SIZE_V1211 = 16
+#: One character: ``'0'`` plus the value, so 12 is ``<``.
+LogDigit: Construct[int, int] = ExprAdapter(
+    Int8ul,
+    decoder=lambda char, _: char - ord("0"),
+    encoder=lambda value, _: value + ord("0"),
 )
-DecimalDigit: Construct[int, int] = ExprAdapter(
-    Bytes(1),
-    decoder=lambda text, _: int(text),
-    encoder=lambda number, _: str(number).encode(),
-)
-#: One chunk-0 version ``v``: ``,`` then ``(v/100).(v%100/10).(v%10)``.
+#: v1.2.1.6's version ``v``: ``,`` then ``d.d.d.d`` (``version_fmt_4field``).
 LogVersion: Construct[int, int] = ExprAdapter(
     Struct(
         Const(b","),
-        "hundreds" / NullTerminated(DecimalText, term=b"."),
-        "tens" / DecimalDigit,
+        "thousands" / LogDigit,
         Const(b"."),
-        "units" / DecimalDigit,
+        "hundreds" / LogDigit,
+        Const(b"."),
+        "tens" / LogDigit,
+        Const(b"."),
+        "units" / LogDigit,
+    ),
+    decoder=lambda text, _: (
+        text.thousands * 1000 + text.hundreds * 100 + text.tens * 10 + text.units
+    ),
+    encoder=lambda v, _: {
+        "thousands": v // 1000,
+        "hundreds": v % 1000 // 100,
+        "tens": v % 100 // 10,
+        "units": v % 10,
+    },
+)
+#: v1.2.1.1's version ``v``: ``,`` then ``'0'+v/100 . v%100/10 . v%10``.
+LogVersionV1211: Construct[int, int] = ExprAdapter(
+    Struct(
+        Const(b","),
+        "hundreds" / LogDigit,
+        Const(b"."),
+        "tens" / LogDigit,
+        Const(b"."),
+        "units" / LogDigit,
     ),
     decoder=lambda text, _: text.hundreds * 100 + text.tens * 10 + text.units,
     encoder=lambda v, _: {"hundreds": v // 100, "tens": v % 100 // 10, "units": v % 10},
@@ -1181,22 +1463,34 @@ RtcHex: Construct[int, int] = ExprAdapter(
     decoder=lambda text, _: int(text, 16),
     encoder=lambda rtc, _: f"{rtc:08X}".encode(),
 )
-#: Chunk 0: ``[<RTC>]``, the SN's first 16 bytes and the versions, space-padded,
-#: a newline last. a1783-control.md "BLE log upload".
-LogHeader = Struct(
-    "head"
-    / Padded(
-        LOG_CHUNK_SIZE - 1,
-        Struct(
-            Const(b"["),
-            "rtc" / RtcHex,
-            Const(b"]"),
-            "sn" / fitted(LOG_SN_SIZE),
-            "versions" / Array(LOG_VERSION_COUNT, LogVersion),
-        ),
-        pattern=b" ",
-    ),
-    Const(b"\n"),
+
+
+def _log_header_layout(head: Construct[Any, Any]) -> Construct[Any, Any]:
+    """Return a chunk 0 of ``head``: space-padded to 249 bytes, then a newline."""
+    return Struct("head" / Padded(LOG_CHUNK_SIZE - 1, head, pattern=b" "), Const(b"\n"))
+
+
+#: Chunk 0 from v1.2.1.6: ``[``, the RTC and a NUL where ``snprintf`` drops the
+#: ``]``; the 17-byte SN; 13 versions (fw, then indices 0-11).
+LogHeader = _log_header_layout(
+    Struct(
+        Const(b"["),
+        "rtc" / RtcHex,
+        Const(b"\x00"),
+        "sn" / fitted(LOG_SN_SIZE),
+        "versions" / Array(1 + LOG_INDEX_COUNT, LogVersion),
+    )
+)
+#: Chunk 0 on v1.2.1.1: ``[RTC]``, 16 bytes of SN, ``,``, 9 versions.
+LogHeaderV1211 = _log_header_layout(
+    Struct(
+        Const(b"["),
+        "rtc" / RtcHex,
+        Const(b"]"),
+        "sn" / fitted(LOG_SN_SIZE_V1211),
+        Const(b","),
+        "versions" / Array(1 + len(LOG_V1211_INDICES), LogVersionV1211),
+    )
 )
 
 
@@ -1227,25 +1521,33 @@ def _version_number(state: Mapping[str, Value], name: str) -> int:
 
 
 def _log_header(state: Mapping[str, Value]) -> bytes:
-    """Return chunk 0: the RTC, the SN's first 16 bytes and nine versions."""
+    """Return chunk 0 in the layout of the MainMcu build ``f9`` reports.
+
+    Assumed: v1.2.1.6 is the first new-layout build (only the v1.2.1.1 and
+    v1.2.1.6 images are decoded, so the change lies in v1.2.1.2-.6), and the
+    LCD / USB-PD versions are v1.2.1.6's on v1.2.1.1 too.
+    """
     mcu = _version_number(state, "mcu_version")
-    slots = (
+    by_index = (
         mcu,
-        mcu,
-        LOG_AUX_VERSION,
+        LOG_BOOT_VERSION,
+        LOG_UNSET_VERSION,
         _version_number(state, "inv_version"),
         _version_number(state, "sub_mcu_version"),
         _version_number(state, "bms_version"),
         _version_number(state, "sub_package_version"),
-        _version_number(state, "module_version"),
         LOG_USB_PD_VERSION,
+        LOG_USB_PD_VERSION,
+        _version_number(state, "module_version"),
+        LOG_LCD_VERSION,
+        LOG_LCD_BOOT_VERSION,
     )
-    head = {
-        "rtc": int(state[RTC]),
-        "sn": _bytes_value(state, "device_sn"),
-        "versions": slots,
-    }
-    return bytes(LogHeader.build({"head": head}))
+    head = {"rtc": int(state[RTC]), "sn": _bytes_value(state, "device_sn")}
+    if mcu >= LOG_LAYOUT_VERSION:
+        head["versions"] = (mcu, *by_index)
+        return bytes(LogHeader.build({"head": head}))
+    head["versions"] = (mcu, *(by_index[index] for index in LOG_V1211_INDICES))
+    return bytes(LogHeaderV1211.build({"head": head}))
 
 
 def _log_chunk(request: ParameterDict, state: Mapping[str, Value]) -> ParameterDict:
@@ -1343,19 +1645,25 @@ class CGen2Layout(TableLayout):
     GROUPS = MappingProxyType(
         {MSGTYPE_421: (OUTPUT_PORTS,), MSGTYPE_900: (OUTPUT_PORTS,)}
     )
+    #: The model pushes the 0x59 off-grid alert: only those whose recordings
+    #: carry a ``0425`` to build it from.
+    GRID_LOSS_ALERT = False
 
     def names(self, msgtype: int) -> frozenset[str]:
         """Return the names ``set_values()`` can reach.
 
-        ``0425`` adds its SoC byte, a message carrying ``d9`` the stored plan,
-        the power stage's AC input and the main pack's c490 SoC its charge hold
-        reads, and ``0490`` the device-point switch.
+        ``0425`` adds its SoC byte, a message carrying ``d9`` the stored plan
+        and the main pack's c490 SoC its charge hold reads, one carrying the
+        output ports each USB-C port's device, and ``0490`` the device-point
+        switch.
         """
         names = set(super().names(msgtype))
         if msgtype == MSGTYPE_425:
             names.add(EVENT_SOC)
         if "d9" in self.FIELDS.get(msgtype, {}):
-            names |= {TOU_TABLE, POWER_STAGE_AC_INPUT, PACK_SOC}
+            names |= {TOU_TABLE, PACK_SOC}
+        if OUTPUT_PORTS in self.GROUPS.get(msgtype, ()):
+            names |= USB_C_DEVICES.keys()
         if msgtype == MSGTYPE_490:
             names.add(DEVICE_POINT_SWITCH)
         return frozenset(names)
@@ -1373,15 +1681,67 @@ class CGen2Layout(TableLayout):
         return super().sends(msgtype, values)
 
     def read(self, msgtype: int, payload: bytes) -> dict[str, Value]:
-        """Return the named values ``payload`` carries and its ``d9``'s stored plan."""
+        """Return the named values ``payload`` carries and its ``d9``'s stored plan.
+
+        A grid-loss ``0425`` reads as its event and its 1-byte SoC ``a3``.
+        """
+        if msgtype == MSGTYPE_425:
+            params = Parameters.parse(payload)
+            if decode_field(params, "a2", ui(1)) == EVENT_GRID_LOSS:
+                soc = decode_field(params, "a3", ui(1))
+                return {"event_code": EVENT_GRID_LOSS, EVENT_SOC: soc}
         values = super().read(msgtype, payload)
         return values | self.implied(values)
 
     def implied(self, values: Mapping[str, Value]) -> dict[str, Value]:
-        """Return the stored plan a ``tou_periods`` set without one implies."""
-        if "tou_periods" not in values or TOU_TABLE in values:
-            return {}
-        return {TOU_TABLE: _tou_table_of(_bytes_value(values, "tou_periods"))}
+        """Return what ``values`` imply that they don't set themselves.
+
+        The stored plan of a ``tou_periods``, and no AC input with no mains.
+        """
+        implied: dict[str, Value] = {}
+        if "tou_periods" in values and TOU_TABLE not in values:
+            periods = _bytes_value(values, "tou_periods")
+            implied[TOU_TABLE] = _tou_table_of(periods)
+        if values.get("ac_input_status") == AC_INPUT_NONE and (
+            "ac_input_power" not in values
+        ):
+            implied["ac_input_power"] = 0
+        return implied
+
+    def timed(
+        self, before: Mapping[str, Value], after: Mapping[str, Value]
+    ) -> tuple[Timed, ...]:
+        """Return what a change of mains, Battery-Only Power or the car socket starts.
+
+        a1783-control.md "``a4[31]`` witnesses" (the 2026-10-23 and 2026-10-26
+        mains runs, the 2026-10-06 Battery-Only steps) and "``4102 a2`` and the
+        USB-C ports". A name the change set itself stays as set; each step acts
+        only if its state still holds.
+        """
+        own = frozenset(name for name in after if before.get(name) != after.get(name))
+        mains_before, mains = before["ac_input_status"], after["ac_input_status"]
+        events: list[Timed] = []
+        if mains_before != AC_INPUT_NONE and mains == AC_INPUT_NONE:
+            events += self._mains_lost(after, own)
+        if mains_before == AC_INPUT_NONE and mains != AC_INPUT_NONE:
+            events += _mains_back(after, own)
+        if DISABLE in own and mains != AC_INPUT_NONE:
+            events += _battery_only_switched(before, after, own)
+        if CAR_SOCKET in own:
+            events += _socket_edge(after, own)
+        return tuple(events)
+
+    def _mains_lost(
+        self, after: Mapping[str, Value], own: frozenset[str]
+    ) -> list[Timed]:
+        """Return the auto-off and the off-grid alert mains going draws."""
+        events = []
+        if after[DISABLE] == BATTERY_ONLY_ON and DISABLE not in own:
+            events.append(Timed(AUTO_OFF_DELAY, "auto_off", partial(_auto_off, own)))
+        if self.GRID_LOSS_ALERT and after["outage_alert_switch"]:
+            alert = Timed(GRID_LOSS_ALERT_DELAY, "grid_loss_alert", _grid_loss_alert)
+            events.append(alert)
+        return events
 
     def state_changes(
         self, msgtype: int, plaintext: bytes, state: Mapping[str, Value]
@@ -1404,8 +1764,7 @@ class CGen2Layout(TableLayout):
         Raises:
             ConstructError: If a value doesn't fit its field.
             TypeError: If the stored plan isn't its count and record buffer, or
-                the power stage's AC input or the device-point switch isn't 0
-                or 1.
+                the device-point switch or a USB-C device's plug isn't 0 or 1.
 
         """
         given = values or {}
@@ -1413,9 +1772,13 @@ class CGen2Layout(TableLayout):
             ui(1).build(given[EVENT_SOC])
         if TOU_TABLE in given:
             _check_tou_table(given[TOU_TABLE])
-        for switch in (POWER_STAGE_AC_INPUT, DEVICE_POINT_SWITCH):
-            if switch in given:
-                _check_switch(switch, given[switch])
+        if DEVICE_POINT_SWITCH in given:
+            _check_switch(DEVICE_POINT_SWITCH, given[DEVICE_POINT_SWITCH])
+        for name in given.keys() & USB_C_DEVICES.keys():
+            if name.endswith(DEVICE_PLUGGED):
+                _check_switch(name, given[name])
+            else:
+                ui(2).build(given[name])
         return super().build(msgtype, values)
 
     def publishes(self, msgtype: int, payload_of: Callable[[int], bytes]) -> bool:
@@ -1435,8 +1798,8 @@ class CGen2Layout(TableLayout):
         """Give a grid-loss ``0425`` its 1-byte SoC ``a3`` and no ``a4``.
 
         A ``d9`` takes its ``tou_periods`` from the stored plan and, with the RTC
-        known, its active type (0 off the cloud), which holds grid charging
-        (``a7`` AC input) at 0 W in Peak and Mid-Peak.
+        known, its active type (0 off the cloud). Grid charging is held off in
+        Peak and Mid-Peak, and while Battery-Only Power is on (19:39:18).
         """
         if msgtype == MSGTYPE_425:
             _shape_grid_loss(params, values)
@@ -1446,13 +1809,43 @@ class CGen2Layout(TableLayout):
             codec, type_byte, _ = tou
             periods = _tou_periods_of(_bytes_value(values, TOU_TABLE))
             self._encode_field(params, "d9", codec, type_byte, tou_periods=periods)
+        held = False
         if tou is not None and RTC in values:
             codec, type_byte, _ = tou
             period = _active_period(params, values)
             self._encode_field(params, "d9", codec, type_byte, tou_system_status=period)
-            if _charge_held(params, values, period):
-                ac, ac_type, _ = fields["a7"]
-                self._encode_field(params, "a7", ac, ac_type, ac_input_power=0)
+            held = _charge_held(params, values, period)
+        if "a7" in fields and (held or _battery_only_on(params)):
+            self._hold_ac_charge(fields, params)
+
+    def _hold_ac_charge(
+        self, fields: Mapping[str, FieldSpec], params: ParameterDict
+    ) -> None:
+        """Show grid charging held off: AC input 0 W, and no AC-only charging state.
+
+        With no DC or alternator input, a charging ``a3[0]`` reads idle and a
+        charging ``a5[1]`` / ``c0[24]`` the port flow left, output on or none: the
+        Peak hold, cloud ``0421`` 2026-10-21 15:49:53 (a1783-telemetry.md "Flow
+        state").
+        """
+        for tag in ("a6", "a7"):
+            codec, type_byte, _ = fields[tag]
+            self._encode_field(params, tag, codec, type_byte, ac_input_power=0)
+        if _other_input_charging(params):
+            return
+        output = decode_field(params, "a6", MainData).total_output_power
+        flow = FLOW_OUT if output else FLOW_IDLE
+        for tag, name, idle in (
+            ("a3", "work_status", FLOW_IDLE),
+            ("a5", "charge_discharge_status", flow),
+            ("c0", "sub_package_status", flow),
+        ):
+            spec = fields.get(tag)
+            if spec is None:
+                continue
+            codec, type_byte, _ = spec
+            if decode_field(params, tag, codec)[name] == FLOW_CHARGE:
+                self._encode_field(params, tag, codec, type_byte, **{name: idle})
 
 
 class CGen2ExpansionLayout(CGen2Layout):
@@ -1464,3 +1857,4 @@ class CGen2ExpansionLayout(CGen2Layout):
 
     COMMANDS = MappingProxyType({**LINE_COMMANDS, 0x104: _set_bms_params})
     FIELDS = _fields({**SINGLE_FIELDS, **EXPANSION_FIELDS})
+    GRID_LOSS_ALERT = True

@@ -48,6 +48,8 @@ from .prime import (
     ac_port_countdown_task,
     ac_port_timed_task,
     countdown_push,
+    countdown_timers,
+    schedule_timers,
     set_screen_timeout,
     timed_task_conflict,
     timed_task_push,
@@ -58,6 +60,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from anker_ble_emulator.layouts import Value
+    from anker_ble_emulator.timed import Timed
 
 
 # --- Telemetry: 0303 and 0a00 ------------------------------------------------
@@ -191,9 +194,9 @@ def _set_charging_mode(request: ParameterDict) -> dict[str, Value] | None:
 
 
 def _set_relay_switch(request: ParameterDict) -> dict[str, Value] | None:
-    """Return the AC/USB-C port switch, if ``a2`` (port) and ``a3`` (state) fit."""
+    """Return a port's switch (its record's ``[0]``), if ``a2`` and ``a3`` fit."""
     name = PORT_BY_SELECT[decode_field(request, "a2", PORT_SELECT)]
-    return {f"{name}_output_status": decode_field(request, "a3", SWITCH)}
+    return {f"{name}_relay_switch": bool(decode_field(request, "a3", SWITCH))}
 
 
 def _ac_disarm_restores_remaining(
@@ -273,6 +276,21 @@ class A91B2Layout(TableLayout):
         }
     )
 
+    def timed(
+        self, before: Mapping[str, Value], after: Mapping[str, Value]
+    ) -> tuple[Timed, ...]:
+        """Return the events a change starts: each port's countdown and timed tasks."""
+        return (
+            *countdown_timers(
+                PORT_BY_SELECT, before, after, disarm_clears=USB_C, remaining_first=True
+            ),
+            *schedule_timers(PORT_BY_SELECT, before, after),
+        )
+
+
+#: ``esp_op09_set_clock`` sets the clock and the RTC one second past the UTC it
+#: is given (doc fid 0x10 op ``0x09``).
+CLOCK_LEAD = 1
 
 PROFILE = Profile(
     serial="AFYJTB0000000001",
@@ -303,6 +321,7 @@ PROFILE = Profile(
     past_table_status=STATUS_ACCEPTED,
     layout=A91B2Layout(),
     burst=REALTIME_BURST,
+    clock_lead=CLOCK_LEAD,
 )
 register(Product.A91B2, PROFILE)
 

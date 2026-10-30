@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
     from .layouts import ScalarField, Value
+    from .timed import Timed
 
     #: A command's request fields: tag -> (the name its value is returned
     #: under, the codec of its value bytes).
@@ -410,6 +411,14 @@ class TableLayout(StructFieldLayout, CommandDispatchLayout):
         """Return the further values that setting ``values`` sets: none."""
         return {}
 
+    def timed(
+        self,
+        before: Mapping[str, Value],  # noqa: ARG002  # no change starts a timed event here
+        after: Mapping[str, Value],  # noqa: ARG002
+    ) -> tuple[Timed, ...]:
+        """Return the timed events a change starts: none."""
+        return ()
+
     def publishes(
         self,
         msgtype: int,  # noqa: ARG002  # every message publishes whenever built
@@ -518,6 +527,14 @@ class ScalarFieldLayout:
     ) -> dict[str, Value]:
         """Return the further values that setting ``values`` sets: none."""
         return {}
+
+    def timed(
+        self,
+        before: Mapping[str, Value],  # noqa: ARG002  # no change starts a timed event here
+        after: Mapping[str, Value],  # noqa: ARG002
+    ) -> tuple[Timed, ...]:
+        """Return the timed events a change starts: none."""
+        return ()
 
     def publishes(
         self,

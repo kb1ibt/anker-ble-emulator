@@ -1,6 +1,10 @@
 # Copyright (c) 2026 Shawn Stricker
 """The module: negotiation, authorization, the relay and the authorize timer."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import pytest
 
 from anker_ble_emulator.crypto import (
@@ -21,6 +25,7 @@ from anker_ble_emulator.frame import (
     make_frame,
 )
 from anker_ble_emulator.module import AuthMode, Output
+from anker_ble_emulator.timed import Step, Timed
 from anker_ble_emulator.tlv import encode_fields
 from tests.fixtures.client import (
     NEGOTIATION,
@@ -46,6 +51,11 @@ from tests.fixtures.module import (
     build_module,
 )
 
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from anker_ble_emulator.layouts import Value
 
 FRAME_4801 = bytes.fromhex(
     "ff091e000300014801ab273ed3e27270c3f4d676ac7d69a00572793732a6"
@@ -198,6 +208,209 @@ def test_an_mcu_without_a_burst_has_no_timed_pushes() -> None:
 
     assert rig.module.authorized
     assert out == Output()
+
+
+def test_a_timed_event_sets_its_values_and_pushes_once_due() -> None:
+    rig = build_module()
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+    rig.module.schedule(
+        Timed(
+            5.0,
+            "event",
+            lambda _values, _state: Step(values={"level": 1}, pushes=(0x421,)),
+        )
+    )
+
+    early = rig.module.check_pushes()
+    rig.clock.advance(5.0)
+    due = rig.module.check_pushes()
+
+    assert early == Output()
+    assert rig.module.values == {"level": 1}
+    reply = client.open(due.frames[0])
+    assert reply is not None
+    assert cmd_hex(reply.frame) == "4421"
+
+
+def test_a_recurring_event_keeps_its_cadence_when_caught_up() -> None:
+    rig = build_module()
+    negotiate(rig.module, AppClient(), ENROLLED_TOKEN)
+
+    def tick(values: Mapping[str, Value], _state: Mapping[str, Value]) -> Step:
+        count = int(values.get("ticks", 0)) + 1
+        return Step(values={"ticks": count}, pushes=(0x421,), then=(every_ten,))
+
+    every_ten = Timed(10.0, "tick", tick)
+    rig.module.schedule(every_ten)
+
+    rig.clock.advance(35.0)
+    caught_up = rig.module.check_pushes()
+    rig.clock.advance(5.0)
+    on_cadence = rig.module.check_pushes()
+
+    assert rig.module.values == {"ticks": 4}
+    assert len(caught_up.frames) == 3
+    assert len(on_cadence.frames) == 1
+
+
+def test_a_jump_sets_bypassed_values_but_sends_nothing() -> None:
+    rig = build_module()
+    negotiate(rig.module, AppClient(), ENROLLED_TOKEN)
+    rig.module.schedule(
+        Timed(
+            5.0,
+            "event",
+            lambda _values, _state: Step(values={"level": 1}, pushes=(0x421,)),
+        )
+    )
+
+    rig.clock.jump(10.0)
+    out = rig.module.check_pushes()
+
+    assert out == Output()
+    assert rig.module.values == {"level": 1}
+
+
+def test_a_new_event_replaces_the_queued_one_with_its_key() -> None:
+    rig = build_module()
+    negotiate(rig.module, AppClient(), ENROLLED_TOKEN)
+    rig.module.schedule(
+        Timed(5.0, "event", lambda _values, _state: Step(values={"level": 1}))
+    )
+    rig.module.schedule(
+        Timed(8.0, "event", lambda _values, _state: Step(values={"level": 2}))
+    )
+
+    rig.clock.advance(6.0)
+    rig.module.check_pushes()
+    at_six = dict(rig.module.values)
+    rig.clock.advance(2.0)
+    rig.module.check_pushes()
+
+    assert at_six == {}
+    assert rig.module.values == {"level": 2}
+
+
+def test_a_link_event_ends_with_the_link() -> None:
+    rig = build_module()
+    negotiate(rig.module, AppClient(), ENROLLED_TOKEN)
+    rig.module.schedule(
+        Timed(
+            5.0, "event", lambda _values, _state: Step(values={"level": 1}), link=True
+        )
+    )
+
+    rig.module.disconnect()
+    rig.clock.advance(10.0)
+    rig.module.connect()
+    rig.module.check_pushes()
+
+    assert rig.module.values == {}
+
+
+def test_an_event_due_with_no_link_sets_its_values_but_sends_nothing() -> None:
+    rig = build_module()
+    client = AppClient()
+    rig.module.schedule(
+        Timed(
+            5.0,
+            "event",
+            lambda _values, _state: Step(values={"level": 1}, pushes=(0x421,)),
+        )
+    )
+    rig.module.disconnect()
+
+    rig.clock.advance(10.0)
+    unlinked = rig.module.check_pushes()
+    rig.module.connect()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+    out = rig.module.check_pushes()
+
+    assert rig.module.values == {"level": 1}
+    assert unlinked == out == Output()
+
+
+def test_an_event_due_before_a_connect_runs_at_the_connect() -> None:
+    rig = build_module()
+    rig.module.schedule(
+        Timed(5.0, "event", lambda _values, _state: Step(values={"level": 1}))
+    )
+    rig.module.disconnect()
+
+    rig.clock.advance(10.0)
+    rig.module.connect()
+
+    assert rig.module.values == {"level": 1}
+
+
+def test_a_step_sends_the_frames_it_builds_after_its_pushes() -> None:
+    rig = build_module()
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+    built = bytes.fromhex("a10131a2020100a3020100")
+    rig.module.schedule(
+        Timed(
+            1.0,
+            "event",
+            lambda _values, _state: Step(pushes=(0x421,), frames=((0x302, built),)),
+        )
+    )
+
+    rig.clock.advance(1.0)
+    out = rig.module.check_pushes()
+
+    replies = [client.open(frame) for frame in out.frames]
+    assert [None if r is None else cmd_hex(r.frame) for r in replies] == [
+        "4421",
+        "4302",
+    ]
+    assert replies[1] is not None
+    assert replies[1].plaintext == built
+
+
+def test_a_step_unsets_values_back_to_the_recording() -> None:
+    rig = build_module()
+    rig.module.values.update({"level": 1, "other": 2})
+    rig.module.schedule(
+        Timed(1.0, "event", lambda _values, _state: Step(unset=("level", "absent")))
+    )
+
+    rig.clock.advance(1.0)
+    rig.module.check_pushes()
+
+    assert rig.module.values == {"other": 2}
+
+
+def test_an_action_gets_the_set_values_and_the_whole_state() -> None:
+    rig = build_module()
+    rig.module.values["level"] = 1
+    seen: list[tuple[Mapping[str, Value], Mapping[str, Value]]] = []
+
+    def record(values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+        seen.append((values, state))
+        return Step()
+
+    rig.module.schedule(Timed(7.0, "event", record))
+    rig.clock.advance(7.0)
+    rig.module.check_pushes()
+
+    assert seen == [({"level": 1}, {"level": 1, "rtc": 7, "epoch": 7})]
+
+
+def test_the_module_keeps_the_utc_epoch_beside_the_local_rtc() -> None:
+    """A clock set puts the RTC on local time; a push's ``fe`` is the UTC epoch.
+
+    prime-a2345-a91b2.md ``4207`` (request ``fe`` 06:10:12 UTC, logged 02:10:12
+    EDT) and the ``0305`` example (device ``fe`` 0x6ad160c9 = 19:24:57 EDT).
+    """
+    rig = build_module()
+    negotiate(rig.module, AppClient(), ENROLLED_TOKEN)
+
+    rig.clock.advance(5.0)
+
+    assert rig.module.epoch == 0x6AA7691A + 5
+    assert rig.module.rtc == 0x6AA7691A - 14400 + 5
 
 
 def test_unauthorized_link_reaches_no_mcu() -> None:

@@ -31,11 +31,22 @@ from anker_ble_emulator.parameters import Parameter, Parameters, decode_field
 from tests.fixtures.client import (
     SESSION,
     TIMESTAMP,
+    TZ,
+    UTC_OFFSET,
     AppClient,
     BleakLink,
     cmd_hex,
+    exchange,
     pattern_hex,
     settle,
+)
+from tests.fixtures.prime import (
+    advance,
+    arm,
+    command,
+    device_clock,
+    prime_client,
+    snapshot,
 )
 
 
@@ -252,10 +263,10 @@ async def test_a91b2_port_switch_covers_both_ac_ports_and_all_four_usbc_ports() 
         await link.negotiate(TOKEN)
 
         ac = await link.send(
-            0x207, [(0xA1, b"\x21"), (0xA2, b"\x01\x00"), (0xA3, b"\x01\x01")], SESSION
+            0x207, [(0xA1, b"\x21"), (0xA2, b"\x01\x00"), (0xA3, b"\x01\x00")], SESSION
         )
         usbc = await link.send(
-            0x207, [(0xA1, b"\x21"), (0xA2, b"\x01\x02"), (0xA3, b"\x01\x01")], SESSION
+            0x207, [(0xA1, b"\x21"), (0xA2, b"\x01\x02"), (0xA3, b"\x01\x00")], SESSION
         )
         out_of_range = await link.send(
             0x207, [(0xA1, b"\x21"), (0xA2, b"\x01\x06"), (0xA3, b"\x01\x01")], SESSION
@@ -266,17 +277,18 @@ async def test_a91b2_port_switch_covers_both_ac_ports_and_all_four_usbc_ports() 
 
     assert [cmd_hex(reply.frame) for reply in ac] == ["4a07", "4302"]
     assert ac[0].plaintext == bytes.fromhex("00a10131a2020100")
-    assert ac[1].plaintext == bytes.fromhex("a10131a2020100a3020101")
+    assert ac[1].plaintext == bytes.fromhex("a10131a2020100a3020100")
     assert [cmd_hex(reply.frame) for reply in out_of_range] == ["4a07"]
     assert usbc[0].plaintext == bytes.fromhex("00a10131a2020102")
     assert out_of_range[0].plaintext == bytes.fromhex("04a10131")
     assert bad_switch[0].plaintext == bytes.fromhex("04a10131")
     snapshot = device.mcu.respond(0x200, values=device.negotiated_module.values)[0]
     params = Parameters.parse(snapshot.payload)
-    # usbc_1 (a4) has real OutputPort telemetry; ac_1/ac_2 have none modeled
-    # yet (PORTS_0A00 covers only usbc/usba), so the ac switch above acks
-    # but has nothing to verify.
-    assert decode_field(params, "a4", OutputPort).output_status == 1
+    # The switch is each port's record [0] (ac_1 aa, usbc_1 b0), not its block's
+    # PD attach flag.
+    assert not decode_field(params, "aa", Timer).relay_switch
+    assert not decode_field(params, "b0", Timer).relay_switch
+    assert decode_field(params, "ab", Timer).relay_switch
 
 
 def test_a91b2_a_named_value_reaches_both_messages_that_carry_it() -> None:
@@ -678,7 +690,7 @@ async def test_a2345_port_switch_schedule_and_countdown_cover_all_five_slots() -
         await settle()
 
         switch = await link.send(
-            0x207, [(0xA1, b"\x21"), (0xA2, b"\x01\x04"), (0xA3, b"\x01\x01")], SESSION
+            0x207, [(0xA1, b"\x21"), (0xA2, b"\x01\x04"), (0xA3, b"\x01\x00")], SESSION
         )
         bad_port = await link.send(
             0x207, [(0xA1, b"\x21"), (0xA2, b"\x01\x05"), (0xA3, b"\x01\x01")], SESSION
@@ -739,12 +751,7 @@ async def test_a2345_port_switch_schedule_and_countdown_cover_all_five_slots() -
     assert bad_countdown_port[0].plaintext == bytes.fromhex("04a10131")
     snapshot = device.mcu.respond(0x200, values=device.negotiated_module.values)[0]
     params = Parameters.parse(snapshot.payload)
-    assert (
-        decode_field(params, "a8", OutputPort).output_status == 1
-    )  # usba_1 switched on
-    assert (
-        decode_field(params, "a9", OutputPort).output_status == 1
-    )  # usba_2 switched on
+    assert not decode_field(params, "ae", Schedule).relay_switch  # both USB-A
     usbc_1 = decode_field(params, "aa", Schedule)
     start = (
         usbc_1.timed_task_start_switch,
@@ -1012,18 +1019,22 @@ async def test_a2345_pushes_0302_only_when_a_port_switch_changes() -> None:
         await settle()
 
         port = [(0xA1, b"\x21"), (0xA2, b"\x01\x00")]
-        on = await link.send(0x207, [*port, (0xA3, b"\x01\x01"), CLOCK], SESSION)
-        again = await link.send(0x207, [*port, (0xA3, b"\x01\x01"), CLOCK], SESSION)
+        already_on = await link.send(
+            0x207, [*port, (0xA3, b"\x01\x01"), CLOCK], SESSION
+        )
+        off = await link.send(0x207, [*port, (0xA3, b"\x01\x00"), CLOCK], SESSION)
+        again = await link.send(0x207, [*port, (0xA3, b"\x01\x00"), CLOCK], SESSION)
         usb = await link.send(
-            0x207, [(0xA1, b"\x21"), (0xA2, b"\x01\x04"), (0xA3, b"\x01\x01")], SESSION
+            0x207, [(0xA1, b"\x21"), (0xA2, b"\x01\x04"), (0xA3, b"\x01\x00")], SESSION
         )
 
-    assert [(cmd_hex(reply.frame), reply.plaintext.hex()) for reply in on] == [
+    assert [cmd_hex(reply.frame) for reply in already_on] == ["4a07"]
+    assert [(cmd_hex(reply.frame), reply.plaintext.hex()) for reply in off] == [
         ("4a07", "00a10131a2020100fe0503933cd66a"),
-        ("4302", "a10131a2020100a3020101fe0503933cd66a"),
+        ("4302", "a10131a2020100a3020100fe0503933cd66a"),
     ]
     assert [cmd_hex(reply.frame) for reply in again] == ["4a07"]
-    assert usb[1].plaintext.hex() == "a10131a2020104a3020101"
+    assert usb[1].plaintext.hex() == "a10131a2020104a3020100"
 
 
 @pytest.mark.parametrize(
@@ -1100,6 +1111,319 @@ async def test_a_prime_pushes_0307_when_a_countdown_arms_or_disarms(
     ) == (7200, remaining)
 
 
+@pytest.mark.parametrize(
+    ("model", "select", "record", "expired", "left"),
+    [
+        pytest.param(
+            A2345, 0, "aa", "000300000000000000", 0, id="A2345 zeroes the remaining"
+        ),
+        pytest.param(
+            A91B2, 0, "aa", "000300000003000000", 3, id="A91B2 AC keeps the seconds"
+        ),
+        pytest.param(
+            A91B2, 3, "b1", "000000000003000000", 0, id="A91B2 USB-C zeroes it"
+        ),
+    ],
+)
+def test_a_prime_countdown_runs_down_then_switches_the_port_off(
+    model: type[A2345 | A91B2], select: int, record: str, expired: str, left: int
+) -> None:
+    """Each second takes one off the remaining time; at 0 the port switches off.
+
+    Then ``0302`` (the port, off) and the ``0307`` disarm, remaining as a
+    ``4209`` disarm leaves it (doc "MCU pushes" ``0302``/``0307``, A91B2 ``0307``).
+    """
+    clock = ManualClock()
+    device = model(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, bytes([1, select]))
+
+    def countdown() -> tuple[bool, bool, int]:
+        timer = decode_field(snapshot(device), record, Timer)
+        return (
+            timer.relay_switch,
+            timer.countdown_task_switch,
+            timer.countdown_task_remaining_seconds,
+        )
+
+    armed = command(device, client, 0x209, [port, arm(3)])
+    timeline = [(countdown(), advance(device, client, clock, 1)) for _ in range(3)]
+
+    a2 = f"a20201{select:02x}"
+    stamp = device_clock(3 + device.mcu.clock_lead)
+    assert [cmd for cmd, _ in armed] == ["4a09", "4307"]
+    assert timeline == [
+        ((True, True, 3), []),
+        ((True, True, 2), []),
+        (
+            (True, True, 1),
+            [
+                ("4302", f"a10131{a2}a3020100{stamp}"),
+                ("4307", f"a10131{a2}a30a04{expired}{stamp}"),
+            ],
+        ),
+    ]
+    assert countdown() == (False, False, left)
+
+
+def test_a_countdown_expiry_on_a_port_already_off_sends_no_0302() -> None:
+    """The switch watcher reports a change only (doc "MCU pushes" ``0302``)."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x00")
+    command(device, client, 0x207, [port, (0xA3, b"\x01\x00")])
+
+    command(device, client, 0x209, [port, arm(1)])
+    expired = advance(device, client, clock, 1)
+
+    assert [cmd for cmd, _ in expired] == ["4307"]
+
+
+def test_a_countdown_jumped_past_expires_without_a_push() -> None:
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+
+    command(device, client, 0x209, [(0xA2, b"\x01\x00"), arm(3)])
+    clock.jump(10)
+    jumped = device.negotiated_module.check_pushes()
+
+    timer = decode_field(snapshot(device), "aa", Timer)
+    assert jumped.frames == []
+    assert not timer.relay_switch
+    assert not timer.countdown_task_switch
+    assert timer.countdown_task_remaining_seconds == 0
+
+
+def test_a_countdown_disarm_drops_its_pending_expiry() -> None:
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x00")
+
+    command(device, client, 0x209, [port, arm(5)])
+    early = advance(device, client, clock, 2)
+    disarm = command(device, client, 0x209, [port, (0xA3, b"\x04\x00\x00\x00\x00\x00")])
+    later = advance(device, client, clock, 10)
+
+    assert early == later == []
+    assert [cmd for cmd, _ in disarm] == ["4a09", "4307"]
+    assert decode_field(snapshot(device), "aa", Timer).relay_switch
+
+
+def test_a_countdown_rearm_counts_down_again_from_its_seconds() -> None:
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x00")
+
+    command(device, client, 0x209, [port, arm(5)])
+    advance(device, client, clock, 3)
+    rearm = command(device, client, 0x209, [port, arm(5)])
+    restarted = decode_field(snapshot(device), "aa", Timer)
+    early = advance(device, client, clock, 4)
+    expired = advance(device, client, clock, 1)
+
+    assert [cmd for cmd, _ in rearm] == ["4a09"]
+    assert restarted.countdown_task_remaining_seconds == 5
+    assert early == []
+    assert [(cmd, payload[-14:]) for cmd, payload in expired] == [
+        ("4302", device_clock(8)),
+        ("4307", device_clock(8)),
+    ]
+
+
+def test_a_countdown_remaining_set_by_a_test_counts_down_from_there() -> None:
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+
+    command(device, client, 0x209, [(0xA2, b"\x01\x00"), arm(600)])
+    device.set_values(pd1_countdown_task_remaining_seconds=2)
+    early = advance(device, client, clock, 1)
+    expired = advance(device, client, clock, 1)
+
+    assert early == []
+    assert [cmd for cmd, _ in expired] == ["4302", "4307"]
+
+
+@pytest.mark.parametrize(
+    ("model", "select", "record"),
+    [
+        pytest.param(A2345, 0, "aa", id="A2345 usbc1"),
+        pytest.param(A91B2, 2, "b0", id="A91B2 usbc1"),
+    ],
+)
+def test_a_prime_timed_task_switches_its_port_at_its_time_each_week(
+    model: type[A2345 | A91B2], select: int, record: str
+) -> None:
+    """An enabled off-time at Sunday 23:26 switches the port off then, by the RTC.
+
+    The firmware's per-minute run fires it and ``0302`` reports it (doc "MCU
+    pushes" ``0302``); a repeating half stays enabled and fires a week on.
+    """
+    clock = ManualClock()
+    device = model(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, bytes([1, select]))
+    sunday_2326 = (0xA4, b"\x03\x01\x17\x1a\x40")
+
+    write = command(device, client, 0x208, [port, (0xA3, b"\x01\x00"), sunday_2326])
+    early = advance(device, client, clock, 45 - device.mcu.clock_lead)
+    fired = advance(device, client, clock, 1)
+    timer = decode_field(snapshot(device), record, Timer)
+    command(device, client, 0x207, [port, (0xA3, b"\x01\x01")])
+    week_early = advance(device, client, clock, 7 * 86400 - 1)
+    week = advance(device, client, clock, 1)
+
+    off = f"a10131a20201{select:02x}a3020100"
+    assert [cmd for cmd, _ in write] == ["4a08"]
+    assert early == week_early == []
+    assert fired == [("4302", off + device_clock(46))]
+    assert not timer.relay_switch
+    assert timer.timed_task_end_switch == 1
+    assert week == [("4302", off + device_clock(46 + 7 * 86400))]
+
+
+def test_a_once_timed_task_fires_at_its_next_time_then_disables_itself() -> None:
+    """A once on-time (weekdays 0) fires at its next hh:mm, then ``0308`` en 00.
+
+    The firmware keeps a once half's date off the wire; the emulator fires it
+    at its next hh:mm (doc "MCU pushes" ``0308``: a fired once slot).
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x00")
+    command(device, client, 0x207, [port, (0xA3, b"\x01\x00")])
+
+    command(
+        device,
+        client,
+        0x208,
+        [port, (0xA3, b"\x01\x01"), (0xA4, b"\x03\x01\x17\x1a\x00")],
+    )
+    fired = advance(device, client, clock, 46)
+    week = advance(device, client, clock, 7 * 86400)
+
+    clock_field = device_clock(46)
+    assert fired == [
+        ("4302", f"a10131a2020100a3020101{clock_field}"),
+        ("4308", f"a10131a2020100a3020101a4050400171a00{clock_field}"),
+    ]
+    assert week == []
+    timer = decode_field(snapshot(device), "aa", Timer)
+    assert timer.relay_switch
+    assert timer.timed_task_start_switch == 0
+
+
+def test_a_timed_task_firing_on_a_port_already_so_sends_no_0302() -> None:
+    """An on-time firing on a port already on changes nothing and reports nothing."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x00")
+
+    command(
+        device,
+        client,
+        0x208,
+        [port, (0xA3, b"\x01\x01"), (0xA4, b"\x03\x01\x17\x1a\x40")],
+    )
+    fired = advance(device, client, clock, 46)
+
+    assert fired == []
+    timer = decode_field(snapshot(device), "aa", Timer)
+    assert timer.relay_switch
+    assert timer.timed_task_start_switch == 1
+
+
+def test_a_timed_task_disabled_drops_its_pending_firing() -> None:
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x00")
+    end = (0xA3, b"\x01\x00")
+
+    command(device, client, 0x208, [port, end, (0xA4, b"\x03\x01\x17\x1a\x40")])
+    command(device, client, 0x208, [port, end, (0xA4, b"\x03\x00\x17\x1a\x40")])
+    later = advance(device, client, clock, 120)
+
+    assert later == []
+    assert decode_field(snapshot(device), "aa", Timer).relay_switch
+
+
+@pytest.mark.parametrize(
+    ("shift", "due"),
+    [
+        pytest.param(-3600, 3646, id="an hour back fires an hour later"),
+        pytest.param(60, 7 * 86400 - 14, id="past it waits a week"),
+    ],
+)
+def test_a_clock_set_re_times_a_queued_timed_task(shift: int, due: int) -> None:
+    """A ``0022`` that moves the RTC re-times a queued half by the new clock."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x00")
+    command(
+        device,
+        client,
+        0x208,
+        [port, (0xA3, b"\x01\x00"), (0xA4, b"\x03\x01\x17\x1a\x40")],
+    )
+
+    moved = ui(4).build(ui(4).parse(TIMESTAMP) + shift)
+    exchange(
+        device.negotiated_module,
+        client,
+        0x022,
+        [(0xA1, moved), (0xA3, UTC_OFFSET), (0xA5, TZ)],
+    )
+    early = advance(device, client, clock, due - 1)
+    fired = advance(device, client, clock, 1)
+
+    assert early == []
+    assert fired == [("4302", f"a10131a2020100a3020100{device_clock(shift + due)}")]
+
+
+def test_the_a91b2_mcu_sets_its_clock_a_second_ahead() -> None:
+    """``esp_op09_set_clock``: UTC + 1 and RTC = UTC - offset + 1 (prime doc 0x09)."""
+    device = A91B2(clock=ManualClock())
+
+    prime_client(device, TOKEN)
+
+    module = device.negotiated_module
+    assert module.epoch == ui(4).parse(TIMESTAMP) + 1
+    assert module.rtc == ui(4).parse(TIMESTAMP) - ui(4).parse(UTC_OFFSET) + 1
+
+
+def test_the_a2345_mcu_takes_no_utc_before_2024_04_30() -> None:
+    """``esp_op26_set_clock`` needs a UTC from 2024-04-30 on (prime doc 0x26)."""
+    device = A2345(clock=ManualClock())
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    before = (module.epoch, module.rtc)
+
+    exchange(
+        module,
+        client,
+        0x022,
+        [(0xA1, ui(4).build(0x6630347F)), (0xA3, UTC_OFFSET), (0xA5, TZ)],
+    )
+    early = (module.epoch, module.rtc)
+    exchange(
+        module,
+        client,
+        0x022,
+        [(0xA1, ui(4).build(0x66303480)), (0xA3, UTC_OFFSET), (0xA5, TZ)],
+    )
+
+    assert early == before
+    assert module.epoch == 0x66303480
+
+
 async def test_an_a91b2_ac_disarm_copies_the_seconds_into_the_remaining_time() -> None:
     """The AC disarm path (0x08004f3c) restores the remaining time to the seconds."""
     device = A91B2()
@@ -1168,53 +1492,131 @@ async def test_a_prime_timed_task_collision_disables_the_other_half_and_pushes_0
     assert end_switch.timed_task_end_switch == 0
 
 
-async def test_a2345_pushes_030d_on_a_mode_change_and_030f_on_a_designation() -> None:
-    """430f carries the designated mask, then 430d the mode, b8 and the mask.
+def test_a2345_pushes_030f_at_once_and_030d_after_the_mode_settle() -> None:
+    """430f carries the designated mask at once, 430d the mode about 3.3 s later.
 
-    launches/2026-09-08_161516.236__3.23.0.log:12376 (430f), :12481 (430d);
-    leaving Port Priority clears the designations: :13935 (430d mode 1, a4 0);
-    doc "Charging mode".
+    430d carries the mode, ``b8`` and the mask, after the fixed settle counter,
+    for 420c and 4206 alike. launches/2026-09-08_161516.236__3.23.0.log:12376
+    (430f), :12481 (430d); leaving Port Priority clears the designations:
+    :13935 (430d mode 1, a4 0); doc "MCU pushes" 030f.
     """
-    device = A2345()
-    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
-        link = BleakLink(client, AppClient())
-        await link.start()
-        await link.negotiate(TOKEN)
-        device.press_button()
-        await settle()
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
 
-        designate = await link.send(
-            0x20C, [(0xA1, b"\x21"), (0xA2, b"\x01\x01"), CLOCK], SESSION
-        )
-        again = await link.send(
-            0x20C, [(0xA1, b"\x21"), (0xA2, b"\x01\x01"), CLOCK], SESSION
-        )
-        same_mode = await link.send(
-            0x206, [(0xA1, b"\x21"), (0xA2, b"\x01\x02"), CLOCK], SESSION
-        )
-        ai_power = await link.send(
-            0x206, [(0xA1, b"\x21"), (0xA2, b"\x01\x01"), CLOCK], SESSION
-        )
+    designate = command(device, client, 0x20C, [(0xA2, b"\x01\x01"), CLOCK])
+    early = advance(device, client, clock, 3.2)
+    settled = advance(device, client, clock, 0.2)
+    again = command(device, client, 0x20C, [(0xA2, b"\x01\x01"), CLOCK])
+    same_mode = command(device, client, 0x206, [(0xA2, b"\x01\x02"), CLOCK])
+    smart = command(device, client, 0x206, [(0xA2, b"\x01\x01"), CLOCK])
+    smart_settled = advance(device, client, clock, 3.4)
 
-    assert [(cmd_hex(reply.frame), reply.plaintext.hex()) for reply in designate] == [
+    profile = "a30804010046412d2d18"
+    assert designate == [
         ("4a0c", "00a10131"),
         ("430f", "a10131a3020101fe0503933cd66a"),
-        ("430d", "a10131a2020102a30804010046412d2d18a4020101fe0503933cd66a"),
     ]
-    assert [cmd_hex(reply.frame) for reply in again] == ["4a0c"]
-    assert [cmd_hex(reply.frame) for reply in same_mode] == ["4a06"]
-    assert [(cmd_hex(reply.frame), reply.plaintext.hex()) for reply in ai_power] == [
+    assert early == []
+    assert settled == [
+        ("430d", f"a10131a2020102{profile}a4020101{device_clock(3)}"),
+    ]
+    assert [cmd for cmd, _ in again] == ["4a0c"]
+    assert [cmd for cmd, _ in same_mode] == ["4a06"]
+    assert smart == [
         ("4a06", "00a10131"),
         ("430f", "a10131a3020100fe0503933cd66a"),
-        ("430d", "a10131a2020101a30804010046412d2d18a4020100fe0503933cd66a"),
     ]
-    snapshot = device.mcu.respond(0x200, values=device.negotiated_module.values)[0]
-    params = Parameters.parse(snapshot.payload)
+    assert smart_settled == [
+        ("430d", f"a10131a2020101{profile}a4020100{device_clock(6)}"),
+    ]
+    params = snapshot(device)
     priorities = [
         decode_field(params, tag, Schedule).port_priority
         for tag in ("aa", "ab", "ac", "ad")
     ]
     assert priorities == [0, 0, 0, 0]
+
+
+def test_a2345_mode_change_drops_every_port_to_0_w_while_they_renegotiate() -> None:
+    """Every port block reads status 0, 0 W, for about 8 s, then what it had.
+
+    doc "Commands" ``4206``: "renegotiates every port: all drop to 0 W for
+    ~8 s". A value set during the window keeps it.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(pd1_output_status=1, pd1_output_power=60)
+    module = device.negotiated_module
+    ports = ("a4", "a5", "a6", "a7", "a8", "a9")
+
+    def blocks() -> list[tuple[int, int]]:
+        params = snapshot(device)
+        return [
+            (block.output_status, block.output_power)
+            for block in (decode_field(params, tag, OutputPort) for tag in ports)
+        ]
+
+    def stream() -> list[tuple[int, int]]:
+        params = Parameters.parse(module.mcu.push(0x303, values=module.values).payload)
+        return [
+            (block.output_status, block.output_power)
+            for block in (
+                decode_field(params, tag, OutputPort)
+                for tag in ("a2", "a3", "a4", "a5", "a6", "a7")
+            )
+        ]
+
+    had, had_stream = blocks(), stream()
+    command(device, client, 0x206, [(0xA2, b"\x01\x03")])
+    renegotiating, renegotiating_stream = blocks(), stream()
+    advance(device, client, clock, 4)
+    device.set_values(pd2_output_power=30)
+    early = advance(device, client, clock, 3.9)
+    still = blocks()
+    back = advance(device, client, clock, 0.2)
+
+    assert had[0] == had_stream[0] == (1, 60)
+    assert renegotiating == renegotiating_stream == [(0, 0)] * 6
+    assert early == back == []
+    assert still == [(0, 0), (0, 30), (0, 0), (0, 0), (0, 0), (0, 0)]
+    assert blocks() == [had[0], (had[1][0], 30), *had[2:]]
+    assert stream() == [had_stream[0], (had_stream[1][0], 30), *had_stream[2:]]
+
+
+def test_a2345_second_mode_change_while_renegotiating_keeps_the_one_window() -> None:
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(pd1_output_status=1, pd1_output_power=60)
+    had = snapshot(device)["a4"]["value"]
+
+    command(device, client, 0x206, [(0xA2, b"\x01\x03")])
+    advance(device, client, clock, 4)
+    command(device, client, 0x206, [(0xA2, b"\x01\x04")])
+    during = snapshot(device)["a4"]["value"]
+    advance(device, client, clock, 4.1)
+
+    assert decode_field(snapshot(device), "a4", OutputPort).output_power == 60
+    assert snapshot(device)["a4"]["value"] == had != during
+
+
+def test_a2345_mode_change_jumped_past_restores_the_ports_without_a_push() -> None:
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    had = snapshot(device)
+
+    command(device, client, 0x206, [(0xA2, b"\x01\x03")])
+    clock.jump(30)
+    jumped = device.negotiated_module.check_pushes()
+
+    assert jumped.frames == []
+    after = snapshot(device)
+    assert [after[tag]["value"] for tag in ("a4", "a5", "a6", "a7", "a8", "a9")] == [
+        had[tag]["value"] for tag in ("a4", "a5", "a6", "a7", "a8", "a9")
+    ]
 
 
 async def test_a2345_port_priority_designates_all_four_usbc_ports_at_once() -> None:

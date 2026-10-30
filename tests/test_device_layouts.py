@@ -96,12 +96,12 @@ async def test_a_mapped_command_without_a_recording_gets_a_checked_ack() -> None
         device.press_button()
         await settle()
         port = [(0xA1, b"\x21"), (0xA2, b"\x01\x00")]
-        on = await link.send(0x207, [*port, (0xA3, b"\x01\x01")], SESSION)
+        off = await link.send(0x207, [*port, (0xA3, b"\x01\x00")], SESSION)
         bad = await link.send(0x207, [*port, (0xA3, b"\x01\x05")], SESSION)
         unmapped = await link.send(0x215, [(0xA1, b"\x21")], SESSION)
 
-    assert [cmd_hex(reply.frame) for reply in on] == ["4a07", "4302"]
-    assert on[0].plaintext == bytes.fromhex("00a10131a2020100")
+    assert [cmd_hex(reply.frame) for reply in off] == ["4a07", "4302"]
+    assert off[0].plaintext == bytes.fromhex("00a10131a2020100")
     assert bad[0].plaintext == bytes.fromhex("04a10131")
     assert unmapped == []
 

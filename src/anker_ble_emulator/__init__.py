@@ -7,7 +7,7 @@ from .backend import (
     TELEMETRY_UUID,
     EmulatedBleakBackend,
 )
-from .clock import Clock, ManualClock, MonotonicClock
+from .clock import Clock, ManualClock, MonotonicClock, ScaledClock
 from .devices import (
     A17C0,
     A17C1,
@@ -96,6 +96,7 @@ __all__ = [
     "Path",
     "Product",
     "ProductInfo",
+    "ScaledClock",
     "Transport",
     "Versions",
     "decode",

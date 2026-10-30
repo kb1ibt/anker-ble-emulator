@@ -40,6 +40,8 @@ REPLY = Struct("status" / Int8ul, "fields" / GreedyBytes)
 ACK = Struct("status" / Int8ul, "route" / ROUTE_FIELD, "fields" / GreedyBytes)
 #: The state name a read reply finds the MCU's RTC under: local seconds.
 RTC = "rtc"
+#: The state name a timed event finds the UTC epoch under: a push's ``fe``.
+EPOCH = "epoch"
 #: The state name a frame built for MQTT finds set: the unit is bound and on
 #: WiFi to the cloud, where it has no BLE link.
 CLOUD = "cloud"
@@ -91,6 +93,9 @@ class McuScript:
         cloud_pushes: Pushes the MCU sends only to the cloud, never to BLE.
         mqtt_routes: The ``a1`` value of each message the MCU publishes to
             MQTT on the cloud, by msgtype.
+        clock_floor: The earliest UTC the MCU's clock set takes; an earlier
+            one leaves its clock as it was.
+        clock_lead: Seconds the MCU's clock set puts its clock ahead of the UTC.
 
     """
 
@@ -106,6 +111,8 @@ class McuScript:
     factory_reset: int | None = None
     cloud_pushes: Mapping[int, Frame] = field(default_factory=dict)
     mqtt_routes: Mapping[int, bytes] = field(default_factory=dict)
+    clock_floor: int = 0
+    clock_lead: int = 0
 
     def state(self, values: Mapping[str, Value]) -> dict[str, Value]:
         """Return every named value the recorded frames carry, ``values`` over them."""

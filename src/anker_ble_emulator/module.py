@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import heapq
+import itertools
 import logging
 import secrets
 from dataclasses import asdict, dataclass, field
@@ -39,6 +41,7 @@ from .frame import (
     make_frame,
     reply_frame,
 )
+from .mcu import EPOCH, RTC, mcu_frame
 from .messages import (
     AUTH_PENDING_REPLY,
     BIND_REPLY,
@@ -55,6 +58,7 @@ from .messages import (
     VERSION_REPLY,
     parse_request,
 )
+from .timed import Step, Timed
 from .tlv import FieldError, decode_fields
 
 
@@ -67,7 +71,7 @@ if TYPE_CHECKING:
     from .crypto import Cipher
     from .frame import Frame
     from .layouts import Value
-    from .mcu import McuScript
+    from .mcu import Burst, McuScript
     from .messages import Fields
 
 _LOGGER = logging.getLogger(__name__)
@@ -262,11 +266,28 @@ class _Link:
     authorized: bool = False
     auth_started_at: float | None = None
     pending_token: bytes | None = None
-    #: The MCU's burst: pushes still owed, and when the next is due.
-    burst_left: int = 0
-    burst_due: float = 0.0
-    #: When a factory reset drops the link; None if none is pending.
-    drop_at: float | None = None
+
+
+@dataclass(order=True)
+class _Queued:
+    """A scheduled event: when it falls due, then its scheduling order."""
+
+    due: float
+    order: int
+    event: Timed = field(compare=False)
+
+
+def _drop(_values: Mapping[str, Value], _state: Mapping[str, Value]) -> Step:
+    """Drop the link: a factory reset's, once its debounce runs out."""
+    return Step(disconnect=True)
+
+
+def _burst(burst: Burst, left: int) -> tuple[Timed, ...]:
+    """Return the burst's next push while ``left`` are still owed; none after."""
+    if left <= 0:
+        return ()
+    push = Step(pushes=(burst.push,), then=_burst(burst, left - 1))
+    return (Timed(burst.period, "burst", lambda _values, _state: push, link=True),)
 
 
 @dataclass(frozen=True)
@@ -328,8 +349,12 @@ class Module:
         self.values: dict[str, Value] = {}
         self._key_pair_factory = key_pair_factory
         self._link: _Link | None = None
-        #: When the MCU's RTC was last set, and the local seconds it was set to.
-        self._rtc_set: tuple[float, int] = (clock.now(), 0)
+        #: The scheduled events, soonest first.
+        self._queue: list[_Queued] = []
+        self._order = itertools.count()
+        #: When the MCU's clock was last set, the UTC it was set to, and the
+        #: offset west of UTC that puts the RTC on local time.
+        self._clock_set: tuple[float, int, int] = (clock.now(), 0, 0)
         #: The ``0023`` account: RAM only, so it outlives a link but not a reboot.
         self._account = b""
         #: The port's key and IV, zeros at boot: an encrypted frame with no
@@ -355,16 +380,62 @@ class Module:
     @property
     def rtc(self) -> int:
         """The MCU's RTC: local seconds, counting from 0 until a clock set."""
-        set_at, seconds = self._rtc_set
-        return (seconds + int(self.clock.now() - set_at)) % RTC_MODULUS
+        return (self.epoch - self._clock_set[2]) % RTC_MODULUS
+
+    @property
+    def epoch(self) -> int:
+        """The UTC epoch the device stamps a push's ``fe`` with; 0 until a clock set."""
+        set_at, utc, _ = self._clock_set
+        return (utc + int(self.clock.now() - set_at)) % RTC_MODULUS
 
     def connect(self) -> None:
-        """Bring a link up with fresh state."""
+        """Bring a link up with fresh state, after what fell due without one."""
+        self._run_due()
         self._link = _Link(connected_at=self.clock.now())
 
     def disconnect(self) -> None:
-        """Drop the link."""
+        """Drop the link and the events that end with it."""
         self._link = None
+        self._queue = [queued for queued in self._queue if not queued.event.link]
+        heapq.heapify(self._queue)
+
+    def schedule(self, *events: Timed, start: float | None = None) -> None:
+        """Queue ``events``, each replacing any queued one with its key.
+
+        Args:
+            events: The events, each due its delay after ``start``.
+            start: When their delays count from; now if None.
+
+        """
+        keys = {event.key for event in events}
+        self._queue = [queued for queued in self._queue if queued.event.key not in keys]
+        heapq.heapify(self._queue)
+        base = self.clock.now() if start is None else start
+        for event in events:
+            heapq.heappush(
+                self._queue, _Queued(base + event.delay, next(self._order), event)
+            )
+
+    def start_timed(
+        self, before: Mapping[str, Value], clock: tuple[int, int] | None = None
+    ) -> None:
+        """Queue the timed events the layout starts for a change of state.
+
+        Args:
+            before: The set values before the change.
+            clock: The (RTC, epoch) before the change; None if they didn't change.
+
+        """
+        layout = self.mcu.layout
+        if layout is None:
+            return
+        rtc, epoch = (self.rtc, self.epoch) if clock is None else clock
+        prior = {**self.mcu.state(before), RTC: rtc, EPOCH: epoch}
+        self.schedule(*layout.timed(prior, self._state()))
+
+    def _state(self) -> dict[str, Value]:
+        """Return the device's whole state: values, set ones over them, the clock."""
+        return {**self.mcu.state(self.values), RTC: self.rtc, EPOCH: self.epoch}
 
     def write(self, data: bytes) -> Output:
         """Handle one write from the client.
@@ -437,23 +508,43 @@ class Module:
         )
 
     def check_pushes(self) -> Output:
-        """Send the MCU's burst pushes due by now, on an authorized link.
+        """Run the events due by now; send their pushes on an authorized link."""
+        frames, disconnect = self._run_due()
+        link = self._link
+        if link is None:
+            return Output()
+        return Output(self._relay(link, frames).frames, disconnect=disconnect)
 
-        Drops the link instead once a factory reset's debounce has run out.
+    def _run_due(self) -> tuple[list[Frame], bool]:
+        """Run every event due by now, in order; return its pushes and any drop.
+
+        Each sets its values; one a jump bypassed, or one with no authorized link
+        to send on, sends nothing.
         """
-        link, burst = self._link, self.mcu.burst
-        if link is None or not link.authorized:
-            return Output()
-        if link.drop_at is not None and self.clock.now() >= link.drop_at:
-            return Output(disconnect=True)
-        if burst is None:
-            return Output()
-        frames = []
-        while link.burst_left and self.clock.now() >= link.burst_due:
-            frames.append(self.mcu.push(burst.push, values=self.values, rtc=self.rtc))
-            link.burst_left -= 1
-            link.burst_due += burst.period
-        return self._relay(link, frames)
+        frames: list[Frame] = []
+        disconnect = False
+        layout, link = self.mcu.layout, self._link
+        while self._queue and self._queue[0].due <= self.clock.now():
+            queued = heapq.heappop(self._queue)
+            step = queued.event.action(dict(self.values), self._state())
+            self.values.update(step.values)
+            for name in step.unset:
+                self.values.pop(name, None)
+            self.schedule(*step.then, start=queued.due)
+            if self.clock.bypassed(queued.due) or link is None or not link.authorized:
+                continue
+            disconnect = disconnect or step.disconnect
+            frames.extend(
+                self.mcu.push(msgtype, values=self.values, rtc=self.rtc)
+                for msgtype in step.pushes
+                if layout is None or layout.sends(msgtype, self.values)
+            )
+            frames.extend(
+                mcu_frame(msgtype, payload, self.mcu.channel)
+                for msgtype, payload in step.frames
+                if layout is None or layout.sends(msgtype, self.values)
+            )
+        return frames, disconnect
 
     def check_timers(self) -> Output:
         """Run the authorize timer once: drop an unauthorized link past its limit."""
@@ -717,10 +808,15 @@ class Module:
     def _set_rtc(self, time: int, utc_offset: int) -> None:
         """Set the RTC to ``time`` less ``utc_offset`` seconds west.
 
-        A UTC before ``RTC_SYNC_MIN`` never reaches the RTC.
+        A UTC before ``RTC_SYNC_MIN``, or before the MCU's own floor, never
+        reaches the RTC; the MCU sets its clock its lead ahead. A clock set is a
+        change of state, so the layout re-times what depends on the RTC.
         """
-        if time >= RTC_SYNC_MIN:
-            self._rtc_set = (self.clock.now(), (time - utc_offset) % RTC_MODULUS)
+        if time >= max(RTC_SYNC_MIN, self.mcu.clock_floor):
+            before = (self.rtc, self.epoch)
+            utc = (time + self.mcu.clock_lead) % RTC_MODULUS
+            self._clock_set = (self.clock.now(), utc, utc_offset)
+            self.start_timed(self.values, clock=before)
 
     def _bind(self, request: _Request) -> _Reply:
         if request.fields.account is None:
@@ -792,6 +888,8 @@ class Module:
             return Output()
         before = dict(self.values)
         self._apply(frame.cmd.msgtype, plaintext)
+        self.start_timed(before)
+        timed, disconnect = self._run_due()
         frames = self.mcu.respond(
             frame.cmd.msgtype,
             request=plaintext,
@@ -802,13 +900,13 @@ class Module:
         if frame.cmd.msgtype == self.mcu.factory_reset:
             self.enrolled.clear()
             self.values.clear()
-            link.drop_at = self.clock.now() + FACTORY_RESET_DELAY
+            self.schedule(Timed(FACTORY_RESET_DELAY, "factory_reset", _drop, link=True))
         burst = self.mcu.burst
         if burst is not None and frame.cmd.msgtype == burst.trigger:
             frames.append(self.mcu.push(burst.push, values=self.values, rtc=self.rtc))
-            link.burst_left = burst.count - 1
-            link.burst_due = self.clock.now() + burst.period
-        return self._relay(link, frames)
+            self.schedule(*_burst(burst, burst.count - 1))
+        out = self._relay(link, [*frames, *timed])
+        return Output(out.frames, disconnect=disconnect)
 
     def _apply(self, msgtype: int, plaintext: bytes) -> None:
         """Show an accepted command's settings in the telemetry that carries them."""
@@ -823,12 +921,12 @@ class Module:
         if session is None:
             return Output()
         out: list[bytes] = []
-        for mcu_frame in frames:
+        for cleartext in frames:
             relayed = make_frame(
-                mcu_frame.pattern.composer,
-                mcu_frame.pattern.channel,
-                mcu_frame.cmd.msgtype,
-                session.encrypt(mcu_frame.payload),
+                cleartext.pattern.composer,
+                cleartext.pattern.channel,
+                cleartext.cmd.msgtype,
+                session.encrypt(cleartext.payload),
                 encrypted=True,
             )
             out.extend(self._encode(relayed))

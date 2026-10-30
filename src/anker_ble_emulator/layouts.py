@@ -19,6 +19,8 @@ from construct import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
+    from .timed import Timed
+
 #: A layout value: an integer for numeric types, bytes for strings and blocks.
 Value = int | float | bytes
 
@@ -66,6 +68,15 @@ class LayoutProtocol(Protocol):
 
     def implied(self, values: Mapping[str, Value]) -> dict[str, Value]:
         """Return the further values that setting ``values`` sets."""
+
+    def timed(
+        self, before: Mapping[str, Value], after: Mapping[str, Value]
+    ) -> tuple[Timed, ...]:
+        """Return the timed events a change from ``before`` to ``after`` starts.
+
+        Both are the device's whole state: the recorded values, set ones over them,
+        and the RTC under ``mcu.RTC``; a clock set is a change of the RTC alone.
+        """
 
     def build(self, msgtype: int, values: Mapping[str, Value] | None = None) -> bytes:
         """Return a telemetry payload of the message's typed fields, zero unless set."""
