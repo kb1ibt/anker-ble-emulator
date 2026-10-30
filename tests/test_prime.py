@@ -43,9 +43,12 @@ from tests.fixtures.client import (
     settle,
 )
 from tests.fixtures.prime import (
+    CUSTOM_PHOTO,
+    CUSTOM_PHOTO_2,
     HOLIDAY_URL,
     advance,
     arm,
+    baseline_jpeg,
     command,
     device_clock,
     holiday_schedule,
@@ -59,6 +62,7 @@ from tests.fixtures.prime import (
     unit_change,
     upload_chunk,
     upload_prepare,
+    upload_theme,
     usbc_identity,
 )
 
@@ -857,10 +861,10 @@ def test_a2345_4222_sets_the_screensaver_reads_a6() -> None:
     state = device.mcu.state({})
     clear = bytes.fromhex("a10121a2020100")
 
-    assert layout.state_changes(0x222, clear, state) == {"port_widgets_switch": 0}
+    assert layout.state_changes(0x222, clear, state) == {"time_display": 0}
     assert layout.state_changes(0x222, bytes.fromhex("a10121a2020105"), state) == {}
-    assert state["port_widgets_switch"] == 1  # the captured 0a02's a6
-    device.set_values(port_widgets_switch=0)
+    assert state["time_display"] == 1  # the captured 0a02's a6
+    device.set_values(time_display=0)
     values = device.negotiated_module.values
     read = Parameters.parse(device.mcu.respond(0x202, values=values)[0].payload)
     assert decode_field(read, "a6", ui(1)) == 0
@@ -2016,8 +2020,9 @@ def test_a2345_resolves_a_device_identity_by_its_vid_and_pid(
     assert usbc_identity(device, 1)[2:] == resolved
 
 
-#: A 500-byte image in three 192-byte chunks, the last short, two to a window.
-IMAGE = bytes(i % 251 for i in range(500))
+#: A 500-byte baseline JPEG in three 192-byte chunks, the last short, two to a
+#: window.
+IMAGE = baseline_jpeg()
 #: Its theme id (the 102026-2 recording's ``030b`` theme, not the snapshot's
 #: own) and the ``4311`` fields naming it.
 THEME_ID = 0x0E1AB88E
@@ -2147,6 +2152,188 @@ def test_a2345_theme_without_its_url_is_acked_and_dropped() -> None:
 
     assert replies == [("4a05", "00a10131")]
     assert decode_field(snapshot(device), "af", Theme) == had
+
+
+#: The two theme photos' ids, each its own CRC32, as the bench sent them.
+PHOTO_ID = 0x5ADF8AA6
+PHOTO_4311 = "a10131a20504a68adf5a"
+PHOTO_2_ID = 0xEBBF1C3E
+PHOTO_2_4311 = "a10131a205043e1cbfeb"
+
+
+def test_a2345_unpadded_custom_photo_fails_its_first_draw() -> None:
+    """The upload ends ``10`` and ``4311`` 1; then the draw erases it, screen 1.
+
+    doc "Theme upload" (:485), bench 2026-10-30 04:42-04:43: a 65-byte last
+    chunk leaves the chained CBC's last block cut short in flash, so the decrypt
+    misses the CRC. The repeat ``4205`` gets ``4311`` 4; ``4222`` draws nothing.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    custom = theme_select(CUSTOM_PHOTO, PHOTO_ID, theme=0x85)
+
+    selected = command(device, client, 0x205, custom)
+    replies = upload_theme(device, client, CUSTOM_PHOTO, PHOTO_ID, kind=2)
+    advance(device, client, clock, 0)
+    af = decode_field(snapshot(device), "af", Theme)
+    draws = module.values["_screen_draws"]
+    again = command(device, client, 0x205, custom)
+    time_display = [
+        command(device, client, 0x222, [(0xA2, bytes((1, value)))]) for value in (0, 1)
+    ]
+
+    assert selected[1] == ("4311", f"{PHOTO_4311}a3020104a4020105")
+    assert replies[0] == [("4a20", "00a10131")]
+    assert replies[10] == [("4a21", "00a10131a203020a00")]
+    assert replies[-1] == [
+        ("4311", f"{PHOTO_4311}a3020101a4020105"),
+        ("4a21", "10a10131a203022c00"),
+    ]
+    assert (af.screen_saver_theme, af.screen_saver_theme_id) == (1, PHOTO_ID)
+    assert f"_theme_crc_{PHOTO_ID}" not in module.values
+    assert again[1] == ("4311", f"{PHOTO_4311}a3020104a4020105")
+    assert time_display == [[], []]
+    assert (module.values["time_display"], module.values["_screen_draws"]) == (
+        1,
+        draws,
+    )
+
+
+def test_a2345_padded_custom_photo_stays_and_time_display_redraws_it() -> None:
+    """Padded to 192, it decrypts to its CRC: screen 5, kept, redrawn by ``4222``.
+
+    Bench 2026-10-30 05:14:53-05:19:55: the repeat ``4205`` drew ``4311`` 1 with
+    no ``4220``; ``4222`` redraws only on a change, and only on screen 5.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    custom = theme_select(CUSTOM_PHOTO_2, PHOTO_2_ID, theme=0x85)
+    command(device, client, 0x205, custom)
+
+    replies = upload_theme(device, client, CUSTOM_PHOTO_2, PHOTO_2_ID, kind=2, pad=True)
+    advance(device, client, clock, 0)
+    af = decode_field(snapshot(device), "af", Theme)
+    again = command(device, client, 0x205, custom)
+    draws = [int(module.values["_screen_draws"])]
+    for value in (0, 0, 1):
+        command(device, client, 0x222, [(0xA2, bytes((1, value)))])
+        draws.append(int(module.values["_screen_draws"]))
+
+    assert replies[-1][1] == ("4a21", "10a10131a203026400")
+    assert (af.screen_saver_theme, af.screen_saver_theme_id) == (5, PHOTO_2_ID)
+    assert again == [
+        ("4a05", "00a10131"),
+        ("4311", f"{PHOTO_2_4311}a3020101a4020105"),
+    ]
+    assert [count - draws[0] for count in draws] == [0, 1, 1, 2]
+
+
+def test_a2345_custom_photo_in_chunks_not_a_multiple_of_16_fails_its_draw() -> None:
+    """Every chunk but the last must be a 16-multiple for the chained CBC (:485)."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    command(device, client, 0x205, theme_select(CUSTOM_PHOTO, PHOTO_ID, theme=0x85))
+
+    replies = upload_theme(
+        device, client, CUSTOM_PHOTO, PHOTO_ID, kind=2, chunk=100, pad=True
+    )
+    advance(device, client, clock, 0)
+
+    assert replies[-1][1] == ("4a21", "10a10131a203025400")
+    assert decode_field(snapshot(device), "af", Theme).screen_saver_theme == 1
+
+
+def test_a2345_unpadded_network_photo_is_stored_as_sent() -> None:
+    """Kind 0 isn't encrypted: an unpadded last chunk draws fine on screen 3."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    command(device, client, 0x205, theme_select(CUSTOM_PHOTO, PHOTO_ID))
+
+    upload_theme(device, client, CUSTOM_PHOTO, PHOTO_ID, kind=0)
+    advance(device, client, clock, 0)
+
+    af = decode_field(snapshot(device), "af", Theme)
+    assert (af.screen_saver_theme, af.screen_saver_theme_id) == (3, PHOTO_ID)
+    assert module.values[f"_theme_crc_{PHOTO_ID}"] == PHOTO_ID
+
+
+@pytest.mark.parametrize(
+    ("image", "shown"),
+    [
+        pytest.param(baseline_jpeg(), True, id="baseline 4:2:0"),
+        pytest.param(baseline_jpeg(luma=0x11), True, id="4:4:4"),
+        pytest.param(baseline_jpeg(luma=0x21), True, id="4:2:2"),
+        pytest.param(
+            baseline_jpeg(before_scan=b"\xff\xfe\x00\x05hey"), True, id="COM skipped"
+        ),
+        pytest.param(
+            baseline_jpeg(before_scan=b"\xff\xdd\x00\x04\x00\x10"),
+            True,
+            id="DRI skipped",
+        ),
+        pytest.param(
+            baseline_jpeg(before_scan=b"\xff\xe1\x00\x06Exif"), True, id="APP1 skipped"
+        ),
+        pytest.param(baseline_jpeg(sof=0xC2), False, id="progressive SOF2"),
+        pytest.param(baseline_jpeg(sof=0xC1), False, id="extended SOF1"),
+        pytest.param(baseline_jpeg(components=1), False, id="grayscale"),
+        pytest.param(baseline_jpeg(precision=12), False, id="12-bit"),
+        pytest.param(baseline_jpeg(luma=0x41), False, id="luma 4x1"),
+        pytest.param(baseline_jpeg(quant=0x10), False, id="16-bit DQT"),
+        pytest.param(baseline_jpeg(quant=0x03), False, id="DQT id 3"),
+        pytest.param(baseline_jpeg(huffman=0x02), False, id="DHT id 2"),
+        pytest.param(baseline_jpeg(spectral=b"\x01\x3f\x00"), False, id="Ss 1"),
+        pytest.param(baseline_jpeg(before_scan=b"\xff\xd0"), False, id="RST0"),
+        pytest.param(baseline_jpeg(before_scan=b"\xff"), False, id="fill byte"),
+        pytest.param(baseline_jpeg(before_scan=b"\x00"), False, id="stray byte"),
+        pytest.param(b"\x00" + baseline_jpeg()[1:], False, id="no SOI"),
+        pytest.param(baseline_jpeg()[:108], False, id="ends before SOS"),
+        pytest.param(baseline_jpeg()[:100], False, id="cut inside SOF0"),
+    ],
+)
+def test_a2345_draw_checks_the_jpeg_markers(image: bytes, shown: bool) -> None:  # noqa: FBT001
+    """Doc "Theme image display": a failing header erases the slot, screen 1."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    command(device, client, 0x205, theme_select(image, THEME_ID))
+
+    upload_theme(device, client, image, THEME_ID, kind=0)
+    advance(device, client, clock, 0)
+
+    af = decode_field(snapshot(device), "af", Theme)
+    stored = f"_theme_crc_{THEME_ID}" in module.values
+    assert (af.screen_saver_theme, stored) == ((3, True) if shown else (1, False))
+
+
+@pytest.mark.parametrize(
+    ("size", "shown"),
+    [
+        pytest.param(65534, True, id="65 534 B"),
+        pytest.param(65535, False, id="65 535 B"),
+    ],
+)
+def test_a2345_draw_checks_the_stored_size(size: int, shown: bool) -> None:  # noqa: FBT001
+    """A custom image over 65 534 B fits its 128 KB slot but never draws."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    image = baseline_jpeg(size)
+    command(device, client, 0x205, theme_select(image, THEME_ID, theme=0x85))
+
+    upload_theme(device, client, image, THEME_ID, kind=2, pad=True)
+    advance(device, client, clock, 0)
+
+    theme = decode_field(snapshot(device), "af", Theme).screen_saver_theme
+    assert theme == (5 if shown else 1)
 
 
 def test_a2345_secret_feature_1_fires_on_20_screen_switches_in_10_s() -> None:

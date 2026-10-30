@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import zlib
 from datetime import UTC, datetime
+from importlib.resources import files
 from typing import TYPE_CHECKING
 
 from construct import Int32ul
@@ -137,6 +138,56 @@ def arm(seconds: int) -> tuple[int, bytes]:
     return 0xA3, b"\x04\x01" + ui(4).build(seconds)
 
 
+#: The two photos made for the theme tests (ImageMagick, 480 x 200 baseline
+#: 4:2:0): 8 321 B and 19 131 B, neither size leaving a 16-multiple last chunk
+#: at 192 bytes a chunk.
+THEMES = files("tests.fixtures.prime") / "themes"
+CUSTOM_PHOTO = (THEMES / "custom-test.jpg").read_bytes()
+CUSTOM_PHOTO_2 = (THEMES / "custom-test-2.jpg").read_bytes()
+
+
+def _segment(marker: int, body: bytes) -> bytes:
+    """Return a JPEG marker segment: ``ff <marker>``, its length, its body."""
+    return bytes((0xFF, marker)) + (len(body) + 2).to_bytes(2, "big") + body
+
+
+def baseline_jpeg(  # noqa: PLR0913  # one knob per header rule
+    size: int = 500,
+    *,
+    sof: int = 0xC0,
+    precision: int = 8,
+    components: int = 3,
+    luma: int = 0x22,
+    quant: int = 0x00,
+    huffman: int = 0x00,
+    spectral: bytes = b"\x00\x3f\x00",
+    before_scan: bytes = b"",
+) -> bytes:
+    """Return a minimal baseline JPEG, ``size`` bytes, with one header rule varied.
+
+    SOI, APP0, DQT, SOF, DHT, ``before_scan``, SOS, scan bytes, EOI: 480 x 200,
+    luma sampling ``luma``, the chroma components 1 x 1.
+    """
+    sampling = (luma, 0x11, 0x11)
+    frame = bytes((precision,)) + (200).to_bytes(2, "big") + (480).to_bytes(2, "big")
+    frame += bytes((components,))
+    frame += b"".join(bytes((i + 1, sampling[i], min(i, 1))) for i in range(components))
+    scan = bytes((components,))
+    scan += b"".join(
+        bytes((i + 1, 0x00 if i == 0 else 0x11)) for i in range(components)
+    )
+    header = (
+        b"\xff\xd8"
+        + _segment(0xE0, b"JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00")
+        + _segment(0xDB, bytes((quant,)) + bytes(range(1, 65)))
+        + _segment(sof, frame)
+        + _segment(0xC4, bytes((huffman, 1)) + bytes(15) + b"\x00")
+        + before_scan
+        + _segment(0xDA, scan + spectral)
+    )
+    return header + bytes(size - len(header) - 2) + b"\xff\xd9"
+
+
 #: The URL field the app fills every ``4220`` with (doc ``4220`` row).
 APP_URL = b"1234567890123456"
 
@@ -174,10 +225,38 @@ def theme_select(
     ]
 
 
-def upload_chunk(image: bytes, index: int, chunk: int) -> list[tuple[int, bytes]]:
-    """Return ``4221``'s fields: the index, then one ignored byte and the chunk."""
+def upload_chunk(
+    image: bytes, index: int, chunk: int, *, pad: bool = False
+) -> list[tuple[int, bytes]]:
+    """Return ``4221``'s fields: the index, then one ignored byte and the chunk.
+
+    With ``pad`` a short last chunk is filled to ``chunk`` bytes with zeros.
+    """
     data = image[index * chunk : (index + 1) * chunk]
+    if pad:
+        data = data.ljust(chunk, b"\x00")
     return [(0xA2, b"\x02" + ui(2).build(index)), (0xA3, b"\x00" + data)]
+
+
+def upload_theme(  # noqa: PLR0913  # the upload's own knobs
+    device: EmulatedDevice,
+    client: AppClient,
+    image: bytes,
+    theme_id: int,
+    *,
+    kind: int,
+    chunk: int = 192,
+    pad: bool = False,
+) -> list[list[tuple[str, str]]]:
+    """Upload ``image`` as the app does, ``4220`` then every ``4221``; the replies."""
+    count = -(-len(image) // chunk)
+    prepare = upload_prepare(image, theme_id, window=10, chunk=chunk, kind=kind)
+    replies = [command(device, client, 0x220, prepare)]
+    replies += [
+        command(device, client, 0x221, upload_chunk(image, i, chunk, pad=pad))
+        for i in range(count)
+    ]
+    return replies
 
 
 def published(device: EmulatedDevice) -> list[tuple[int, str]]:

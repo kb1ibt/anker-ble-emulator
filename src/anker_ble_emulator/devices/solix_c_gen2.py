@@ -1301,40 +1301,64 @@ QUIET_AT_CAP = (3, 9)
 OFF_BUS = (3, 3)
 #: Pack selection (MainBMS ``pack_select_eval``, firmware/mainbms-control-fsms.md
 #: "Pack selection", 10 ms steps), re-checked on every change:
-#: - main -> expansion charge (:159): the charge-cap latch, 100 steps charging
-#:   at the cap (:187); the expansion below its cap;
-#: - main -> expansion discharge (:158): the discharge latch (:188 (a): the
+#: - the charge-cap latch (:193, ``0x20000b64``; the counters under "Charge-cap
+#:   latch counters"): sets with the on-bus pack charging at or above its cap
+#:   and a source in (``flag_00c7``, or ALT byte +9 at 2: hidden
+#:   ``alternator_byte_9``, the ALT record's +9, meaning unread), whatever the
+#:   expansion's state: after 100 steps the first time, at once after that, the
+#:   count never reset (hidden ``charge_cap_latch_primed``). It clears in
+#:   discharge, and with ``flag_00c7`` gone at once, or after 1 500 steps with
+#:   +9 at 2. That count is only reset by ``flag_00c7``, so once run out +9
+#:   alone sets nothing (hidden ``charge_cap_latch_spent``). Setting it clears
+#:   the discharge latch, whose arming clears it (:194). Its idle and no-SoC
+#:   counts (both reset on vext / vbat, which no value carries) and the fault
+#:   path aren't modeled;
+#: - main -> expansion charge (:165): the charge-cap latch set, the expansion
+#:   below its cap, switched on, its path hold clear;
+#: - main -> expansion discharge (:164): the discharge latch (:194 (a): the
 #:   main's own SoC above ``min_soc`` + 0.9 % and a >= 1.0 % drop in it since it
 #:   last charged); the expansion's discharge allowance non-zero (the stand-in
-#:   below; the path doesn't re-check the expansion's SoC); more than 200 steps
-#:   since the last switch;
-#: - expansion -> main discharge (:164): 300 steps on the expansion, not
-#:   charging (the charge-cap latch clear), its SoC under ``min_soc`` + 0.9 %,
-#:   checked every step; the main's charge allowance as :164 reads it is taken
-#:   as non-zero (which record holds it, and its value at the cap, are open).
+#:   below; the path doesn't re-check the expansion's SoC), its path hold clear;
+#:   more than 200 steps since the last switch;
+#: - expansion -> main discharge (:170): 300 steps on the expansion, the
+#:   charge-cap latch clear, its SoC under ``min_soc`` + 0.9 %, checked every
+#:   step; the main's charge allowance as :170 reads it is taken as non-zero
+#:   (which record holds it, and its value at the cap, are open).
 #: The emulator's allowance stand-ins: a pack may charge below its cap; the
 #: expansion's discharge allowance reads 0 under ``min_soc`` + 0.9 %, unconfirmed
-#: (on 2026-09-03 03:29-08:00 the allowance or ``raw+0x95`` held :158 off over
-#: the band, which one unread). :166 (that allowance at 0 for 300 steps) would
-#: move the bus only once :164 has. Not modeled: the once-per-boot switch (:157), the
-#: pack-switch code (:161, :167), the allowance-only rows (:162, :163, :165),
-#: ``raw+0x95``, the expansion's share of the discharge latch and the latches'
-#: other paths. Hidden: the pack
-#: on the bus (1 main, 2 expansion; unset, the expansion when one is attached,
-#: as on the A1783 recording, else the main), when it took it (UTC s), and the
-#: discharge latch (``0x20000b65``) and the main's 0.1 % SoC it counts its drop
-#: from: re-taken only while the latch is clear, as the main charges (its SoC
-#: when charging stops; the 1 s settle isn't modeled) and when the latch arms or
-#: the charge-cap latch sets, never on a switch or a rise without charging
-#: (firmware/mainbms-control-fsms.md, the list after "Latches"); first seen,
-#: the main's SoC before the change.
+#: (on 2026-09-03 03:29-08:00 the allowance or the path hold held :164 off over
+#: the band, which one unread). :172 (that allowance at 0 for 300 steps) would
+#: move the bus only once :170 has. The path hold is the expansion BMS's own
+#: ``raw+0x95`` (CAN ``0x045a``, a contactor / active-path hold): hidden, clear
+#: unless set by name. Not modeled: the once-per-boot switch (:163), the
+#: pack-switch code (:167, :173), the allowance-only rows (:168, :169, :171),
+#: the expansion's share of the discharge latch and the latches' other paths.
+#: Hidden, tracked with an expansion attached: the pack on the bus (1 main, 2
+#: expansion; unset, the expansion when one is attached, as on the A1783
+#: recording, else the main), when it took it (UTC s), the charge-cap latch,
+#: and the discharge latch (``0x20000b65``) and the main's 0.1 % SoC it counts
+#: its drop from: re-taken only while the latch is clear, as the main charges
+#: (its SoC when charging stops; the 1 s settle isn't modeled) and when the
+#: latch arms or the charge-cap latch changes, never on a switch or a rise
+#: without charging (firmware/mainbms-control-fsms.md, the list after
+#: "Latches"); first seen, the main's SoC before the change.
 BUS_PACK = "pack_on_bus"
 BUS_MAIN = 1
 BUS_EXPANSION = 2
 BUS_TAKEN = "bus_taken"
 LATCH_FROM = "discharge_latch_from"
 LATCH_SET = "discharge_latch"
+CAP_LATCH = "charge_cap_latch"
+CAP_LATCH_EVENT = "charge_cap_latch_count"
+CAP_LATCH_REFERENCE = "charge_cap_latch_clear"
+CAP_LATCH_SPENT = "charge_cap_latch_spent"
+CAP_LATCH_PRIMED = "charge_cap_latch_primed"
+CAP_LATCH_HOLDOVER = 15.0
+CAP_LATCH_HOLDOVER_EVENT = "charge_cap_latch_holdover"
+ALT_BYTE_9 = "alternator_byte_9"
+ALT_BYTE_9_SOURCE = 2
 EXPANSION_PACK_SOC = "sub_package_pack_soc"
+PATH_HOLD = "sub_package_path_hold"
 BUS_DWELL = 3.01
 SWITCH_GAP = 2.01
 CHARGE_CAP_LATCH = 1.0
@@ -1393,53 +1417,140 @@ def _bus_to(
     return {**dict(slots), BUS_PACK: holder, BUS_TAKEN: int(state[EPOCH])}
 
 
-def _cap_latch_due(state: Mapping[str, Value]) -> bool:
-    """Return whether the main, charging at its cap, owes the expansion its charge."""
+def _on_bus(state: Mapping[str, Value]) -> tuple[int, int]:
+    """Return the on-bus pack's flow and 0.1 % SoC."""
+    if _bus_pack(state) == BUS_MAIN:
+        return int(state["charge_discharge_status"]), _main_soc(state)
+    return int(state["sub_package_status"]), _expansion_soc(state)
+
+
+def _alt_byte_9_source(state: Mapping[str, Value]) -> bool:
+    """Return whether ALT byte +9 reads 2, the charge-cap latch's other source."""
+    return state.get(ALT_BYTE_9) == ALT_BYTE_9_SOURCE
+
+
+def _cap_latch_counts(state: Mapping[str, Value]) -> bool:
+    """Return whether the 1 s count that sets the charge-cap latch runs (:193).
+
+    The latch clear, the on-bus pack charging at or above its cap, and
+    ``flag_00c7``, or +9 at 2 with the clear count not run out.
+    """
+    flow, soc = _on_bus(state)
+    source = _charge_source(state) or (
+        _alt_byte_9_source(state) and not state.get(CAP_LATCH_SPENT)
+    )
     return (
-        state["charge_discharge_status"] == FLOW_CHARGE
-        and _main_soc(state) >= _cap(state)
+        not state.get(CAP_LATCH)
+        and flow == FLOW_CHARGE
+        and soc >= _cap(state)
+        and source
+    )
+
+
+def _cap_latch_clears(state: Mapping[str, Value]) -> bool:
+    """Return whether the charge-cap latch clears at once.
+
+    In discharge, or with ``flag_00c7`` gone and +9 not at 2.
+    """
+    sourced = _charge_source(state) or _alt_byte_9_source(state)
+    return _on_bus(state)[0] == FLOW_OUT or not sourced
+
+
+def _cap_latch_holds_over(state: Mapping[str, Value]) -> bool:
+    """Return whether the latch's 15 s clear count runs: ``flag_00c7`` gone, +9 at 2."""
+    return not _charge_source(state) and _alt_byte_9_source(state)
+
+
+def _cap_latched(state: Mapping[str, Value]) -> bool:
+    """Return whether the charge-cap latch (``0x20000b64``) is set."""
+    return bool(state.get(CAP_LATCH)) and not _cap_latch_clears(state)
+
+
+def _charge_handover_due(state: Mapping[str, Value]) -> bool:
+    """Return whether :165 holds: the main on the bus and the cap latch set.
+
+    The expansion below its cap, switched on and its path hold clear.
+    """
+    return (
+        _bus_pack(state) == BUS_MAIN
+        and _cap_latched(state)
         and _expansion_soc(state) < _cap(state)
         and _expansion_on(state)
+        and not state.get(PATH_HOLD)
     )
 
 
 def _expansion_may_discharge(state: Mapping[str, Value]) -> bool:
     """Return the stand-in for the expansion's discharge allowance being non-zero.
 
-    Zero under ``min_soc`` + 0.9 % (unconfirmed: the allowance or ``raw+0x95``).
+    Zero under ``min_soc`` + 0.9 % (unconfirmed: the allowance or the path hold).
     """
     return _expansion_soc(state) >= _expansion_floor_line(state)
 
 
+def _expansion_takes_discharge(state: Mapping[str, Value]) -> bool:
+    """Return whether :164's expansion gates pass: allowance, switch, path hold."""
+    return (
+        _expansion_may_discharge(state)
+        and _expansion_on(state)
+        and not state.get(PATH_HOLD)
+    )
+
+
 def _main_due(state: Mapping[str, Value]) -> bool:
-    """Return whether the expansion, under its line, owes the main the discharge."""
-    return state["sub_package_status"] != FLOW_CHARGE and _expansion_soc(
+    """Return whether :170 holds: the cap latch clear, the expansion under its line."""
+    return not _cap_latched(state) and _expansion_soc(state) < _expansion_floor_line(
         state
-    ) < _expansion_floor_line(state)
+    )
 
 
 def _handovers(
     before: Mapping[str, Value], after: Mapping[str, Value], own: frozenset[str]
 ) -> list[Timed]:
-    """Return the pack switch, or the latch's new start, a change draws."""
+    """Return the pack switch, or the latches' new state, a change draws."""
     if not after.get("sub_package_connection_status"):
         return []
+    events = _cap_latch_events(before, after, own)
     if _bus_pack(after) == BUS_MAIN:
-        return _main_handovers(before, after, own)
+        return events + _main_handovers(before, after, own)
     taken = _bus_pack(before) != BUS_EXPANSION
     if _main_due(after) and (taken or not _main_due(before)):
         dwell = max(0.0, BUS_DWELL - _held_for(after, BUS_DWELL))
-        return [Timed(dwell, PACK_HANDOVER, _bus_to_main)]
-    return []
+        events.append(Timed(dwell, PACK_HANDOVER, _bus_to_main))
+    return events
+
+
+def _cap_latch_events(
+    before: Mapping[str, Value], after: Mapping[str, Value], own: frozenset[str]
+) -> list[Timed]:
+    """Return the charge-cap latch's clearing, or the count, a change draws.
+
+    Each latch setting clears the other, so a clearing re-takes the baseline;
+    ``flag_00c7`` back resets the run-out clear count.
+    """
+    marks: dict[str, Value] = {}
+    if after.get(CAP_LATCH_SPENT) and _charge_source(after):
+        marks[CAP_LATCH_SPENT] = 0
+    latched = bool(after.get(CAP_LATCH))
+    if latched and _cap_latch_clears(after):
+        marks |= {CAP_LATCH: 0, LATCH_FROM: _main_soc(after)}
+    events = []
+    if marks:
+        events.append(Timed(0.0, CAP_LATCH_REFERENCE, partial(_latch_marks, marks)))
+    if latched:
+        if _cap_latch_holds_over(after) and not _cap_latch_holds_over(before):
+            events.append(CAP_LATCH_EXPIRY)
+    elif _cap_latch_counts(after) and not _cap_latch_counts(before):
+        delay = 0.0 if after.get(CAP_LATCH_PRIMED) else CHARGE_CAP_LATCH
+        latch = partial(_cap_latch_set, own)
+        events.append(Timed(delay, CAP_LATCH_EVENT, latch))
+    return events
 
 
 def _main_handovers(
     before: Mapping[str, Value], after: Mapping[str, Value], own: frozenset[str]
 ) -> list[Timed]:
     """Return the switch to the expansion, or the latch's new start, the main draws."""
-    if _cap_latch_due(after) and not _cap_latch_due(before):
-        charge = partial(_charge_to_expansion, own)
-        return [Timed(CHARGE_CAP_LATCH, PACK_HANDOVER, charge)]
     stored = after.get(LATCH_FROM)
     base = _main_soc(before) if stored is None else int(stored)
     latched = bool(after.get(LATCH_SET))
@@ -1451,19 +1562,23 @@ def _main_handovers(
     if stored is None or base != int(stored):
         marks[LATCH_FROM] = base
     if latched and not after.get(LATCH_SET):
-        marks[LATCH_SET] = 1
+        marks |= {LATCH_SET: 1, CAP_LATCH: 0}
     events = []
     if marks:
         events.append(Timed(0.0, LATCH_REFERENCE, partial(_latch_marks, marks)))
-    held = latched and _expansion_may_discharge(after) and _expansion_on(after)
-    if held and not _latch_hands_over(before):
+    if latched and _expansion_takes_discharge(after) and not _latch_hands_over(before):
         gap = max(0.0, SWITCH_GAP - _held_for(after, SWITCH_GAP))
         events.append(Timed(gap, PACK_HANDOVER, _discharge_to_expansion))
+    elif (
+        not latched and _charge_handover_due(after) and not _charge_handover_due(before)
+    ):
+        charge = partial(_charge_to_expansion, own)
+        events.append(Timed(0.0, PACK_HANDOVER, charge))
     return events
 
 
 def _latch_arms(state: Mapping[str, Value], base: int) -> bool:
-    """Return whether the main's >= 1.0 % drop from ``base`` arms the latch (:188 (a)).
+    """Return whether the main's >= 1.0 % drop from ``base`` arms the latch (:194 (a)).
 
     The main must not be charging (current >= -0.1 A) and its own SoC must be
     above ``min_soc`` + 0.9 %.
@@ -1477,12 +1592,8 @@ def _latch_arms(state: Mapping[str, Value], base: int) -> bool:
 
 
 def _latch_hands_over(state: Mapping[str, Value]) -> bool:
-    """Return whether :158 holds: the latch set, the expansion able to discharge."""
-    return (
-        bool(state.get(LATCH_SET))
-        and _expansion_may_discharge(state)
-        and _expansion_on(state)
-    )
+    """Return whether :164 holds: the latch set, the expansion able to discharge."""
+    return bool(state.get(LATCH_SET)) and _expansion_takes_discharge(state)
 
 
 def _latch_marks(
@@ -1490,29 +1601,72 @@ def _latch_marks(
     _values: Mapping[str, Value],
     _state: Mapping[str, Value],
 ) -> Step:
-    """Store the discharge latch's new baseline, or its arming."""
+    """Store a latch's new state, or the discharge latch's new baseline."""
     return Step(values=dict(marks))
+
+
+def _cap_latch_set(
+    own: frozenset[str], _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Set the charge-cap latch, the count run out, and hand the charge over (:165).
+
+    Setting it clears the discharge latch and re-takes its baseline (:194).
+    """
+    if not _cap_latch_counts(state):
+        return Step()
+    changes: dict[str, Value] = {
+        CAP_LATCH: 1,
+        CAP_LATCH_PRIMED: 1,
+        LATCH_SET: 0,
+        LATCH_FROM: _main_soc(state),
+    }
+    if _charge_handover_due({**state, **changes}):
+        changes |= _without(_charge_handover(state), own)
+    expiry = (CAP_LATCH_EXPIRY,) if _cap_latch_holds_over(state) else ()
+    return Step(values=changes, then=expiry)
+
+
+def _cap_latch_expires(
+    _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Clear the charge-cap latch 1 500 steps after ``flag_00c7`` went, +9 at 2.
+
+    The clear count stays run out until ``flag_00c7`` is back, so +9 alone sets
+    nothing meanwhile. An expansion on the bus under its line hands it back (:170).
+    """
+    if not (_cap_latched(state) and _cap_latch_holds_over(state)):
+        return Step()
+    changes = {CAP_LATCH: 0, LATCH_FROM: _main_soc(state), CAP_LATCH_SPENT: 1}
+    after = {**state, **changes}
+    if _bus_pack(after) == BUS_EXPANSION and _main_due(after):
+        dwell = max(0.0, BUS_DWELL - _held_for(after, BUS_DWELL))
+        return Step(values=changes, then=(Timed(dwell, PACK_HANDOVER, _bus_to_main),))
+    return Step(values=changes)
+
+
+CAP_LATCH_EXPIRY = Timed(
+    CAP_LATCH_HOLDOVER, CAP_LATCH_HOLDOVER_EVENT, _cap_latch_expires
+)
+
+
+def _charge_handover(state: Mapping[str, Value]) -> dict[str, Value]:
+    """Return the main's charge moved to the expansion (2026-10-06 20:20:03).
+
+    ``a3[0]`` and ``a5[1]`` read 0 at once, the expansion holding the bus.
+    """
+    return {
+        "work_status": FLOW_IDLE,
+        "charge_discharge_status": FLOW_IDLE,
+        "sub_package_status": FLOW_CHARGE,
+        **_bus_to(BUS_EXPANSION, state, flowing=True),
+    }
 
 
 def _charge_to_expansion(
     own: frozenset[str], _values: Mapping[str, Value], state: Mapping[str, Value]
 ) -> Step:
-    """Hand the main's charge to the expansion, the latch set (2026-10-06 20:20:03).
-
-    ``a3[0]`` and ``a5[1]`` read 0 at once, the expansion holding the bus; the
-    charge-cap latch setting clears the discharge latch and re-takes its baseline.
-    """
-    if not _cap_latch_due(state):
-        return Step()
-    changes: dict[str, Value] = {
-        "work_status": FLOW_IDLE,
-        "charge_discharge_status": FLOW_IDLE,
-        "sub_package_status": FLOW_CHARGE,
-        LATCH_SET: 0,
-        LATCH_FROM: _main_soc(state),
-        **_bus_to(BUS_EXPANSION, state, flowing=True),
-    }
-    return Step(values=_without(changes, own))
+    """Hand the main's charge to the expansion, the cap latch already set."""
+    return Step(values=_without(_charge_handover(state), own))
 
 
 def _discharge_to_expansion(
@@ -2289,7 +2443,8 @@ def _set_bms_params(request: ParameterDict) -> dict[str, Value] | None:
 #: until the block-0xf reread 2 s later pushes a ``0421`` with the expansion's
 #: own switch-on state (``flag_0b56``; hidden, unset = on). An on reaches the
 #: expansion; an off only with no external charge source (``flag_00c7``:
-#: ``.14.30`` AC in, ``a7[3]`` 1 or 2, or PV in), the main then taking the bus.
+#: ``.14.30`` AC in, ``a7[3]`` 1 or 2, PV in, or the alternator charger in its
+#: Charging Mode), the main then taking the bus.
 EXPANSION_SWITCHED_ON = "expansion_switched_on"
 SWITCH_REQUESTS = "expansion_switch_requests"
 SWITCH_REREAD = 2.0
@@ -2297,8 +2452,15 @@ SWITCH_REREAD_EVENT = "expansion_switch_reread"
 
 
 def _charge_source(state: Mapping[str, Value]) -> bool:
-    """Return whether an external charge source is in (``flag_00c7``)."""
-    return state["ac_input_status"] != AC_INPUT_NONE or bool(state["pv1_input_power"])
+    """Return whether an external charge source is in (``flag_00c7``).
+
+    AC in, PV / DC in, or the alternator charger in its Charging Mode.
+    """
+    return (
+        state["ac_input_status"] != AC_INPUT_NONE
+        or bool(state["pv1_input_power"])
+        or state.get("external_device_mode") == ExternalDeviceMode.CHARGING
+    )
 
 
 def _expansion_on(state: Mapping[str, Value]) -> bool:
@@ -2742,15 +2904,15 @@ class CGen2Layout(TableLayout):
         """Return the names ``set_values()`` can reach.
 
         ``0425`` adds its SoC byte, a message carrying ``d9`` the stored plan
-        and the main pack's c490 SoC its charge hold reads, one carrying the
-        output ports each USB-C port's device, and ``0490`` the device-point
-        switch.
+        and the main pack's c490 SoC its charge hold reads, with the pack
+        selection's hidden inputs, one carrying the output ports each USB-C
+        port's device, and ``0490`` the device-point switch.
         """
         names = set(super().names(msgtype))
         if msgtype == MSGTYPE_425:
             names.add(EVENT_SOC)
         if "d9" in self.FIELDS.get(msgtype, {}):
-            names |= {TOU_TABLE, PACK_SOC, AUTO_PLANS, BUS_PACK}
+            names |= {TOU_TABLE, PACK_SOC, AUTO_PLANS, BUS_PACK, PATH_HOLD, ALT_BYTE_9}
         if OUTPUT_PORTS in self.GROUPS.get(msgtype, ()):
             names |= USB_C_DEVICES.keys()
         if msgtype == MSGTYPE_490:
@@ -2874,12 +3036,15 @@ class CGen2Layout(TableLayout):
         Raises:
             ConstructError: If a value doesn't fit its field.
             TypeError: If the stored plan isn't its count and record buffer, or
-                the device-point switch or a USB-C device's plug isn't 0 or 1.
+                the device-point switch, the expansion's path hold or a USB-C
+                device's plug isn't 0 or 1.
 
         """
         given = values or {}
         if msgtype == MSGTYPE_425 and EVENT_SOC in given:
             ui(1).build(given[EVENT_SOC])
+        if ALT_BYTE_9 in given:
+            ui(1).build(given[ALT_BYTE_9])
         if TOU_TABLE in given:
             _check_tou_table(given[TOU_TABLE])
         if BUS_PACK in given and given[BUS_PACK] not in {BUS_MAIN, BUS_EXPANSION}:
@@ -2890,8 +3055,8 @@ class CGen2Layout(TableLayout):
         ):
             msg = f"{AUTO_PLANS} is {len(AUTO_PLANS_EMPTY)} bytes: 3 x (start, end)"
             raise TypeError(msg)
-        if DEVICE_POINT_SWITCH in given:
-            _check_switch(DEVICE_POINT_SWITCH, given[DEVICE_POINT_SWITCH])
+        for name in given.keys() & {DEVICE_POINT_SWITCH, PATH_HOLD}:
+            _check_switch(name, given[name])
         for name in given.keys() & USB_C_DEVICES.keys():
             if name.endswith(DEVICE_PLUGGED):
                 _check_switch(name, given[name])
