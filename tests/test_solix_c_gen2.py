@@ -3522,7 +3522,7 @@ def test_the_main_at_its_cap_hands_the_charge_over_replays_2026_10_06() -> None:
     """MQTT 20:20:00 main 95 %, 20:20:03 ``a3[0]`` / ``a5[1]`` 0, ``c0[24]`` 2.
 
     The charge-cap latch sets after 100 steps (1 s) charging at the cap
-    (mainbms-control-fsms.md "Pack selection" :159, :187); ``a3[0]`` reads 0
+    (mainbms-control-fsms.md "Pack selection" :165, :193); ``a3[0]`` reads 0
     at once, the expansion holding the bus; the slots swap (2026-08-27).
     """
     clock = ManualClock()
@@ -3593,7 +3593,7 @@ EXPANSION_DISCHARGING = {
 def test_the_expansion_under_its_line_hands_back_replays_2026_09_03() -> None:
     """03:29:25 ``a5[1]`` 1 and ``c0[24]`` 0; ``a3[0]`` follows (03:29:28).
 
-    Once its 0.1 % SoC is under ``min_soc`` + 0.9 % (pack selection :164), at
+    Once its 0.1 % SoC is under ``min_soc`` + 0.9 % (pack selection :170), at
     once, the 3 s dwell long over; the next ``0490`` has the main on the bus.
     """
     clock = ManualClock()
@@ -3653,7 +3653,7 @@ FLOOR_LEVER = {
 def test_raising_min_soc_moves_the_bus_to_the_main_replays_2026_08_31() -> None:
     """a1783-operation.md "``min_soc`` as a lever": floor 60 over the expansion's 56 %.
 
-    The expansion under its new line hands the bus to the main (:164; :166's
+    The expansion under its new line hands the bus to the main (:170; :172's
     zeroed allowance would too). Post n+1 (19:32:07): main 3/9 (on the bus,
     quiet), expansion 3/3.
     """
@@ -3672,7 +3672,7 @@ def test_lowering_min_soc_waits_for_a_1_percent_drop() -> None:
     """Reverting keeps the main until its SoC drops >= 1.0 % (the discharge latch).
 
     Then the expansion, above its line, takes discharge back: ``c0[24]`` the
-    port flow, ``a5[1]`` 0 at once (pack selection :158, :188).
+    port flow, ``a5[1]`` 0 at once (pack selection :164, :194).
     """
     clock = ManualClock()
     device = A1783(clock=clock)
@@ -3775,7 +3775,7 @@ def test_a_main_below_its_cap_takes_the_bus_at_8() -> None:
 
 
 def test_a_main_at_its_cap_takes_the_bus_too() -> None:
-    """:164's charge-allowance test on the main is taken as passing at its cap."""
+    """:170's charge-allowance test on the main is taken as passing at its cap."""
     device = A1783(clock=ManualClock())
     device.set_values(**{**OFF_GRID_EXPANSION, "pack_soc": 980})
 
@@ -3790,7 +3790,7 @@ def test_the_main_keeps_the_bus_over_an_expansion_in_its_band_replays_2026_09_03
     """a1783-operation.md "Expansion to its floor": ``c0[24]`` 0 03:29:25-08:00.
 
     The main falls 96 -> 85 % while the expansion sits in its 5.0-5.9 % band:
-    :158 never hands it discharge back, however far the main drops.
+    :164 never hands it discharge back, however far the main drops.
     """
     clock = ManualClock()
     device = A1783(clock=clock)
@@ -3811,7 +3811,7 @@ def test_the_main_keeps_the_bus_over_an_expansion_in_its_band_replays_2026_09_03
 
 
 def test_an_expansion_put_on_the_bus_under_its_line_hands_it_back() -> None:
-    """:164 is checked every step, so it arms when the bus is set by name too."""
+    """:170 is checked every step, so it arms when the bus is set by name too."""
     device = A1783(clock=ManualClock())
     device.set_values(**{**CHARGING_MAIN, "discharge_limit_value": 5})
 
@@ -3860,7 +3860,7 @@ def test_a_rise_without_charging_keeps_the_discharge_latch_baseline() -> None:
 
 
 def test_a_latch_set_over_the_band_hands_over_once_the_expansion_leaves_it() -> None:
-    """The latch arms on the main's drop and stays set; :158 waits for the allowance."""
+    """The latch arms on the main's drop and stays set; :164 waits for the allowance."""
     clock = ManualClock()
     device = A1783(clock=clock)
     device.set_values(**FLOOR_LEVER)
@@ -3901,6 +3901,52 @@ def test_the_charge_cap_latch_clears_the_discharge_latch() -> None:
 
     assert charging == (3, 3, 8, 9)
     assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
+
+
+def test_the_expansion_path_hold_blocks_the_discharge_handover() -> None:
+    """The expansion's ``raw+0x95`` set holds :164 off; cleared, the latch moves it."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**FLOOR_LEVER, "battery_level": 80, "pack_soc": 800})
+    device.set_values(discharge_limit_value=60)
+    clock.advance(5)
+    device.negotiated_module.check_pushes()
+    device.set_values(discharge_limit_value=5, total_output_power=60)
+    device.set_values(sub_package_path_hold=1)
+
+    device.set_values(pack_soc=790)
+    held = tuple(next_0490(device)[name] for name in SLOTS)
+    device.set_values(sub_package_path_hold=0)
+
+    assert held == (8, 9, 3, 3)
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
+
+
+def test_the_expansion_path_hold_blocks_the_charge_handover() -> None:
+    """The expansion's ``raw+0x95`` set holds :165 off; cleared, the charge moves."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**CHARGING_MAIN)
+    device.set_values(sub_package_path_hold=1)
+
+    device.set_values(battery_level=95, pack_soc=950)
+    clock.advance(2)
+    device.negotiated_module.check_pushes()
+    held = tuple(next_0490(device)[name] for name in SLOTS)
+    device.set_values(sub_package_path_hold=0)
+    clock.advance(1)
+    device.negotiated_module.check_pushes()
+
+    assert held == (8, 9, 3, 3)
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
+
+
+def test_the_expansion_path_hold_is_0_or_1() -> None:
+    """Hidden ``sub_package_path_hold``: the expansion's ``raw+0x95``, set or clear."""
+    device = A1783()
+
+    with pytest.raises(TypeError, match="sub_package_path_hold"):
+        device.set_values(sub_package_path_hold=2)
 
 
 #: ``4104`` ``a4``: the expansion's switch, off (0) or on (1).

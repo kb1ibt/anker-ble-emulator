@@ -1301,25 +1301,27 @@ QUIET_AT_CAP = (3, 9)
 OFF_BUS = (3, 3)
 #: Pack selection (MainBMS ``pack_select_eval``, firmware/mainbms-control-fsms.md
 #: "Pack selection", 10 ms steps), re-checked on every change:
-#: - main -> expansion charge (:159): the charge-cap latch, 100 steps charging
-#:   at the cap (:187); the expansion below its cap;
-#: - main -> expansion discharge (:158): the discharge latch (:188 (a): the
+#: - main -> expansion charge (:165): the charge-cap latch, 100 steps charging
+#:   at the cap (:193); the expansion below its cap, its path hold clear;
+#: - main -> expansion discharge (:164): the discharge latch (:194 (a): the
 #:   main's own SoC above ``min_soc`` + 0.9 % and a >= 1.0 % drop in it since it
 #:   last charged); the expansion's discharge allowance non-zero (the stand-in
-#:   below; the path doesn't re-check the expansion's SoC); more than 200 steps
-#:   since the last switch;
-#: - expansion -> main discharge (:164): 300 steps on the expansion, not
+#:   below; the path doesn't re-check the expansion's SoC), its path hold clear;
+#:   more than 200 steps since the last switch;
+#: - expansion -> main discharge (:170): 300 steps on the expansion, not
 #:   charging (the charge-cap latch clear), its SoC under ``min_soc`` + 0.9 %,
-#:   checked every step; the main's charge allowance as :164 reads it is taken
+#:   checked every step; the main's charge allowance as :170 reads it is taken
 #:   as non-zero (which record holds it, and its value at the cap, are open).
 #: The emulator's allowance stand-ins: a pack may charge below its cap; the
 #: expansion's discharge allowance reads 0 under ``min_soc`` + 0.9 %, unconfirmed
-#: (on 2026-09-03 03:29-08:00 the allowance or ``raw+0x95`` held :158 off over
-#: the band, which one unread). :166 (that allowance at 0 for 300 steps) would
-#: move the bus only once :164 has. Not modeled: the once-per-boot switch (:157), the
-#: pack-switch code (:161, :167), the allowance-only rows (:162, :163, :165),
-#: ``raw+0x95``, the expansion's share of the discharge latch and the latches'
-#: other paths. Hidden: the pack
+#: (on 2026-09-03 03:29-08:00 the allowance or the path hold held :164 off over
+#: the band, which one unread). :172 (that allowance at 0 for 300 steps) would
+#: move the bus only once :170 has. The path hold is the expansion BMS's own
+#: ``raw+0x95`` (CAN ``0x045a``, a contactor / active-path hold): hidden, clear
+#: unless set by name. Not modeled: the once-per-boot switch (:163), the
+#: pack-switch code (:167, :173), the allowance-only rows (:168, :169, :171),
+#: the expansion's share of the discharge latch and the latches' other paths.
+#: Hidden: the pack
 #: on the bus (1 main, 2 expansion; unset, the expansion when one is attached,
 #: as on the A1783 recording, else the main), when it took it (UTC s), and the
 #: discharge latch (``0x20000b65``) and the main's 0.1 % SoC it counts its drop
@@ -1335,6 +1337,7 @@ BUS_TAKEN = "bus_taken"
 LATCH_FROM = "discharge_latch_from"
 LATCH_SET = "discharge_latch"
 EXPANSION_PACK_SOC = "sub_package_pack_soc"
+PATH_HOLD = "sub_package_path_hold"
 BUS_DWELL = 3.01
 SWITCH_GAP = 2.01
 CHARGE_CAP_LATCH = 1.0
@@ -1400,15 +1403,25 @@ def _cap_latch_due(state: Mapping[str, Value]) -> bool:
         and _main_soc(state) >= _cap(state)
         and _expansion_soc(state) < _cap(state)
         and _expansion_on(state)
+        and not state.get(PATH_HOLD)
     )
 
 
 def _expansion_may_discharge(state: Mapping[str, Value]) -> bool:
     """Return the stand-in for the expansion's discharge allowance being non-zero.
 
-    Zero under ``min_soc`` + 0.9 % (unconfirmed: the allowance or ``raw+0x95``).
+    Zero under ``min_soc`` + 0.9 % (unconfirmed: the allowance or the path hold).
     """
     return _expansion_soc(state) >= _expansion_floor_line(state)
+
+
+def _expansion_takes_discharge(state: Mapping[str, Value]) -> bool:
+    """Return whether :164's expansion gates pass: allowance, switch, path hold."""
+    return (
+        _expansion_may_discharge(state)
+        and _expansion_on(state)
+        and not state.get(PATH_HOLD)
+    )
 
 
 def _main_due(state: Mapping[str, Value]) -> bool:
@@ -1455,15 +1468,14 @@ def _main_handovers(
     events = []
     if marks:
         events.append(Timed(0.0, LATCH_REFERENCE, partial(_latch_marks, marks)))
-    held = latched and _expansion_may_discharge(after) and _expansion_on(after)
-    if held and not _latch_hands_over(before):
+    if latched and _expansion_takes_discharge(after) and not _latch_hands_over(before):
         gap = max(0.0, SWITCH_GAP - _held_for(after, SWITCH_GAP))
         events.append(Timed(gap, PACK_HANDOVER, _discharge_to_expansion))
     return events
 
 
 def _latch_arms(state: Mapping[str, Value], base: int) -> bool:
-    """Return whether the main's >= 1.0 % drop from ``base`` arms the latch (:188 (a)).
+    """Return whether the main's >= 1.0 % drop from ``base`` arms the latch (:194 (a)).
 
     The main must not be charging (current >= -0.1 A) and its own SoC must be
     above ``min_soc`` + 0.9 %.
@@ -1477,12 +1489,8 @@ def _latch_arms(state: Mapping[str, Value], base: int) -> bool:
 
 
 def _latch_hands_over(state: Mapping[str, Value]) -> bool:
-    """Return whether :158 holds: the latch set, the expansion able to discharge."""
-    return (
-        bool(state.get(LATCH_SET))
-        and _expansion_may_discharge(state)
-        and _expansion_on(state)
-    )
+    """Return whether :164 holds: the latch set, the expansion able to discharge."""
+    return bool(state.get(LATCH_SET)) and _expansion_takes_discharge(state)
 
 
 def _latch_marks(
@@ -2742,15 +2750,15 @@ class CGen2Layout(TableLayout):
         """Return the names ``set_values()`` can reach.
 
         ``0425`` adds its SoC byte, a message carrying ``d9`` the stored plan
-        and the main pack's c490 SoC its charge hold reads, one carrying the
-        output ports each USB-C port's device, and ``0490`` the device-point
-        switch.
+        and the main pack's c490 SoC its charge hold reads, with the pack
+        selection's hidden inputs, one carrying the output ports each USB-C
+        port's device, and ``0490`` the device-point switch.
         """
         names = set(super().names(msgtype))
         if msgtype == MSGTYPE_425:
             names.add(EVENT_SOC)
         if "d9" in self.FIELDS.get(msgtype, {}):
-            names |= {TOU_TABLE, PACK_SOC, AUTO_PLANS, BUS_PACK}
+            names |= {TOU_TABLE, PACK_SOC, AUTO_PLANS, BUS_PACK, PATH_HOLD}
         if OUTPUT_PORTS in self.GROUPS.get(msgtype, ()):
             names |= USB_C_DEVICES.keys()
         if msgtype == MSGTYPE_490:
@@ -2874,7 +2882,8 @@ class CGen2Layout(TableLayout):
         Raises:
             ConstructError: If a value doesn't fit its field.
             TypeError: If the stored plan isn't its count and record buffer, or
-                the device-point switch or a USB-C device's plug isn't 0 or 1.
+                the device-point switch, the expansion's path hold or a USB-C
+                device's plug isn't 0 or 1.
 
         """
         given = values or {}
@@ -2890,8 +2899,8 @@ class CGen2Layout(TableLayout):
         ):
             msg = f"{AUTO_PLANS} is {len(AUTO_PLANS_EMPTY)} bytes: 3 x (start, end)"
             raise TypeError(msg)
-        if DEVICE_POINT_SWITCH in given:
-            _check_switch(DEVICE_POINT_SWITCH, given[DEVICE_POINT_SWITCH])
+        for name in given.keys() & {DEVICE_POINT_SWITCH, PATH_HOLD}:
+            _check_switch(name, given[name])
         for name in given.keys() & USB_C_DEVICES.keys():
             if name.endswith(DEVICE_PLUGGED):
                 _check_switch(name, given[name])
