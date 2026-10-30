@@ -55,13 +55,14 @@ from anker_ble_emulator.layouts import (
     STATUS_ACCEPTED,
     TYPE_BIN,
     TYPE_SILE,
+    TYPE_UI,
     TYPE_VAR,
     Value,
     at_most,
     fitted,
     ui,
 )
-from anker_ble_emulator.mcu import CLOUD, RTC
+from anker_ble_emulator.mcu import CLOUD, EPOCH, RTC
 from anker_ble_emulator.messages import (
     ROUTE_APP,
     ROUTE_BLE,
@@ -766,10 +767,10 @@ MESSAGE_FIELDS: dict[int, Mapping[str, FieldSpec]] = {
 # (4090)", "Clock screen (4091 -> da)" and "4104": every command below has a
 # captured or firmware-documented payload shape. 4057 sets only what its stop
 # is seen to do, the device-point switch off; its streaming countdown is a
-# module timer, not a telemetry field. 405e (backup-plan group: which table a
-# plan lands in and when its window goes active depend on the clock), 4063
-# (BLE OTA start) and 4072 (daily update window) answer only with their
-# recorded replies and change nothing; 4064 (BLE OTA data) gets no reply.
+# module timer, not a telemetry field. 405e sets the backup plans; their windows
+# run on the clock (below). 4063 (BLE OTA start) and 4072 (daily update window)
+# answer only with their recorded replies and change nothing; 4064 (BLE OTA
+# data) gets no reply.
 
 
 #: ``4101`` AC group: tag -> (the field it sets, its codec).
@@ -995,51 +996,110 @@ def _check_switch(name: str, value: Value) -> None:
         raise TypeError(msg)
 
 
-def _alternator_attached(params: ParameterDict) -> bool:
+def _tou_inputs(params: ParameterDict, values: Mapping[str, Value]) -> dict[str, Value]:
+    """Return what the TOU conditions read, by name: a frame's fields on ``values``."""
+    tou = decode_field(params, "d9", Tou)
+    inputs: dict[str, Value] = {
+        **values,
+        "backup_mode": tou.backup_mode,
+        "tou_periods": tou.tou_periods,
+        "ac_input_status": decode_field(params, "a7", AcOutput).ac_input_status,
+        "mcu_version": decode_field(params, "f9", DeviceVersions).mcu_version,
+        DISABLE: decode_field(params, "a4", Settings)[DISABLE],
+    }
+    if "ce" in params:
+        alternator = decode_field(params, "ce", Alternator)
+        inputs["external_device_product_code"] = alternator.external_device_product_code
+    return inputs
+
+
+def _alternator_attached(state: Mapping[str, Value]) -> bool:
     """Whether a car-alternator charger is attached (TOU condition 4).
 
     Assumed: attached when ``ce`` names a product code; the firmware's present
     byte (block 0xe +0x30) isn't in ``ce``.
     """
-    if "ce" not in params:
-        return False
-    alternator = decode_field(params, "ce", Alternator)
-    return bool(alternator.external_device_product_code != bytes(PN_SIZE))
+    code = state.get("external_device_product_code")
+    return code is not None and code != bytes(PN_SIZE)
 
 
-def _ac_input_disabled(params: ParameterDict) -> bool:
+def _ac_input_disabled(state: Mapping[str, Value]) -> bool:
     """Whether Battery-Only Power blocks TOU (condition 5, MainMcu v1.2.1.6 on).
 
     Assumed: both ``a4[31]`` input states, 1 (``4101 ab``) and 2 (auto-off).
     """
-    versions = decode_field(params, "f9", DeviceVersions)
-    if VersionNumber.parse(versions.mcu_version) < AC_INPUT_DISABLE_GATE_VERSION:
+    version = VersionNumber.parse(_bytes_value(state, "mcu_version"))
+    if version < AC_INPUT_DISABLE_GATE_VERSION:
         return False
-    return bool(decode_field(params, "a4", Settings).ac_input_disable_switch)
+    return bool(state[DISABLE])
 
 
 def _active_period(params: ParameterDict, values: Mapping[str, Value]) -> int:
-    """Return ``d9[0]``: the active record's type, else 0 (``tou_active_period_get?``).
+    """Return a frame's ``d9[0]``: its active record's type, else 0."""
+    return _period_of(_tou_inputs(params, values))
+
+
+def _period_of(state: Mapping[str, Value]) -> int:
+    """Return the active record's type, else 0 (``tou_active_period_get?``).
 
     a1783-control.md "TOU (4090)" conditions 1-6, in order; the hour is the
     RTC's. Assumed: the first record in order wins where two match, and
     condition 3 (the power stage's AC input, ``0x2000054a`` bit 0) is mains at
     the inlet, ``a7[3]`` != 0: the two differ only in a power-stage fault.
     """
-    tou = decode_field(params, "d9", Tou)
-    on = tou.backup_mode == TOU_MODE_ON
-    mains = decode_field(params, "a7", AcOutput).ac_input_status != AC_INPUT_NONE
-    online = values.get(CLOUD) and mains
-    if not on or not online or _alternator_attached(params):
+    if not _tou_can_run(state):
         return TouPeriodType.NONE
-    if _ac_input_disabled(params):
-        return TouPeriodType.NONE
-    hour = int(values[RTC]) // 3600 % 24
-    records = TouRecords.parse(tou.tou_periods).records
-    for record in GreedyRange(TouRecord).parse(records):
+    hour = int(state[RTC]) // 3600 % 24
+    for record in _tou_records(state):
         if record.start_hour <= hour < record.end_hour:
             return int(record.type)
     return TouPeriodType.NONE
+
+
+def _tou_can_run(state: Mapping[str, Value]) -> bool:
+    """Whether TOU conditions 1-5 hold: the mode on, online, no ALT, input allowed."""
+    on = state["backup_mode"] == TOU_MODE_ON
+    online = state.get(CLOUD) and state["ac_input_status"] != AC_INPUT_NONE
+    if not on or not online or _alternator_attached(state):
+        return False
+    return not _ac_input_disabled(state)
+
+
+def _tou_records(state: Mapping[str, Value]) -> list[Container[Any]]:
+    """Return the plan's records: type, start hour, end hour."""
+    records = TouRecords.parse(_bytes_value(state, "tou_periods")).records
+    return list(GreedyRange(TouRecord).parse(records))
+
+
+#: AC input after a holding period ends, as (seconds after the hour, W at the
+#: 1290 W the charge came to): the one recorded end, the cloud ``0421`` of
+#: 2026-10-21 16:00:07-16:00:13.
+#: Before the first sample it reads 0 W; from the last, the full charge.
+TOU_RAMP = ((7, 86), (8, 57), (9, 178), (11, 770), (13, 1290))
+TOU_RAMP_FULL = 1290
+
+
+def _hold_ended(params: ParameterDict, values: Mapping[str, Value]) -> int | None:
+    """Return the seconds since a holding record ended, while AC input ramps back.
+
+    None outside the ramp, or when the record that ended wasn't holding.
+    """
+    state = _tou_inputs(params, values)
+    if not _tou_can_run(state):
+        return None
+    seconds = int(values[RTC]) % 86400
+    for record in _tou_records(state):
+        elapsed = seconds - int(record.end_hour) * 3600
+        last = TOU_RAMP[-1][0]
+        if 0 <= elapsed < last and _charge_held(params, values, int(record.type)):
+            return elapsed
+    return None
+
+
+def _ramped(power: int, elapsed: int) -> int:
+    """Return the AC input ``elapsed`` s after the hold ended, ramping to ``power``."""
+    reached = [watts for at, watts in TOU_RAMP if at <= elapsed]
+    return round(power * reached[-1] / TOU_RAMP_FULL) if reached else 0
 
 
 def _charge_held(
@@ -1096,9 +1156,8 @@ def _auto_off(
     own: frozenset[str], _values: Mapping[str, Value], _state: Mapping[str, Value]
 ) -> Step:
     """Clear Battery-Only Power with mains out, the screen woken (06:02:35)."""
-    return Step(
-        values=_without({DISABLE: BATTERY_ONLY_AUTO_OFF, "screen_switch": 1}, own)
-    )
+    wake = Timed(0.0, SCREEN_WAKE, partial(_screen_wake, own))
+    return Step(values=_without({DISABLE: BATTERY_ONLY_AUTO_OFF}, own), then=(wake,))
 
 
 def _grid_loss_alert(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
@@ -1295,6 +1354,421 @@ def _port_power(
     if state["charge_discharge_status"] == FLOW_IDLE and total:
         changes["charge_discharge_status"] = FLOW_OUT
     return Step(values=_without(changes, own))
+
+
+#: ``0403``: MainMcu's own event push, ``a1 01 31 · a2 02 01 <code>`` with no
+#: ``fe``, one frame per code (a1783-control.md "``0403`` push").
+MSGTYPE_403 = 0x403
+EVENT_ROUTE = ROUTE_LAYOUT.build(Container(destination=ROUTE_APP, source=ROUTE_BLE))
+EVENT_SOC_EMPTY = 0x50
+EVENT_SOC_LOW = 0x52
+EVENT_AC_TIMEOUT = 0x55
+EVENT_CAR_TIMEOUT = 0x56
+#: Main-pack SoC floor (%) -> its code: 10 % (the 2026-10-15 05:00:23 witness)
+#: and 1 % (firmware only, ``soc_floor_event_eval(1, ...)``).
+SOC_FLOORS = MappingProxyType({10: EVENT_SOC_LOW, 1: EVENT_SOC_EMPTY})
+#: The alert after the frame in which the SoC reached the floor: 3 evaluations
+#: at or below it, one per MainBMS block-0 reply (500 ms) and, with an expansion
+#: attached (``sub_package_connection_status``), one per block-1 reply too. So
+#: 0.49 s with one (the 2026-10-15 witness) and 1 s without.
+SOC_ALERT_DELAY = 0.49
+SOC_ALERT_DELAY_ALONE = 1.0
+#: The output timers step 2 s at a time (a 2000 ms gate subtracts 2): ``a4`` reads
+#: only even seconds, and 300 s ran out 300.8 s and 301.7 s after the set
+#: (app_log 2026-07-19). With the output off, each 10 ms pass clears the timer.
+OUTPUT_TIMER_TICK = 2
+OUTPUT_TIMER_CLEAR = 0.01
+#: Timer -> (the output it switches off, its timeout code).
+OUTPUT_TIMERS = MappingProxyType(
+    {
+        "ac_timer_value": ("ac_output_status", EVENT_AC_TIMEOUT),
+        "car_charger_timer_value": (CAR_SOCKET, EVENT_CAR_TIMEOUT),
+    }
+)
+
+
+def _event_403(code: int) -> tuple[int, bytes]:
+    """Return a ``0403`` event push carrying ``code``."""
+    route = ParameterContainer(key=b"\xa1", type=None, value=EVENT_ROUTE)
+    event = container("a2", TYPE_UI, ui(1).build(code))
+    return MSGTYPE_403, Parameters.build(ParameterDict({"a1": route, "a2": event}))
+
+
+def _timers_started(own: frozenset[str], after: Mapping[str, Value]) -> list[Timed]:
+    """Return each timer's countdown, or its clearing, a change starts.
+
+    A timer counts only while its output is on; with the output off, the next
+    10 ms pass clears it, so one set then reads 0 and switching the output off
+    discards the rest (a1783-control.md "Output timers").
+    """
+    events = []
+    for timer, (output, _) in OUTPUT_TIMERS.items():
+        if (timer in own or output in own) and after[timer]:
+            if after[output]:
+                tick = partial(_timer_tick, timer)
+                events.append(Timed(OUTPUT_TIMER_TICK, timer, tick))
+            else:
+                clear = partial(_step, {timer: 0})
+                events.append(Timed(OUTPUT_TIMER_CLEAR, timer, clear))
+    return events
+
+
+def _timer_tick(
+    timer: str, _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Count ``timer`` down one tick; at 0 switch its output off.
+
+    The ``0403`` with its timeout code follows (2026-07-19 12:53:03.318), and a
+    car socket going off is a socket edge. A timer set to 0 meanwhile stops.
+    """
+    output, code = OUTPUT_TIMERS[timer]
+    if not state[timer]:
+        return Step()
+    left = max(0, int(state[timer]) - OUTPUT_TIMER_TICK)
+    if left:
+        tick = Timed(OUTPUT_TIMER_TICK, timer, partial(_timer_tick, timer))
+        return Step(values={timer: left}, then=(tick,))
+    off: dict[str, Value] = {timer: 0, output: 0}
+    edge = _socket_edge({**state, **off}, frozenset()) if output == CAR_SOCKET else []
+    return Step(values=off, frames=(_event_403(code),), then=tuple(edge))
+
+
+def _soc_floors_crossed(
+    before: Mapping[str, Value], after: Mapping[str, Value]
+) -> list[Timed]:
+    """Return the alert of each SoC floor the main pack's SoC fell to or below.
+
+    It re-arms only once the SoC is above the floor again.
+    """
+    level_before, level = int(before["battery_level"]), int(after["battery_level"])
+    attached = after.get("sub_package_connection_status")
+    delay = SOC_ALERT_DELAY if attached else SOC_ALERT_DELAY_ALONE
+    return [
+        Timed(delay, f"soc_floor_{floor}", partial(_soc_alert, floor))
+        for floor in SOC_FLOORS
+        if level_before > floor >= level
+    ]
+
+
+def _soc_alert(
+    floor: int, _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Push the floor's ``0403`` if the SoC is still at or below it.
+
+    One evaluation above the floor resets the count, so a SoC back above it
+    first sends none.
+    """
+    if int(state["battery_level"]) > floor:
+        return Step()
+    return Step(frames=(_event_403(SOC_FLOORS[floor]),))
+
+
+#: ``a4[21]``: the screen on/off, and ``a4[15..16]`` its timeout in seconds (0 =
+#: never). a1783-control.md "``4103``".
+SCREEN = "screen_switch"
+SCREEN_OFF_TIME = "screen_off_time"
+SCREEN_WAKE = "screen_wake"
+#: The changes that wake the screen: in the app_log, every write sent with the
+#: screen off of ``4103 a3`` (brightness), ``a9`` (language) and ``4102 a2`` (the
+#: car socket) read it on in the next frame; none of ``4101 a2``/``a4``/``a6``,
+#: ``4102 a4``, ``4103 a4``/``a8``/``aa``/``b0``, ``4104`` or the ``40xx`` ops did.
+SCREEN_WAKES = frozenset({"lcd_backlight_brightness", "device_language", CAR_SOCKET})
+
+
+def _screen_wakes(own: frozenset[str], after: Mapping[str, Value]) -> list[Timed]:
+    """Return the wake a waking change, or the screen set on, starts."""
+    if own & SCREEN_WAKES or (SCREEN in own and after[SCREEN]):
+        return [Timed(0.0, SCREEN_WAKE, partial(_screen_wake, own))]
+    return []
+
+
+def _screen_wake(
+    own: frozenset[str], _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Turn the screen on and (re-)arm its timeout (``screen_wake_apply``).
+
+    It goes off exactly the timeout later (a1783-control.md "``4103``"; 300.2 s
+    and 300.8 s after the 2026-08-27 wakes).
+    """
+    timeout = int(state[SCREEN_OFF_TIME])
+    then = (Timed(timeout, "screen_off", _screen_off),) if timeout else ()
+    return Step(values=_without({SCREEN: 1}, own), then=then)
+
+
+def _screen_off(_values: Mapping[str, Value], _state: Mapping[str, Value]) -> Step:
+    """Turn the screen off at its timeout."""
+    return Step(values={SCREEN: 0})
+
+
+#: The ``0490`` post period, on one grid from the display board's start: neither
+#: a stop, the switch nor the link resets it (2026-10-07 20:34:08 -> 22:40:07 =
+#: 14 x 540 s; 2026-09-19 04:48:33 -> 18:54:34 = 94 x 540 s). a1783-telemetry.md
+#: "When the display board posts c490".
+C490_PERIOD = 540.0
+C490_POST = "c490_post"
+
+
+def _c490_post(_values: Mapping[str, Value], _state: Mapping[str, Value]) -> Step:
+    """Post the ``0490``, the device-point switch and the link allowing, and re-arm.
+
+    A post due with the switch off or no authorized link goes unsent.
+    """
+    return Step(
+        pushes=(MSGTYPE_490,), then=(Timed(C490_PERIOD, C490_POST, _c490_post),)
+    )
+
+
+#: The ``0503`` usage pass: a 10 s timer from the display board's start that,
+#: while a TOU period is active, adds 10 s to that period type's time; every 120
+#: passes fold into the lifetime totals, and pass 720 (2 h) flushes and starts
+#: the count again (a1783-telemetry.md "0503" Trigger). The energy deltas
+#: (SolarToBatt / GridToBatt / BattToLoad) need the pack's charge power, which
+#: no value models, so those totals change only by name. The 2 h publish isn't
+#: built.
+USAGE_PASS = 10
+USAGE_FOLD_PASSES = 120
+USAGE_FLUSH_PASSES = 720
+USAGE_EVENT = "tou_usage_pass"
+#: Hidden: the passes counted since the last flush; no field carries it.
+USAGE_PASSES = "tou_usage_passes"
+#: Period type -> its ``0503`` time total (``[12]`` / ``[16]`` / ``[20]``).
+USAGE_TOTALS = MappingProxyType(
+    {
+        TouPeriodType.PEAK: "peak_time",
+        TouPeriodType.MID_PEAK: "mid_peak_time",
+        TouPeriodType.OFF_PEAK: "off_peak_time",
+    }
+)
+#: Hidden: each total's seconds since the last fold, ``<total>_delta``.
+USAGE_DELTA = "{}_delta"
+
+
+def _usage_pass(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Count one 10 s pass in the active TOU period, folding and flushing on count."""
+    then = (Timed(USAGE_PASS, USAGE_EVENT, _usage_pass),)
+    plan = _tou_periods_of(_bytes_value(state, TOU_TABLE))
+    period = _period_of({**state, "tou_periods": plan})
+    if period == TouPeriodType.NONE:
+        return Step(then=then)
+    delta = USAGE_DELTA.format(USAGE_TOTALS[TouPeriodType(period)])
+    count = int(state.get(USAGE_PASSES, 0)) + 1
+    changes: dict[str, Value] = {delta: int(state.get(delta, 0)) + USAGE_PASS}
+    if count % USAGE_FOLD_PASSES == 0:
+        for total in USAGE_TOTALS.values():
+            name = USAGE_DELTA.format(total)
+            folded = int(changes.get(name, state.get(name, 0)))
+            changes[total] = int(state[total]) + folded
+            changes[name] = 0
+    changes[USAGE_PASSES] = 0 if count == USAGE_FLUSH_PASSES else count
+    return Step(values=changes, then=then)
+
+
+# Backup plans (405e) and their windows: a1783-control.md "005e means different
+# things across families" (the request and the handler) and "d9" tail / "0425
+# event report" (the windows). Table 1 is the manual plan (the app's Fast
+# Charging Plan, d9 tail [15..22]); table 2 holds three auto (Storm Guard)
+# entries, which no field carries.
+BACKUP_GROUP = 3
+BACKUP_CLEAR_ALL = 2
+WINDOW_NONE = 0
+WINDOW_MANUAL = 1
+WINDOW_AUTO = 2
+MANUAL_SWITCH = "manual_backup_switch"
+AUTO_SWITCH = "auto_backup_switch"
+MANUAL_START = "manual_backup_start_time"
+MANUAL_END = "manual_backup_end_time"
+WINDOW_TYPE = "tou_setting_system_status"
+WINDOW_START = "backup_start_time"
+WINDOW_END = "backup_end_time"
+#: Hidden: table 2, three ``{u32 start, u32 end}`` UTC entries; empty unset.
+AUTO_PLANS = "auto_backup_plans"
+AUTO_PLAN_COUNT = 3
+AutoPlans = Array(AUTO_PLAN_COUNT, Struct("start" / ui(4), "end" / ui(4)))
+AUTO_PLANS_EMPTY = bytes(AutoPlans.sizeof())
+#: ``405e a7``: one plan per 10 B, ``{max SoC, -, u32 start, u32 end}``.
+BackupPlan = Struct("max_soc" / ui(1), Padding(1), "start" / ui(4), "end" / ui(4))
+#: The record a cancel writes over a plan (flash 0x08035d38): never active.
+NEVER = 0xFFFFFFFF
+#: The window pass: every 100 ms (``charge_policy_change_report``), and no window
+#: before the RTC reads 2025 (``rtc_year_valid?``).
+BACKUP_PASS = 0.1
+BACKUP_WINDOW_EVENT = "backup_window"
+RTC_2025 = 1735689600
+#: ``0425`` window events: (start, end) by window type.
+WINDOW_EVENTS = MappingProxyType(
+    {WINDOW_MANUAL: (0x0A, 0x0B), WINDOW_AUTO: (0x07, 0x08)}
+)
+BACKUP_NAMES = frozenset(
+    {MANUAL_SWITCH, AUTO_SWITCH, MANUAL_START, MANUAL_END, AUTO_PLANS, EPOCH, RTC}
+)
+
+
+def _set_backup_params(request: ParameterDict) -> dict[str, Value] | None:
+    """Accept a ``405e`` whose ``a3`` group selector is 3; ``_backup_plan`` acts."""
+    if "a3" not in request or decode_field(request, "a3", ui(1)) != BACKUP_GROUP:
+        return None
+    return {}
+
+
+def _covers(window: list[int], now: int) -> bool:
+    """Whether the ``[start, end]`` UTC ``window`` covers ``now``."""
+    return window[0] <= now < window[1]
+
+
+def _auto_plans(state: Mapping[str, Value]) -> list[list[int]]:
+    """Return table 2's entries as [start, end] UTC epochs."""
+    plans = _bytes_value(state, AUTO_PLANS) if AUTO_PLANS in state else AUTO_PLANS_EMPTY
+    return [[entry.start, entry.end] for entry in AutoPlans.parse(plans)]
+
+
+def _backup_plan(
+    request: ParameterDict, state: Mapping[str, Value]
+) -> dict[str, Value]:
+    """Return what a ``405e`` does to the switches and tables, in the firmware's order.
+
+    ``a4`` 2 clears both tables and switches and reads nothing else
+    (``disaster_plan_clear_all``). Otherwise ``a5`` (with the plan switched off,
+    every Storm Guard entry covering now becomes the never record), ``aa`` 1 (a
+    cancel, only while a window runs: the running entry and every Storm Guard
+    entry covering now become the never record, and a Storm Guard cancel turns
+    the plan off where table 1 covers now), then ``a7``'s plans (the manual one
+    into table 1, auto ones into table 2) (a1783-control.md "``405e``" notes).
+    """
+    mode = decode_field(request, "a4", ui(1))
+    if mode == BACKUP_CLEAR_ALL:
+        return {
+            MANUAL_SWITCH: 0,
+            AUTO_SWITCH: 0,
+            MANUAL_START: 0,
+            MANUAL_END: 0,
+            AUTO_PLANS: AUTO_PLANS_EMPTY,
+        }
+    manual = mode == 0
+    now = int(state[EPOCH])
+    table_1 = [int(state[MANUAL_START]), int(state[MANUAL_END])]
+    table_2 = _auto_plans(state)
+    changes: dict[str, Value] = {}
+
+    def wipe_storm_guard() -> None:
+        for entry in table_2:
+            if _covers(entry, now):
+                entry[:] = [NEVER, NEVER]
+
+    if "a5" in request:
+        switch = decode_field(request, "a5", ui(1))
+        changes[MANUAL_SWITCH if manual else AUTO_SWITCH] = switch
+        if manual and not switch:
+            wipe_storm_guard()
+    running = int(state[WINDOW_TYPE])
+    if "aa" in request and decode_field(request, "aa", ui(1)) and running:
+        if running == WINDOW_MANUAL:
+            table_1 = [NEVER, NEVER]
+        if running == WINDOW_AUTO and _covers(table_1, now):
+            changes[MANUAL_SWITCH] = 0
+        wipe_storm_guard()
+    if "a7" in request:
+        count = decode_field(request, "a6", ui(1)) if "a6" in request else 1
+        plans = GreedyRange(BackupPlan).parse(decode_field(request, "a7", GreedyBytes))
+        if manual and plans:
+            table_1 = [plans[0].start, plans[0].end]
+        for index, plan in enumerate(plans[: min(count, AUTO_PLAN_COUNT)]):
+            if not manual:
+                table_2[index] = [plan.start, plan.end]
+    changes[MANUAL_START], changes[MANUAL_END] = table_1
+    entries: list[dict[str, Any] | None] = [
+        {"start": start, "end": end} for start, end in table_2
+    ]
+    changes[AUTO_PLANS] = AutoPlans.build(entries)
+    return changes
+
+
+def _backup_passes(own: frozenset[str], reports: bool) -> list[Timed]:  # noqa: FBT001  # the model's flag
+    """Return the next window pass a change of a plan, a switch or the clock draws."""
+    if own & BACKUP_NAMES:
+        window = partial(_backup_window, reports)
+        return [Timed(BACKUP_PASS, BACKUP_WINDOW_EVENT, window)]
+    return []
+
+
+def _backup_window(
+    reports: bool,  # noqa: FBT001  # the model's flag
+    _values: Mapping[str, Value],
+    state: Mapping[str, Value],
+) -> Step:
+    """Run the window pass: start, end or hand over the backup window that covers now.
+
+    A running window keeps going until it ends or its switch goes off; with
+    none running, Storm Guard (table 2) is chosen before the plan (table 1). A
+    start posts ``0x0a`` / ``0x07`` with its epochs and moves an expansion's
+    charge to a main pack below 100 %; an end posts ``0x0b`` / ``0x08``; a
+    hand-over between types changes the type with no ``0425``. No window runs
+    before the RTC reads 2025 (a1783-control.md ``d9`` type row, "``0425``").
+    """
+    now = int(state[EPOCH])
+    manual = [int(state[MANUAL_START]), int(state[MANUAL_END])]
+    covering = {
+        WINDOW_AUTO: next(
+            (e for e in _auto_plans(state) if state[AUTO_SWITCH] and _covers(e, now)),
+            None,
+        ),
+        WINDOW_MANUAL: manual
+        if state[MANUAL_SWITCH] and _covers(manual, now)
+        else None,
+    }
+    running = int(state[WINDOW_TYPE])
+    if int(state[RTC]) < RTC_2025:
+        target, window = WINDOW_NONE, None
+    elif running and covering[running] is not None:
+        target, window = running, covering[running]
+    else:
+        target = next((t for t in (WINDOW_AUTO, WINDOW_MANUAL) if covering[t]), 0)
+        window = covering.get(target)
+    start, end = window or (0, 0)
+    changes: dict[str, Value] = {
+        WINDOW_TYPE: target,
+        WINDOW_START: start,
+        WINDOW_END: end,
+    }
+    pushes: tuple[int, ...] = ()
+    if running == WINDOW_NONE and target:
+        changes |= _window_event(WINDOW_EVENTS[target][0], start, end)
+        changes |= _charge_to_main(state)
+        pushes = (MSGTYPE_425,)
+    elif running and target == WINDOW_NONE:
+        changes |= _window_event(WINDOW_EVENTS[running][1], 0, 0)
+        pushes = (MSGTYPE_425,)
+    edges = [
+        t for t in (*manual, *(t for e in _auto_plans(state) for t in e)) if t > now
+    ]
+    then: tuple[Timed, ...] = ()
+    if edges and min(edges) < NEVER:
+        # The epoch is whole seconds: within one of the edge, pass every 100 ms.
+        delay = max(min(edges) - now - 1, 0) or BACKUP_PASS
+        later = partial(_backup_window, reports)
+        then = (Timed(delay, BACKUP_WINDOW_EVENT, later),)
+    return Step(values=changes, pushes=pushes if reports else (), then=then)
+
+
+def _window_event(code: int, start: int, end: int) -> dict[str, Value]:
+    """Return a window ``0425``'s values: the event and its epochs."""
+    return {
+        "event_code": code,
+        "event_start_timestamp": start,
+        "event_end_timestamp": end,
+    }
+
+
+def _charge_to_main(state: Mapping[str, Value]) -> dict[str, Value]:
+    """Move an expansion's charge to a main pack below 100 % (21:00:04)."""
+    if state.get("sub_package_status") != FLOW_CHARGE:
+        return {}
+    if int(state["battery_level"]) >= SOC_FULL // SOC_STEPS_PER_PERCENT:
+        return {}
+    return {
+        "sub_package_status": FLOW_IDLE,
+        "work_status": FLOW_CHARGE,
+        "charge_discharge_status": FLOW_CHARGE,
+    }
 
 
 #: ``4091`` tag -> (the ``da`` leaf it writes, its width): a1783-control.md
@@ -1607,6 +2081,7 @@ LINE_COMMANDS: dict[int, Callable[[ParameterDict], dict[str, Value] | None]] = {
     0x057: _realtime_trigger,
     0x065: _get_log_size,
     0x066: _get_log_chunk,
+    0x05E: _set_backup_params,
     0x090: _set_tou_system_params,
     0x091: _set_screen_saver_params,
     0x100: _get_all_device_info,
@@ -1639,15 +2114,15 @@ class CGen2Layout(TableLayout):
     """The C Gen 2 line's own command/telemetry code; satisfies ``LayoutProtocol``."""
 
     COMMANDS = MappingProxyType(LINE_COMMANDS)
-    SIDE_EFFECTS = MappingProxyType({0x090: _tou_periods})
+    SIDE_EFFECTS = MappingProxyType({0x05E: _backup_plan, 0x090: _tou_periods})
     READ_REPLIES = MappingProxyType({0x065: _log_size, 0x066: _log_chunk})
     FIELDS = _fields(SINGLE_FIELDS)
     GROUPS = MappingProxyType(
         {MSGTYPE_421: (OUTPUT_PORTS,), MSGTYPE_900: (OUTPUT_PORTS,)}
     )
-    #: The model pushes the 0x59 off-grid alert: only those whose recordings
-    #: carry a ``0425`` to build it from.
-    GRID_LOSS_ALERT = False
+    #: The model pushes ``0425`` event reports (the 0x59 off-grid alert, the
+    #: backup windows): only those whose recordings carry a ``0425`` to build from.
+    EVENT_REPORTS = False
 
     def names(self, msgtype: int) -> frozenset[str]:
         """Return the names ``set_values()`` can reach.
@@ -1661,7 +2136,7 @@ class CGen2Layout(TableLayout):
         if msgtype == MSGTYPE_425:
             names.add(EVENT_SOC)
         if "d9" in self.FIELDS.get(msgtype, {}):
-            names |= {TOU_TABLE, PACK_SOC}
+            names |= {TOU_TABLE, PACK_SOC, AUTO_PLANS}
         if OUTPUT_PORTS in self.GROUPS.get(msgtype, ()):
             names |= USB_C_DEVICES.keys()
         if msgtype == MSGTYPE_490:
@@ -1708,6 +2183,13 @@ class CGen2Layout(TableLayout):
             implied["ac_input_power"] = 0
         return implied
 
+    def started(self) -> tuple[Timed, ...]:
+        """Return the display board's free-running timers: the ``0490`` post."""
+        return (
+            Timed(C490_PERIOD, C490_POST, _c490_post),
+            Timed(USAGE_PASS, USAGE_EVENT, _usage_pass),
+        )
+
     def timed(
         self, before: Mapping[str, Value], after: Mapping[str, Value]
     ) -> tuple[Timed, ...]:
@@ -1729,6 +2211,10 @@ class CGen2Layout(TableLayout):
             events += _battery_only_switched(before, after, own)
         if CAR_SOCKET in own:
             events += _socket_edge(after, own)
+        events += _timers_started(own, after)
+        events += _soc_floors_crossed(before, after)
+        events += _screen_wakes(own, after)
+        events += _backup_passes(own, self.EVENT_REPORTS)
         return tuple(events)
 
     def _mains_lost(
@@ -1738,7 +2224,7 @@ class CGen2Layout(TableLayout):
         events = []
         if after[DISABLE] == BATTERY_ONLY_ON and DISABLE not in own:
             events.append(Timed(AUTO_OFF_DELAY, "auto_off", partial(_auto_off, own)))
-        if self.GRID_LOSS_ALERT and after["outage_alert_switch"]:
+        if self.EVENT_REPORTS and after["outage_alert_switch"]:
             alert = Timed(GRID_LOSS_ALERT_DELAY, "grid_loss_alert", _grid_loss_alert)
             events.append(alert)
         return events
@@ -1772,6 +2258,11 @@ class CGen2Layout(TableLayout):
             ui(1).build(given[EVENT_SOC])
         if TOU_TABLE in given:
             _check_tou_table(given[TOU_TABLE])
+        if AUTO_PLANS in given and (
+            len(_bytes_value(given, AUTO_PLANS)) != len(AUTO_PLANS_EMPTY)
+        ):
+            msg = f"{AUTO_PLANS} is {len(AUTO_PLANS_EMPTY)} bytes: 3 x (start, end)"
+            raise TypeError(msg)
         if DEVICE_POINT_SWITCH in given:
             _check_switch(DEVICE_POINT_SWITCH, given[DEVICE_POINT_SWITCH])
         for name in given.keys() & USB_C_DEVICES.keys():
@@ -1799,7 +2290,8 @@ class CGen2Layout(TableLayout):
 
         A ``d9`` takes its ``tou_periods`` from the stored plan and, with the RTC
         known, its active type (0 off the cloud). Grid charging is held off in
-        Peak and Mid-Peak, and while Battery-Only Power is on (19:39:18).
+        Peak and Mid-Peak, and while Battery-Only Power is on (19:39:18); once
+        a holding record ends, AC input ramps back on the RTC (``TOU_RAMP``).
         """
         if msgtype == MSGTYPE_425:
             _shape_grid_loss(params, values)
@@ -1809,14 +2301,33 @@ class CGen2Layout(TableLayout):
             codec, type_byte, _ = tou
             periods = _tou_periods_of(_bytes_value(values, TOU_TABLE))
             self._encode_field(params, "d9", codec, type_byte, tou_periods=periods)
-        held = False
+        held, ended = False, None
         if tou is not None and RTC in values:
             codec, type_byte, _ = tou
             period = _active_period(params, values)
             self._encode_field(params, "d9", codec, type_byte, tou_system_status=period)
             held = _charge_held(params, values, period)
-        if "a7" in fields and (held or _battery_only_on(params)):
+            ended = None if held else _hold_ended(params, values)
+        if "a7" not in fields:
+            return
+        if (
+            held
+            or _battery_only_on(params)
+            or (ended is not None and ended < TOU_RAMP[0][0])
+        ):
             self._hold_ac_charge(fields, params)
+        elif ended is not None:
+            self._ramp_ac_input(fields, params, ended)
+
+    def _ramp_ac_input(
+        self, fields: Mapping[str, FieldSpec], params: ParameterDict, elapsed: int
+    ) -> None:
+        """Show AC input ``elapsed`` s into its ramp back after a hold ended."""
+        power = decode_field(params, "a7", AcOutput).ac_input_power
+        for tag in ("a6", "a7"):
+            codec, type_byte, _ = fields[tag]
+            ramped = _ramped(power, elapsed)
+            self._encode_field(params, tag, codec, type_byte, ac_input_power=ramped)
 
     def _hold_ac_charge(
         self, fields: Mapping[str, FieldSpec], params: ParameterDict
@@ -1857,4 +2368,4 @@ class CGen2ExpansionLayout(CGen2Layout):
 
     COMMANDS = MappingProxyType({**LINE_COMMANDS, 0x104: _set_bms_params})
     FIELDS = _fields({**SINGLE_FIELDS, **EXPANSION_FIELDS})
-    GRID_LOSS_ALERT = True
+    EVENT_REPORTS = True

@@ -3,10 +3,14 @@
 
 from __future__ import annotations
 
+import calendar
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import pytest
+from construct import Int32sl, Int32ul
 
+from anker_ble_emulator import A1783
 from anker_ble_emulator.crypto import (
     DEFAULT_ACCOUNT,
     STATIC_GCM,
@@ -24,13 +28,16 @@ from anker_ble_emulator.frame import (
     fragment,
     make_frame,
 )
+from anker_ble_emulator.mcu import Burst
 from anker_ble_emulator.module import AuthMode, Output
+from anker_ble_emulator.parameters import TableLayout
 from anker_ble_emulator.timed import Step, Timed
 from anker_ble_emulator.tlv import encode_fields
 from tests.fixtures.client import (
     NEGOTIATION,
     SESSION,
     TIMESTAMP,
+    TZ,
     UTC_OFFSET,
     AppClient,
     cmd_hex,
@@ -395,7 +402,41 @@ def test_an_action_gets_the_set_values_and_the_whole_state() -> None:
     rig.clock.advance(7.0)
     rig.module.check_pushes()
 
-    assert seen == [({"level": 1}, {"level": 1, "rtc": 7, "epoch": 7})]
+    assert seen == [({"level": 1}, {"level": 1, "rtc": 7, "epoch": 7, "cloud": 0})]
+    rig.module.cloud = True
+    rig.module.schedule(Timed(1.0, "event", record))
+    rig.clock.advance(1.0)
+    rig.module.check_pushes()
+    assert seen[-1][1]["cloud"] == 1
+
+
+def test_a_bursts_first_push_the_layout_holds_back_is_not_sent() -> None:
+    """``sends`` gates the push a burst trigger answers with, not just the rest."""
+
+    class Quiet(TableLayout):
+        def sends(  # a layout hook
+            self,
+            msgtype: int,  # holds every push back
+            values: Mapping[str, Value],
+        ) -> bool:
+            return False
+
+    rig = build_module()
+    client = AppClient()
+    rig.module.mcu = replace(
+        rig.module.mcu,
+        layout=Quiet(),
+        burst=Burst(trigger=0x057, push=0x421, count=2, period=1.0),
+    )
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+
+    out = rig.module.write(client.request(0x057, [(0xA1, b"\x21")], SESSION))
+    rig.clock.advance(1.0)
+    later = rig.module.check_pushes()
+
+    replies = [client.open(frame) for frame in out.frames]
+    assert [None if r is None else cmd_hex(r.frame) for r in replies] == ["4857"]
+    assert later == Output()
 
 
 def test_the_module_keeps_the_utc_epoch_beside_the_local_rtc() -> None:
@@ -862,6 +903,122 @@ def test_a_session_op_answers_only_on_the_channels_its_handler_serves(
 
     replies = [client.open(frame) for frame in out.frames]
     assert [pattern_hex(reply.frame) for reply in replies if reply] == patterns
+
+
+def test_the_stored_tz_replaces_a3_a_tenth_of_a_second_later() -> None:
+    """a1783-control.md "Clock": the TZ timer fires 100 ms after ``0022``."""
+    rig = build_module()
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+    utc = Int32ul.parse(TIMESTAMP)
+
+    exchange(
+        rig.module,
+        client,
+        0x022,
+        [(0xA1, TIMESTAMP), (0xA3, Int32sl.build(3600)), (0xA5, TZ)],
+    )
+    at_once = rig.module.rtc
+    rig.clock.advance(0.1)
+    rig.module.check_pushes()
+
+    assert at_once == utc - 3600
+    assert rig.module.rtc == utc - 14400
+
+
+def test_a_late_tz_tick_keeps_the_clock_continuous() -> None:
+    """A tick run late (one long advance) re-sets the clock as of its whole second."""
+    rig = build_module()
+    negotiate(rig.module, AppClient(), ENROLLED_TOKEN)
+    utc = Int32ul.parse(TIMESTAMP)
+
+    rig.clock.advance(5.9)
+    rig.module.check_pushes()
+    rig.clock.advance(0.5)
+
+    assert rig.module.epoch == utc + 6
+
+
+def test_dst_switches_with_no_new_0022() -> None:
+    """The TZ timer polls every 5 s within 300 s of a change (2026-11-01 06:00 UTC)."""
+    rig = build_module()
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+    fall = calendar.timegm((2026, 11, 1, 6, 0, 0))
+    exchange(
+        rig.module,
+        client,
+        0x022,
+        [(0xA1, Int32ul.build(fall - 60)), (0xA3, UTC_OFFSET), (0xA5, TZ)],
+    )
+
+    rig.clock.advance(59.9)
+    rig.module.check_pushes()
+    before = rig.module.epoch - rig.module.rtc
+    rig.clock.advance(5.1)
+    rig.module.check_pushes()
+
+    assert before == 14400
+    assert rig.module.epoch - rig.module.rtc == 18000
+
+
+def test_a_bare_gmt0_takes_its_offset_from_a3() -> None:
+    rig = build_module()
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+
+    exchange(
+        rig.module,
+        client,
+        0x022,
+        [(0xA1, TIMESTAMP), (0xA3, Int32sl.build(3600)), (0xA5, b"GMT0")],
+    )
+    rig.clock.advance(0.1)
+    rig.module.check_pushes()
+
+    assert rig.module.epoch - rig.module.rtc == 3600
+
+
+def test_a_tz_the_parser_refuses_keeps_the_stored_zone() -> None:
+    """The handshake's ``EST5EDT`` stays stored, and its timer overrides ``a3``."""
+    rig = build_module()
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+
+    exchange(
+        rig.module,
+        client,
+        0x022,
+        [(0xA1, TIMESTAMP), (0xA3, Int32sl.build(3600)), (0xA5, b"America/New_York")],
+    )
+    at_once = rig.module.epoch - rig.module.rtc
+    rig.clock.advance(0.1)
+    rig.module.check_pushes()
+
+    assert at_once == 3600
+    assert rig.module.epoch - rig.module.rtc == 14400
+
+
+def test_a_c_gen_2_mcu_keeps_its_offset_on_a_utc_zone() -> None:
+    """MainMcu op ``0x26`` keeps the previous offset when it is 0 or -1."""
+    rig = build_module()
+    client = AppClient()
+    rig.module.mcu = replace(rig.module.mcu, clock_keeps_blank=True)
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+
+    exchange(
+        rig.module,
+        client,
+        0x022,
+        [(0xA1, TIMESTAMP), (0xA3, Int32sl.build(0)), (0xA5, b"UTC0")],
+    )
+    at_once = rig.module.epoch - rig.module.rtc
+    rig.clock.advance(0.1)
+    rig.module.check_pushes()
+
+    assert at_once == 14400
+    assert rig.module.epoch - rig.module.rtc == 14400
+    assert A1783().mcu.clock_keeps_blank
 
 
 def test_a_session_0022_is_the_wifi_scan_and_leaves_the_rtc_alone() -> None:

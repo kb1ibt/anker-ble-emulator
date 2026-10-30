@@ -8,10 +8,19 @@ from typing import TYPE_CHECKING
 from construct import GreedyBytes
 
 from anker_ble_emulator.parameters import ParameterDict, Parameters, decode_field
-from tests.fixtures.client import AppClient, cmd_hex, negotiate
+from tests.fixtures.client import (
+    SESSION,
+    AppClient,
+    Reply,
+    cmd_hex,
+    exchange,
+    negotiate,
+)
 
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from anker_ble_emulator import EmulatedDevice
     from anker_ble_emulator.layouts import Value
     from anker_ble_emulator.module import Output
@@ -25,6 +34,73 @@ def authorized_client(device: EmulatedDevice, token: bytes) -> AppClient:
     negotiate(module, client, token)
     device.press_button()
     return client
+
+
+def command(
+    device: EmulatedDevice,
+    client: AppClient,
+    msgtype: int,
+    fields: list[tuple[int, bytes]],
+) -> list[Reply]:
+    """Send one session request routed BLE -> MCU; return the replies, opened."""
+    request = client.request(msgtype, [(0xA1, b"\x21"), *fields], SESSION)
+    out = device.negotiated_module.write(request)
+    return [reply for data in out.frames if (reply := client.open(data)) is not None]
+
+
+def tou_on_the_cloud(
+    device: EmulatedDevice,
+    token: bytes,
+    clock_set: list[tuple[int, bytes]],
+    plan: list[tuple[int, bytes]],
+) -> None:
+    """Set the RTC (``0022``) and store ``plan`` (``4090``), then go on the cloud."""
+    client = authorized_client(device, token)
+    exchange(device.negotiated_module, client, 0x022, clock_set)
+    command(device, client, 0x090, plan)
+    device.set_cloud(True)  # the device's own on/off switch
+
+
+def backup_plan(
+    mode: int,
+    switch: int | None = None,
+    plans: tuple[tuple[int, int], ...] = (),
+    *,
+    cancel: bool = False,
+) -> list[tuple[int, bytes]]:
+    """Return a ``405e``'s fields: ``a3`` 3, ``mode``, the switch, plans, a cancel.
+
+    Each plan is (start, end) UTC epochs, sent as ``{100, 0, start, end}``.
+    """
+    fields = [(0xA3, b"\x01\x03"), (0xA4, bytes([0x01, mode]))]
+    if switch is not None:
+        fields.append((0xA5, bytes([0x01, switch])))
+    if plans:
+        fields.append((0xA6, bytes([0x01, len(plans)])))
+        body = b"".join(
+            bytes([100, 0]) + start.to_bytes(4, "little") + end.to_bytes(4, "little")
+            for start, end in plans
+        )
+        fields.append((0xA7, b"\x04" + body))
+    if cancel:
+        fields.append((0xAA, b"\x01\x01"))
+    return fields
+
+
+def backup_tail(values: Mapping[str, Value]) -> tuple[Value, ...]:
+    """Return the ``d9`` backup tail: type, both switches, table 1, the active pair."""
+    return tuple(
+        values[name]
+        for name in (
+            "tou_setting_system_status",
+            "manual_backup_switch",
+            "auto_backup_switch",
+            "manual_backup_start_time",
+            "manual_backup_end_time",
+            "backup_start_time",
+            "backup_end_time",
+        )
+    )
 
 
 def pushed(client: AppClient, outputs: list[Output]) -> list[tuple[str, str]]:

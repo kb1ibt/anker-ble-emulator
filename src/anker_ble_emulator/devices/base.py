@@ -175,6 +175,7 @@ class Profile:
             MQTT on the cloud, by msgtype; none where it isn't modeled.
         clock_floor: The earliest UTC the MCU's clock set takes.
         clock_lead: Seconds the MCU's clock set puts its clock ahead of the UTC.
+        clock_keeps_blank: An offset of 0 or -1 leaves the MCU's previous one.
 
     """
 
@@ -207,6 +208,7 @@ class Profile:
     mqtt_routes: Mapping[int, bytes] = field(default_factory=dict)
     clock_floor: int = 0
     clock_lead: int = 0
+    clock_keeps_blank: bool = False
 
     def frames(self) -> dict[int, bytes]:
         """Return the recorded cleartext payloads by msgtype."""
@@ -272,6 +274,7 @@ class Profile:
             mqtt_routes=self.mqtt_routes,
             clock_floor=self.clock_floor,
             clock_lead=self.clock_lead,
+            clock_keeps_blank=self.clock_keeps_blank,
         )
 
 
@@ -492,6 +495,7 @@ class EmulatedDevice:
                 msg = f"{self.pn} sends no typed field {name!r}"
                 raise LayoutError(msg)
         module = self.negotiated_module
+        self._emit(module.check_pushes())
         before = dict(module.values)
         module.values.update(values)
         if layout is not None:
@@ -505,8 +509,12 @@ class EmulatedDevice:
         return self.negotiated_module.mcu
 
     def use_mcu(self, script: McuScript) -> None:
-        """Replace what the MCU answers and pushes (``McuScript()`` for a quiet one)."""
+        """Replace what the MCU answers and pushes (``McuScript()`` for a quiet one).
+
+        The new script's layout starts its free-running timers from now.
+        """
         self.negotiated_module.mcu = script
+        self.negotiated_module.start_mcu()
 
     def set_reply(self, request: int, *replies: tuple[int, bytes]) -> None:
         """Make the MCU answer ``request`` with these frames, in order.
@@ -576,6 +584,32 @@ class EmulatedDevice:
         """Press the side button."""
         self._emit(self.module.press_button())
 
+    def unit_event(self, name: str, **values: Value) -> None:
+        """Make something happen on the unit that no telemetry field carries.
+
+        The layout's ``timed`` hook finds ``name`` under ``mcu.UNIT_EVENT`` (a
+        screen switched on the A2345, say); what falls due at once is sent.
+
+        Args:
+            name: The event.
+            values: Its own data, as hidden values (names starting ``_``, which
+                no frame carries), set before the hook runs.
+
+        Raises:
+            LayoutError: If a value's name isn't hidden.
+
+        """
+        shown = [key for key in values if not key.startswith("_")]
+        if shown:
+            msg = f"a unit event sets only hidden values, not {shown}"
+            raise LayoutError(msg)
+        module = self.negotiated_module
+        self._emit(module.check_pushes())
+        before = dict(module.values)
+        module.values.update(values)
+        module.start_timed(before, unit_event=name)
+        self._emit(module.check_pushes())
+
     def push(self, msgtype: int) -> None:
         """Make the MCU push its recorded frame of ``msgtype``."""
         self._emit(self.negotiated_module.push(msgtype))
@@ -594,6 +628,9 @@ class EmulatedDevice:
         On the cloud (bound, with the module's cloud flag set) the device has no
         BLE link: an open link drops and connecting fails until it's switched off.
         """
+        if isinstance(self.module, Module):
+            self._emit(self.module.check_pushes())
+            self.module.cloud = on
         self.cloud = on
         if on:
             self.drop()

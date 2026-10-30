@@ -36,23 +36,30 @@ from anker_ble_emulator.validators import OptionsValidator
 
 from .base import Advert, ProductDevice, Profile, register
 from .prime import (
+    BLE_ROUTE,
     MSGTYPE_303,
     MSGTYPE_A00,
     PORT_ECHOES,
     PORT_GROUPS,
+    PUSH_ROUTES,
     REALTIME_BURST,
     SCHEDULE_HEAD,
     SCHEDULE_HEAD_FIELDS,
     SWITCH,
+    TIMED_TASK_LEADS,
+    WIFI_UP,
     Countdown,
     ac_port_countdown_task,
     ac_port_timed_task,
     countdown_push,
     countdown_timers,
+    mqtt_routed,
+    reaches_ble,
     schedule_timers,
     set_screen_timeout,
     timed_task_conflict,
     timed_task_push,
+    wifi_events,
 )
 
 
@@ -91,6 +98,7 @@ Ota = Struct("is_ota" / ui(1), "upgrade_progress" / ui(1))
 #: snapshot" (A91B2): ac screensaver switch + theme, ad brightness/timeout,
 #: ae charging mode/submode, af OTA busy/progress; b4 time format, b5 AC light.
 SNAPSHOT_FIELDS: dict[str, FieldSpec] = {
+    "a2": one_field("firmware_version", ui(2), 0x02),
     "ac": (ClockTheme, 0x01, leaf_zeros("screen_saver_switch", "screen_saver_theme")),
     "ad": (Display, 0x01, leaf_zeros("screen_brightness", "screen_timeout")),
     "ae": (Charging, 0x04, leaf_zeros("charging_mode", "charging_submode")),
@@ -251,6 +259,7 @@ class A91B2Layout(TableLayout):
         }
     )
     ECHOES = MappingProxyType(PORT_ECHOES)
+    LEADING = MappingProxyType(TIMED_TASK_LEADS)
     READ_REPLIES = MappingProxyType({0x202: _screensaver_read})
     SIDE_EFFECTS = MappingProxyType(
         {
@@ -279,14 +288,29 @@ class A91B2Layout(TableLayout):
     def timed(
         self, before: Mapping[str, Value], after: Mapping[str, Value]
     ) -> tuple[Timed, ...]:
-        """Return the events a change starts: each port's countdown and timed tasks."""
+        """Return the events a change starts: countdowns, timed tasks, WiFi up."""
         return (
             *countdown_timers(
                 PORT_BY_SELECT, before, after, disarm_clears=USB_C, remaining_first=True
             ),
             *schedule_timers(PORT_BY_SELECT, before, after),
+            *wifi_events(before, after),
         )
 
+    def sends(self, msgtype: int, values: Mapping[str, Value]) -> bool:
+        """Whether a push reaches the BLE link: with WiFi up, most go to MQTT."""
+        return reaches_ble(ROUTES, msgtype, values)
+
+    def mqtt_routed(
+        self, msgtype: int, payload: bytes, values: Mapping[str, Value]
+    ) -> tuple[tuple[int, bytes], ...]:
+        """Return a push's MQTT copies in the unit's link state (doc "Push routing")."""
+        return mqtt_routed(ROUTES, msgtype, payload, values)
+
+
+#: Its push routes: the A2345's, but ``0308`` goes to ``34`` with WiFi up
+#: (doc "Push routing").
+ROUTES = {**PUSH_ROUTES, 0x308: (BLE_ROUTE, (0x34,))}
 
 #: ``esp_op09_set_clock`` sets the clock and the RTC one second past the UTC it
 #: is given (doc fid 0x10 op ``0x09``).
@@ -333,6 +357,14 @@ class A91B2(ProductDevice):
     """
 
     PRODUCT = Product.A91B2
+
+    def set_wifi(self, up: bool) -> None:  # noqa: FBT001  # a switch
+        """Bring the unit's WiFi up or down (link-state bit 1, doc "Push routing").
+
+        With it up most pushes go to MQTT, not the BLE link; coming up sends
+        ``0301``.
+        """
+        self.unit_event("wifi_up" if up else "wifi_down", **{WIFI_UP: up})
 
     @property
     def sw_version(self) -> str:

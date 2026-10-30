@@ -1,18 +1,35 @@
 # Copyright (c) 2026 Shawn Stricker
 """Devices with their layouts, and the cloud switch."""
 
+from __future__ import annotations
+
+from types import MappingProxyType
+from typing import TYPE_CHECKING
+
 import pytest
 from bleak import BleakClient
 from bleak.exc import BleakError
 
-from anker_ble_emulator import A1783, A2345, EmulatedBleakBackend
+from anker_ble_emulator import A1783, A2345, EmulatedBleakBackend, ManualClock
 from anker_ble_emulator.devices import EmulatedDevice
 from anker_ble_emulator.devices.solix_c_gen2 import AcOutput, Battery, Settings
 from anker_ble_emulator.layouts import LayoutError
 from anker_ble_emulator.mcu import McuScript
-from anker_ble_emulator.parameters import Parameters, decode_field
+from anker_ble_emulator.parameters import (
+    ParameterDict,
+    Parameters,
+    TableLayout,
+    decode_field,
+)
 from anker_ble_emulator.products import Product
+from anker_ble_emulator.timed import Step, Timed
 from tests.fixtures.client import SESSION, AppClient, BleakLink, cmd_hex, settle
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
+    from anker_ble_emulator.layouts import Value
 
 
 TOKEN = b"owner-token"
@@ -77,6 +94,164 @@ def test_a_value_the_layout_doesnt_type_is_refused() -> None:
 
     with pytest.raises(LayoutError):
         device.set_values(no_such_field=1)
+
+
+def test_a_read_reply_sets_its_status_or_stays_silent_and_leads_its_pushes() -> None:
+    """A read's status beyond ``00``, its silence, and pushes sent before the ack.
+
+    prime-a2345-a91b2.md "Theme upload" (``4221``: ``10``/``11``/``12``, most
+    chunks unanswered, ``4311`` before the last ``4a21``) and ``4208`` (``0308``
+    before ``0a08``).
+    """
+
+    def read(
+        request: ParameterDict, _state: Mapping[str, Value]
+    ) -> ParameterDict | None:
+        if "a2" not in request:
+            return None
+        return ParameterDict({"a2": request["a2"]}, prefix=b"\x10")
+
+    def push(
+        _request: ParameterDict,
+        _before: Mapping[str, Value],
+        _after: Mapping[str, Value],
+    ) -> ParameterDict:
+        return ParameterDict()
+
+    class Reader(TableLayout):
+        COMMANDS = MappingProxyType({0x221: lambda _request: {}})
+        READ_REPLIES = MappingProxyType({0x221: read})
+        FOLLOW_UPS = MappingProxyType({0x221: ((0x311, push), (0x312, push))})
+        LEADING = MappingProxyType({0x221: frozenset({0x311})})
+        UNCLOCKED = frozenset({0x312})
+
+    layout = Reader()
+    script = McuScript(layout=layout)
+
+    answered = script.respond(
+        0x221, request=bytes.fromhex("a10121a2020105fe0503010e5f6a")
+    )
+    silent = script.respond(0x221, request=bytes.fromhex("a10121"))
+
+    assert [frame.cmd.msgtype for frame in answered] == [0x311, 0xA21, 0x312]
+    assert answered[1].payload == bytes.fromhex("10a10131a2020105")
+    assert answered[0].payload == bytes.fromhex("a10131fe0503010e5f6a")
+    assert answered[2].payload == bytes.fromhex("a10131")
+    assert [frame.cmd.msgtype for frame in silent] == [0x311, 0x312]
+    assert layout.reply(0x221, bytes.fromhex("a10121"), {}) is None
+
+
+def test_a_follow_up_the_layout_holds_back_is_not_sent() -> None:
+    """``sends`` gates a command's follow-ups (a Prime on WiFi routes them off BLE)."""
+
+    def push(
+        _request: ParameterDict,
+        _before: Mapping[str, Value],
+        _after: Mapping[str, Value],
+    ) -> ParameterDict:
+        return ParameterDict()
+
+    class Gated(TableLayout):
+        COMMANDS = MappingProxyType({0x207: lambda _request: {}})
+        FOLLOW_UPS = MappingProxyType({0x207: ((0x302, push), (0x303, push))})
+
+        def sends(  # a layout hook
+            self,
+            msgtype: int,
+            values: Mapping[str, Value],
+        ) -> bool:
+            return msgtype != 0x302 or not values.get("_wifi_up")
+
+    script = McuScript(layout=Gated())
+
+    on_ble = script.respond(0x207, request=bytes.fromhex("a10121"))
+    on_wifi = script.respond(
+        0x207, request=bytes.fromhex("a10121"), values={"_wifi_up": 1}
+    )
+
+    assert [frame.cmd.msgtype for frame in on_ble] == [0xA07, 0x302, 0x303]
+    assert [frame.cmd.msgtype for frame in on_wifi] == [0xA07, 0x303]
+
+
+def test_a_layout_starts_its_timers_with_the_mcu_and_again_on_a_new_script() -> None:
+    """A free-running MCU timer (the C Gen 2 c490 post) runs from the MCU's start."""
+
+    def tick(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+        return Step(values={"_ticks": int(state.get("_ticks", 0)) + 1})
+
+    class Ticking(TableLayout):
+        def started(self) -> tuple[Timed, ...]:  # a layout hook
+            return (Timed(5.0, "tick", tick),)
+
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    module = device.negotiated_module
+    default = module.mcu.layout is not None and not module.mcu.layout.started()
+
+    device.use_mcu(McuScript(layout=Ticking()))
+    clock.advance(5.0)
+    module.check_pushes()
+
+    assert default
+    assert module.values == {"_ticks": 1}
+
+
+def test_what_fell_due_runs_before_a_change_of_state() -> None:
+    """An overdue event sees the state it fell due in, not the change after it."""
+    seen: list[int] = []
+
+    def tick(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+        seen.append(int(state["cloud"]))
+        return Step(values={"_level": len(seen)})
+
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    module = device.negotiated_module
+
+    changes: list[Callable[[], None]] = [
+        lambda: device.set_cloud(on=True),
+        lambda: device.set_values(screen_brightness=3),
+        lambda: device.unit_event("not_modeled"),
+    ]
+    for change in changes:
+        module.schedule(Timed(1.0, "tick", tick))
+        clock.advance(2.0)
+        change()
+
+    assert seen == [0, 1, 1]
+
+
+def test_a_legacy_device_takes_the_cloud_switch_without_a_negotiated_module() -> None:
+    device = EmulatedDevice(Product.A1780)
+
+    device.set_cloud(True)
+
+    assert device.cloud
+
+
+def test_the_state_carries_what_the_recorded_cloud_pushes_carry() -> None:
+    """The A1783's cloud-only ``0503`` names its totals in the state too."""
+    state = A1783().mcu.state({})
+
+    assert {"peak_time", "mid_peak_time", "off_peak_time"} <= state.keys()
+
+
+def test_a_unit_event_no_layout_models_changes_nothing() -> None:
+    device = A2345()
+
+    device.unit_event("not_modeled")
+
+    assert device.negotiated_module.values == {}
+
+
+def test_a_unit_event_carries_its_own_hidden_values() -> None:
+    device = A2345()
+
+    device.unit_event("plug", _plugged_vid=0x05AC)
+
+    assert device.negotiated_module.values == {"_plugged_vid": 0x05AC}
+    with pytest.raises(LayoutError, match="hidden"):
+        device.unit_event("plug", battery_level=1)
 
 
 def test_a_device_without_a_layout_or_push_490_takes_no_values() -> None:

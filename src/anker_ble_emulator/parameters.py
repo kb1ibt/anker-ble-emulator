@@ -55,9 +55,10 @@ if TYPE_CHECKING:
     SideEffect: TypeAlias = Callable[
         ["ParameterDict", Mapping[str, Value]], dict[str, Value]
     ]
-    #: (request, the device's state) -> a read's reply fields after its ``a1``.
+    #: (request, the device's state) -> a read's reply fields after its ``a1``,
+    #: their ``prefix`` the status where it isn't ``00``; None for no reply.
     ReadReply: TypeAlias = Callable[
-        ["ParameterDict", Mapping[str, Value]], "ParameterDict"
+        ["ParameterDict", Mapping[str, Value]], "ParameterDict | None"
     ]
 
 #: TLV tags start at 0xa1; a lower first byte is a reply's status.
@@ -290,29 +291,42 @@ class CommandDispatchLayout:
     FOLLOW_UPS: ClassVar[Mapping[int, tuple[tuple[int, PushBuilder], ...]]] = (
         MappingProxyType({})
     )
+    #: The follow-up pushes a command sends before its reply, not after.
+    LEADING: ClassVar[Mapping[int, frozenset[int]]] = MappingProxyType({})
+    #: The follow-up pushes that carry no clock (``fe``), unlike the rest.
+    UNCLOCKED: ClassVar[frozenset[int]] = frozenset()
 
     def has_command(self, msgtype: int) -> bool:
         """Whether a command maps to ``msgtype``."""
         return msgtype in self.COMMANDS
 
-    def reply_fields(
-        self, msgtype: int, plaintext: bytes, state: Mapping[str, Value]
-    ) -> bytes | None:
-        """Return the fields an accepted reply carries after its ``a1``, encoded.
+    def leading(self, msgtype: int) -> frozenset[int]:
+        """Return the follow-up pushes ``msgtype`` sends before its reply."""
+        return self.LEADING.get(msgtype, frozenset())
 
-        A read's own data from the device's state, else the request's echoed
-        fields; None where the handler sends no reply to an accepted request.
+    def reply(
+        self, msgtype: int, plaintext: bytes, state: Mapping[str, Value]
+    ) -> tuple[int, bytes] | None:
+        """Return an accepted request's reply: its status and fields after ``a1``.
+
+        A read's own data from the device's state, its status its fields'
+        ``prefix`` where set, else the request's echoed fields under ``00``;
+        None where the handler sends no reply.
         """
         if msgtype in self.SILENT:
             return None
         read = self.READ_REPLIES.get(msgtype)
         if read is not None:
-            return Parameters.build(read(Parameters.parse(plaintext), state))
+            fields = read(Parameters.parse(plaintext), state)
+            if fields is None:
+                return None
+            status = STATUS_ACCEPTED if fields.prefix is None else fields.prefix[0]
+            return status, Parameters.build(ParameterDict(fields))
         tags = self.ECHOES.get(msgtype, ())
         if not tags:
-            return b""
+            return STATUS_ACCEPTED, b""
         request = Parameters.parse(plaintext)
-        return Parameters.build(
+        return STATUS_ACCEPTED, Parameters.build(
             ParameterDict({tag: request[tag] for tag in tags if tag in request})
         )
 
@@ -326,7 +340,8 @@ class CommandDispatchLayout:
         """Return the (msgtype, payload) pushes an accepted command's change draws.
 
         Each push is its route, the fields its builder returns, then the
-        request's clock; a builder returning None sends nothing.
+        request's clock unless it is ``UNCLOCKED``; a builder returning None
+        sends nothing.
         """
         pushes = self.FOLLOW_UPS.get(msgtype, ())
         if not pushes:
@@ -340,7 +355,8 @@ class CommandDispatchLayout:
         for push, build in pushes:
             fields = build(request, before, after)
             if fields is not None:
-                payload = ParameterDict({"a1": route} | fields | clock)
+                stamp = {} if push in self.UNCLOCKED else clock
+                payload = ParameterDict({"a1": route} | fields | stamp)
                 frames.append((push, Parameters.build(payload)))
         return frames
 
@@ -410,6 +426,10 @@ class TableLayout(StructFieldLayout, CommandDispatchLayout):
     ) -> dict[str, Value]:
         """Return the further values that setting ``values`` sets: none."""
         return {}
+
+    def started(self) -> tuple[Timed, ...]:  # no free-running timer here
+        """Return the timed events the MCU runs from its start: none."""
+        return ()
 
     def timed(
         self,
@@ -527,6 +547,10 @@ class ScalarFieldLayout:
     ) -> dict[str, Value]:
         """Return the further values that setting ``values`` sets: none."""
         return {}
+
+    def started(self) -> tuple[Timed, ...]:  # no free-running timer here
+        """Return the timed events the MCU runs from its start: none."""
+        return ()
 
     def timed(
         self,

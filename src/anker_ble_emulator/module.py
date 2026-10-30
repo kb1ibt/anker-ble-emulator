@@ -9,6 +9,7 @@ import logging
 import secrets
 from dataclasses import asdict, dataclass, field
 from enum import IntEnum
+from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol
 
 from cryptography.exceptions import InvalidTag
@@ -41,7 +42,7 @@ from .frame import (
     make_frame,
     reply_frame,
 )
-from .mcu import EPOCH, RTC, mcu_frame
+from .mcu import CLOUD, COMMAND, EPOCH, RTC, UNIT_EVENT, mcu_frame
 from .messages import (
     AUTH_PENDING_REPLY,
     BIND_REPLY,
@@ -58,6 +59,7 @@ from .messages import (
     VERSION_REPLY,
     parse_request,
 )
+from .posix_tz import PosixTz
 from .timed import Step, Timed
 from .tlv import FieldError, decode_fields
 
@@ -122,6 +124,16 @@ FACTORY_RESET_DELAY = 10 * PUSH_PERIOD
 RTC_MODULUS = 1 << 32
 #: ``set_utc_time_to_mcu`` forwards no UTC below this (2023-11-25 08:13:20).
 RTC_SYNC_MIN = 0x6561ACA0
+#: The offsets an MCU that keeps blanks ignores: 0 and ``0xffffffff`` (-1).
+BLANK_OFFSETS = frozenset({0, -1})
+#: ``0022 a5`` that ``aws_timezone_set`` rewrites from ``a3``.
+BARE_GMT = "GMT0"
+#: The TZ timer (a1783-control.md "Clock"): first 100 ms after ``0022``, then
+#: every 30 min, every 300 s within 30 min of a DST change, 5 s within 300 s.
+TZ_FIRST = 0.1
+TZ_FAR = 1800
+TZ_NEAR = 300
+TZ_CLOSE = 5
 #: Session ops the WiFi handler takes, on fid ``0x0f`` and ``0x13`` only.
 WIFI_OPS = range(0x022, 0x026)
 
@@ -349,18 +361,23 @@ class Module:
         self.values: dict[str, Value] = {}
         self._key_pair_factory = key_pair_factory
         self._link: _Link | None = None
+        #: Bound and on WiFi to the cloud (``EmulatedDevice.set_cloud``).
+        self.cloud = False
         #: The scheduled events, soonest first.
         self._queue: list[_Queued] = []
         self._order = itertools.count()
         #: When the MCU's clock was last set, the UTC it was set to, and the
         #: offset west of UTC that puts the RTC on local time.
         self._clock_set: tuple[float, int, int] = (clock.now(), 0, 0)
+        #: The module's own clock: when it was set, and the UTC it was set to.
+        self._module_clock: tuple[float, int] = (clock.now(), 0)
         #: The ``0023`` account: RAM only, so it outlives a link but not a reboot.
         self._account = b""
         #: The port's key and IV, zeros at boot: an encrypted frame with no
         #: session opens under them, CBC unless the link connected encrypted.
         #: A new link keeps them.
         self._port_context = (bytes(AES_BLOCK), bytes(AES_BLOCK))
+        self.start_mcu()
 
     @property
     def connected(self) -> bool:
@@ -416,14 +433,28 @@ class Module:
                 self._queue, _Queued(base + event.delay, next(self._order), event)
             )
 
+    def start_mcu(self) -> None:
+        """Queue the timed events the MCU's layout runs from its start."""
+        layout = self.mcu.layout
+        if layout is not None:
+            self.schedule(*layout.started())
+
     def start_timed(
-        self, before: Mapping[str, Value], clock: tuple[int, int] | None = None
+        self,
+        before: Mapping[str, Value],
+        clock: tuple[int, int] | None = None,
+        *,
+        command: int | None = None,
+        unit_event: str | None = None,
     ) -> None:
         """Queue the timed events the layout starts for a change of state.
 
         Args:
             before: The set values before the change.
             clock: The (RTC, epoch) before the change; None if they didn't change.
+            command: The request msgtype that made the change; None for one
+                made on the unit or a clock set.
+            unit_event: The on-unit event that made it, by name; None for none.
 
         """
         layout = self.mcu.layout
@@ -431,11 +462,21 @@ class Module:
             return
         rtc, epoch = (self.rtc, self.epoch) if clock is None else clock
         prior = {**self.mcu.state(before), RTC: rtc, EPOCH: epoch}
-        self.schedule(*layout.timed(prior, self._state()))
+        after = self._state()
+        if command is not None:
+            after[COMMAND] = command
+        if unit_event is not None:
+            after[UNIT_EVENT] = unit_event.encode()
+        self.schedule(*layout.timed(prior, after))
 
     def _state(self) -> dict[str, Value]:
-        """Return the device's whole state: values, set ones over them, the clock."""
-        return {**self.mcu.state(self.values), RTC: self.rtc, EPOCH: self.epoch}
+        """Return the device's whole state: values, set ones, the clock, the cloud."""
+        return {
+            **self.mcu.state(self.values),
+            RTC: self.rtc,
+            EPOCH: self.epoch,
+            CLOUD: int(self.cloud),
+        }
 
     def write(self, data: bytes) -> Output:
         """Handle one write from the client.
@@ -785,8 +826,47 @@ class Module:
         time, utc_offset = request.fields.time, request.fields.utc_offset
         if time is None or utc_offset is None:
             return _status(STATUS_PARAMETER)
+        self._set_module_clock(time)
         self._set_rtc(time, utc_offset)
+        if request.fields.tz:
+            self._set_tz(request.fields.tz, utc_offset)
         return _status(STATUS_OK)
+
+    def _set_module_clock(self, utc: int) -> None:
+        """Set the module's own clock, whatever the RTC's gate (``settimeofday``)."""
+        self._module_clock = (self.clock.now(), utc)
+
+    def _set_tz(self, raw: bytes, utc_offset: int) -> None:
+        """Store ``0022 a5``'s POSIX TZ and restart its timer 100 ms later.
+
+        A bare ``GMT0`` takes its offset from ``a3``; a string the parser
+        refuses leaves the stored zone, and its timer, as they were.
+        """
+        text = raw.rstrip(b"\0").decode("ascii", "replace")
+        try:
+            tz = PosixTz(utc_offset) if text == BARE_GMT else PosixTz.parse(text)
+        except ValueError:
+            _LOGGER.warning("Kept the stored TZ over an unparsed %r", text)
+            return
+        self.schedule(Timed(TZ_FIRST, "tz_timer", partial(self._tz_tick, tz)))
+
+    def _tz_tick(
+        self, tz: PosixTz, _values: Mapping[str, Value], _state: Mapping[str, Value]
+    ) -> Step:
+        """Send the MCU ``tz``'s offset now, then re-arm.
+
+        Every 30 min; 300 s within 30 min of a DST change, 5 s within 300 s. A
+        zero offset is sent as -1, which an MCU that keeps blanks ignores.
+        """
+        set_at, utc = self._module_clock
+        elapsed = int(self.clock.now() - set_at)
+        now = utc + elapsed
+        west = tz.offset_west(now)
+        self._set_rtc(now, west or -1, at=set_at + elapsed)
+        change = tz.next_change(now)
+        until = TZ_FAR if change is None else change - now
+        delay = TZ_FAR if until > TZ_FAR else TZ_NEAR if until > TZ_NEAR else TZ_CLOSE
+        return Step(then=(Timed(delay, "tz_timer", partial(self._tz_tick, tz)),))
 
     def _set_utc_time(self, request: _Request) -> _Reply:
         """Set the RTC from ``a1`` UTC and the ``a3`` zone, for the bound account.
@@ -802,20 +882,31 @@ class Module:
             return _status(STATUS_ACCOUNT)
         hours, tenths = fields.timezone.hours, fields.timezone.tenths
         east = abs(hours) * 3600 + (tenths * 360 if hours >= 0 else -tenths * 360)
+        self._set_module_clock(fields.time)
         self._set_rtc(fields.time, -east)
         return _status(STATUS_OK)
 
-    def _set_rtc(self, time: int, utc_offset: int) -> None:
+    def _set_rtc(self, time: int, utc_offset: int, at: float | None = None) -> None:
         """Set the RTC to ``time`` less ``utc_offset`` seconds west.
 
         A UTC before ``RTC_SYNC_MIN``, or before the MCU's own floor, never
-        reaches the RTC; the MCU sets its clock its lead ahead. A clock set is a
-        change of state, so the layout re-times what depends on the RTC.
+        reaches the RTC; the MCU sets its clock its lead ahead, and one that
+        keeps blanks keeps its offset for a 0 or -1. A clock set is a change of
+        state, so the layout re-times what depends on the RTC.
+
+        Args:
+            time: The UTC sent.
+            utc_offset: The offset sent, seconds west.
+            at: The device-clock instant ``time`` was read at; now if None.
+
         """
         if time >= max(RTC_SYNC_MIN, self.mcu.clock_floor):
+            if self.mcu.clock_keeps_blank and utc_offset in BLANK_OFFSETS:
+                utc_offset = self._clock_set[2]
             before = (self.rtc, self.epoch)
             utc = (time + self.mcu.clock_lead) % RTC_MODULUS
-            self._clock_set = (self.clock.now(), utc, utc_offset)
+            anchor = self.clock.now() if at is None else at
+            self._clock_set = (anchor, utc, utc_offset)
             self.start_timed(self.values, clock=before)
 
     def _bind(self, request: _Request) -> _Reply:
@@ -886,10 +977,13 @@ class Module:
             return Output(self._encode(reply_frame(frame, reply)))
         if (route.destination, route.source) != (ROUTE_MCU, ROUTE_BLE):
             return Output()
+        overdue, dropped = self._run_due()
         before = dict(self.values)
         self._apply(frame.cmd.msgtype, plaintext)
-        self.start_timed(before)
+        self.start_timed(before, command=frame.cmd.msgtype)
         timed, disconnect = self._run_due()
+        timed = [*overdue, *timed]
+        disconnect = disconnect or dropped
         frames = self.mcu.respond(
             frame.cmd.msgtype,
             request=plaintext,
@@ -901,18 +995,25 @@ class Module:
             self.enrolled.clear()
             self.values.clear()
             self.schedule(Timed(FACTORY_RESET_DELAY, "factory_reset", _drop, link=True))
-        burst = self.mcu.burst
+        burst, layout = self.mcu.burst, self.mcu.layout
         if burst is not None and frame.cmd.msgtype == burst.trigger:
-            frames.append(self.mcu.push(burst.push, values=self.values, rtc=self.rtc))
+            if layout is None or layout.sends(burst.push, self.values):
+                frames.append(
+                    self.mcu.push(burst.push, values=self.values, rtc=self.rtc)
+                )
             self.schedule(*_burst(burst, burst.count - 1))
         out = self._relay(link, [*frames, *timed])
         return Output(out.frames, disconnect=disconnect)
 
     def _apply(self, msgtype: int, plaintext: bytes) -> None:
-        """Show an accepted command's settings in the telemetry that carries them."""
+        """Show an accepted command's settings in the telemetry that carries them.
+
+        Its side effects see the whole state a timed action does: the clock and
+        the cloud flag too.
+        """
         layout = self.mcu.layout
         if layout is not None:
-            state = self.mcu.state(self.values)
+            state = self._state()
             self.values.update(layout.state_changes(msgtype, plaintext, state))
 
     def _relay(self, link: _Link, frames: list[Frame]) -> Output:

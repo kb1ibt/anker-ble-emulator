@@ -26,9 +26,13 @@ from anker_ble_emulator.parameters import Parameter, Parameters, decode_field
 from anker_ble_emulator.tlv import decode_fields
 from tests.fixtures.cgen2 import (
     authorized_client,
+    backup_plan,
+    backup_tail,
+    command,
     next_0421,
     pushed,
     socket_and_ports,
+    tou_on_the_cloud,
 )
 from tests.fixtures.client import (
     SESSION,
@@ -549,8 +553,11 @@ async def test_a1783_dc_group_sets_car_socket_and_timeout() -> None:
         0,
         0,
     )
+    stored = decode_field(Parameters.parse(setter[1].plaintext), "a4", GreedyBytes)
+    assert int.from_bytes(stored[8:12], "little") == 3600
+    # The socket switched off discards the timer (a1783-control.md "Output timers").
     settings = decode_field(status, "a4", solix_c_gen2.Settings)
-    assert settings.car_charger_timer_value == 3600
+    assert settings.car_charger_timer_value == 0
     assert (
         settings.car_charger_energy_saving_switch == 0
     )  # overwritten by the last send
@@ -1072,7 +1079,7 @@ def test_the_log_header_carries_a_set_serial_and_needs_byte_values() -> None:
         b"APCDKKE0000000009"
     )
     with pytest.raises(TypeError, match="device_sn is a bytes value"):
-        layout.reply_fields(0x066, request, state)
+        layout.reply(0x066, request, state)
 
 
 async def test_the_log_header_reads_the_rtc_the_clock_set_put_on_local_time() -> None:
@@ -1103,7 +1110,10 @@ async def test_the_log_header_reads_the_rtc_the_clock_set_put_on_local_time() ->
 
 
 def test_a_clock_set_before_the_sync_floor_is_acked_but_never_reaches_the_rtc() -> None:
-    """a1783-control.md "Clock": ``set_utc_time_to_mcu`` drops UTC < 0x6561aca0."""
+    """a1783-control.md "Clock": ``set_utc_time_to_mcu`` drops UTC < 0x6561aca0.
+
+    The ``a3`` of 0 the floor set carries leaves the handshake's offset in place.
+    """
     module = A1783(clock=ManualClock()).negotiated_module
     client = AppClient()
     module.connect()
@@ -1122,7 +1132,7 @@ def test_a_clock_set_before_the_sync_floor_is_acked_but_never_reaches_the_rtc() 
     assert [(reply.frame.cmd.msgtype, reply.status) for reply in early] == [(0x822, 0)]
     assert after_early == synced
     assert [(reply.frame.cmd.msgtype, reply.status) for reply in floor] == [(0x822, 0)]
-    assert module.rtc == 0x6561ACA0
+    assert module.rtc == 0x6561ACA0 - 14400
 
 
 def test_partial_tou_and_clock_writes_mirrors_and_a_malformed_schedule() -> None:
@@ -1255,8 +1265,9 @@ async def test_the_bench_peak_holds_grid_charging_until_the_period_ends() -> Non
 
     Battery-Only Power blocks the period and AC input (0 W); switched off at
     15:44:27 (the app's cloud ``0101``, set here as a value), Peak goes active
-    and holds AC input at 0 W; at 16:00 the period ends and the charge the
-    switch-off started shows: the expansion, below its cap, at 1208 W.
+    and holds AC input at 0 W; at 16:00 the period ends, and by 16:00:13 the
+    charge the switch-off started has ramped in: the expansion, below its
+    cap, at 1208 W.
     """
     clock = ManualClock()
     device = A1783(clock=clock)
@@ -1283,7 +1294,7 @@ async def test_the_bench_peak_holds_grid_charging_until_the_period_ends() -> Non
     clock.advance(27)
     device.set_values(ac_input_disable_switch=0)
     held = decode(device.mqtt_frame(0x421))
-    clock.advance(16 * 60 - 27)
+    clock.advance(16 * 60 - 27 + 13)
     device.negotiated_module.check_pushes()
     ended = decode(device.mqtt_frame(0x421))
 
@@ -1298,6 +1309,103 @@ async def test_the_bench_peak_holds_grid_charging_until_the_period_ends() -> Non
             )
         )
     assert states == [(0, 0, "34"), (1, 0, "34"), (0, 1208, "34")]
+
+
+#: ``0022`` at 15:44:00 EDT, and ``4090`` Time-of-Use with a 50 % reserve over
+#: Peak 15-16, or Peak 15-16 then Mid-Peak 16-17.
+CLOCK_15_44_00 = [(0xA1, UTC_15_44_00), (0xA3, EDT)]
+TOU_HEAD = [(0xA2, b"\x01\x01"), (0xA5, b"\x01\x32")]
+PEAK_15_16 = [*TOU_HEAD, (0xA6, b"\x01\x01"), (0xA7, bytes.fromhex("04010f10"))]
+PEAK_THEN_MID_PEAK = [
+    *TOU_HEAD,
+    (0xA6, b"\x01\x02"),
+    (0xA7, bytes.fromhex("07010f10021011")),
+]
+#: Seconds from 15:44:00 to the 16:00:00 boundary.
+TO_16_00 = 960
+
+
+def test_the_peak_end_ramps_ac_input_back_replays_2026_10_21() -> None:
+    """Cloud ``0421`` 2026-10-21 15:59:59-16:00:13 (a1783-control.md "TOU" effects).
+
+    ``d9[0]`` 1 -> 0 at 16:00:00; AC input (``a7[4:6]``) stays 0 W to 16:00:05
+    and reads 86 / 57 / 178 / 770 W at :07 / :08 / :09 / :11, 1290 W at :13.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**TOU_UNIT)
+    tou_on_the_cloud(device, TOKEN, CLOCK_15_44_00, PEAK_15_16)
+    readings = []
+
+    for at in (-1, 1, 5, 7, 8, 9, 11, 13):
+        clock.advance(TO_16_00 + at - clock.now())
+        fields = Parameters.parse(decode(device.mqtt_frame(0x421)).payload)
+        readings.append(
+            (
+                decode_field(fields, "d9", solix_c_gen2.Tou).tou_system_status,
+                decode_field(fields, "a7", solix_c_gen2.AcOutput).ac_input_power,
+                decode_field(fields, "a6", solix_c_gen2.MainData).ac_input_power,
+            )
+        )
+
+    assert readings == [
+        (1, 0, 0),
+        (0, 0, 0),
+        (0, 0, 0),
+        (0, 86, 86),
+        (0, 57, 57),
+        (0, 178, 178),
+        (0, 770, 770),
+        (0, 1290, 1290),
+    ]
+
+
+def test_a_period_that_held_nothing_ends_with_no_ramp() -> None:
+    """Below the 50 % threshold Peak doesn't hold, so its end changes nothing."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**TOU_UNIT, "pack_soc": 400})
+    tou_on_the_cloud(device, TOKEN, CLOCK_15_44_00, PEAK_15_16)
+
+    clock.advance(TO_16_00 + 1)
+    fields = Parameters.parse(decode(device.mqtt_frame(0x421)).payload)
+
+    assert decode_field(fields, "a7", solix_c_gen2.AcOutput).ac_input_power == 1290
+
+
+def test_a_held_period_running_into_another_keeps_holding() -> None:
+    """Peak 15-16 then Mid-Peak 16-17: still held at 16:00:09, no ramp."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**TOU_UNIT)
+    tou_on_the_cloud(device, TOKEN, CLOCK_15_44_00, PEAK_THEN_MID_PEAK)
+
+    clock.advance(TO_16_00 + 9)
+    fields = Parameters.parse(decode(device.mqtt_frame(0x421)).payload)
+
+    assert decode_field(fields, "d9", solix_c_gen2.Tou).tou_system_status == 2
+    assert decode_field(fields, "a7", solix_c_gen2.AcOutput).ac_input_power == 0
+
+
+def test_a_clock_set_retimes_the_ramp() -> None:
+    """The ramp follows the RTC: set back to 15:44:00 at 16:00:09, Peak holds again."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**TOU_UNIT)
+    tou_on_the_cloud(device, TOKEN, CLOCK_15_44_00, PEAK_15_16)
+    clock.advance(TO_16_00 + 9)
+    device.set_cloud(False)
+    tou_on_the_cloud(device, TOKEN, CLOCK_15_44_00, PEAK_15_16)
+    readings = []
+
+    for at in (-1, 11):
+        clock.advance(TO_16_00 + 9 + TO_16_00 + at - clock.now())
+        fields = Parameters.parse(decode(device.mqtt_frame(0x421)).payload)
+        readings.append(
+            decode_field(fields, "a7", solix_c_gen2.AcOutput).ac_input_power
+        )
+
+    assert readings == [0, 770]
 
 
 async def test_over_ble_no_period_activates() -> None:
@@ -2389,3 +2497,823 @@ def test_the_usb_c_device_inputs_are_hidden_port_values(model: Model) -> None:
         device.set_values(pd2_device_plugged=2)
     with pytest.raises(ConstructError):
         device.set_values(pd3_device_power=70000)
+
+
+#: ``4101`` / ``4102`` ``a3 05 03 2c010000``: a 300 s output timer.
+TIMER_300 = (0xA3, bytes.fromhex("032c010000"))
+
+
+def test_the_output_timers_replay_the_2026_07_19_timeouts() -> None:
+    """a1783-control.md "``0403`` push" ``0x55`` / ``0x56``, app_log 2026-07-19.
+
+    Both outputs on; 300 s set on AC (12:48:01.601) and, 26 s on, on the car
+    socket (12:48:27.502). ``a4[0..3]`` / ``[8..11]`` count down 2 s at a time
+    (274 / 300 at 12:48:28.029); at 0 the output goes off and a ``4403`` follows.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(ac_output_status=1, car_charge1_output_status=1)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    timeline = []
+
+    def at(seconds: float) -> None:
+        clock.advance(seconds - clock.now())
+        out = pushed(client, [module.check_pushes()])
+        _, fields = next_0421(device)
+        a4 = decode_field(fields, "a4", GreedyBytes)
+        timeline.append(
+            (
+                int.from_bytes(a4[0:4], "little"),
+                int.from_bytes(a4[8:12], "little"),
+                decode_field(fields, "a7", GreedyBytes)[0],
+                decode_field(fields, "b2", GreedyBytes)[0],
+                out,
+            )
+        )
+
+    command(device, client, 0x101, [TIMER_300])
+    at(1)
+    at(3)
+    clock.advance(23)
+    command(device, client, 0x102, [TIMER_300])
+    at(27)
+    at(299)
+    at(301)
+    at(325)
+    at(327)
+
+    assert timeline == [
+        (300, 0, 1, 1, []),
+        (298, 0, 1, 1, []),
+        (274, 300, 1, 1, []),
+        (2, 28, 1, 1, []),
+        (0, 26, 0, 1, [("4403", "a10131a2020155")]),
+        (0, 2, 0, 1, []),
+        (0, 0, 0, 0, [("4403", "a10131a2020156")]),
+    ]
+
+
+def test_a_timer_set_with_its_output_off_clears() -> None:
+    """a1783-control.md "Output timers": every 10 ms pass with AC off clears it."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(ac_output_status=0, ac_timer_value=10)
+
+    clock.advance(0.01)
+    module.check_pushes()
+    cleared = module.values["ac_timer_value"]
+    device.set_values(ac_output_status=1)
+    clock.advance(20)
+
+    assert cleared == 0
+    assert pushed(client, [module.check_pushes()]) == []
+    assert module.values["ac_output_status"] == 1
+
+
+def test_switching_an_output_off_discards_its_timer() -> None:
+    """The car socket switched off with 6 s left: the remainder is gone, no ``0403``."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(car_charge1_output_status=1, car_charger_timer_value=10)
+    clock.advance(4.5)
+    module.check_pushes()
+
+    device.set_values(car_charge1_output_status=0)
+    clock.advance(20)
+
+    assert pushed(client, [module.check_pushes()]) == []
+    assert module.values["car_charger_timer_value"] == 0
+
+
+def test_a_zero_timer_disables_the_countdown() -> None:
+    """``acTimerValue`` 0 disables (a1783-control.md ``4101 a3``): AC stays on."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(ac_output_status=1, ac_timer_value=10)
+    clock.advance(3)
+    module.check_pushes()
+
+    device.set_values(ac_timer_value=0)
+    clock.advance(20)
+
+    assert pushed(client, [module.check_pushes()]) == []
+    assert (module.values["ac_timer_value"], module.values["ac_output_status"]) == (
+        0,
+        1,
+    )
+
+
+def test_a_car_timeout_is_a_socket_edge() -> None:
+    """The socket going off at its timeout re-attaches a detached USB-C port too."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(car_charge1_output_status=1)
+    clock.advance(5)
+    device.negotiated_module.check_pushes()
+    device.set_values(
+        pd1_output_status=0,
+        pd1_output_power=0,
+        total_output_power=0,
+        charge_discharge_status=0,
+        car_charger_timer_value=2,
+    )
+
+    clock.advance(3)
+    device.negotiated_module.check_pushes()
+
+    assert socket_and_ports(next_0421(device)[1])[:2] == (0, "010000")
+
+
+@pytest.mark.parametrize(
+    ("model", "attached", "delay"),
+    [
+        pytest.param(A1783, 1, 0.49, id="A1783-expansion"),
+        pytest.param(A1785, 0, 1.0, id="A1785-no-expansion"),
+        pytest.param(A1763, None, 1.0, id="A1763"),
+        pytest.param(A1765, None, 1.0, id="A1765"),
+    ],
+)
+def test_the_low_soc_alert_replays_2026_10_15(
+    model: Model, attached: int | None, delay: float
+) -> None:
+    """a1783-control.md "``0403`` push": SoC 11 -> 10 (05:00:23), ``0x52`` 0.49 s on.
+
+    3 evaluations at or below 10 %, one per block-0 reply (500 ms), and one per
+    block-1 reply too with an expansion attached: ~0.5 s with one, ~1 s without.
+    """
+    clock = ManualClock()
+    device = model(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    soc = {"battery_level": 11}
+    device.set_values(
+        **soc
+        if attached is None
+        else {**soc, "sub_package_connection_status": attached}
+    )
+
+    device.set_values(battery_level=10)
+    clock.advance(delay - 0.01)
+    early = pushed(client, [module.check_pushes()])
+    clock.advance(0.01)
+
+    assert early == []
+    assert pushed(client, [module.check_pushes()]) == [("4403", "a10131a2020152")]
+
+
+def test_the_low_soc_alert_waits_for_the_soc_to_stay_down() -> None:
+    """Assumed from "SoC <= 10 % for 3 replies": back above 10 first, no alert."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(battery_level=11)
+
+    device.set_values(battery_level=10)
+    clock.advance(0.2)
+    device.set_values(battery_level=11)
+    clock.advance(1)
+
+    assert pushed(client, [module.check_pushes()]) == []
+
+
+def test_the_low_soc_alert_rearms_only_above_10() -> None:
+    """One ``0x52`` per crossing: 10 -> 9 sends none, 9 -> 11 -> 10 sends again."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(battery_level=11)
+    sent = []
+
+    for level in (10, 9, 11, 10):
+        device.set_values(battery_level=level)
+        clock.advance(1)
+        sent.append(pushed(client, [module.check_pushes()]))
+
+    alert = [("4403", "a10131a2020152")]
+    assert sent == [alert, [], [], alert]
+
+
+def test_the_empty_soc_alert_follows_the_firmware() -> None:
+    """``0x50`` at SoC <= 1 %, ``soc_floor_event_eval(1, ...)``: firmware only."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(battery_level=2)
+    clock.advance(1)
+    module.check_pushes()  # the 10 % floor, crossed on the way down
+
+    device.set_values(battery_level=1)
+    clock.advance(1)
+
+    assert pushed(client, [module.check_pushes()]) == [("4403", "a10131a2020150")]
+
+
+def test_display_on_lasts_its_timeout_replays_2026_08_27() -> None:
+    """app_log 2026-08-27: ``4103 a2`` 1 at 18:24:04.961, ``a4[21]`` 0 at 18:29:06.
+
+    a1783-control.md "``4103``": ``a4[21]`` drops exactly ``display_timeout``
+    (``a4[15..16]``, 300 s there) after a wake.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(screen_off_time=300)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+
+    replies = command(device, client, 0x103, [(0xA2, b"\x01\x01")])
+    shown = decode_field(Parameters.parse(replies[-1].plaintext), "a4", GreedyBytes)
+    clock.advance(299.5)
+    module.check_pushes()
+    still = module.values["screen_switch"]
+    clock.advance(1)
+    module.check_pushes()
+
+    assert (shown[21], still, module.values["screen_switch"]) == (1, 1, 0)
+
+
+@pytest.mark.parametrize(
+    ("msgtype", "field"),
+    [
+        pytest.param(0x103, (0xA3, b"\x01\x02"), id="4103-a3-brightness"),
+        pytest.param(0x103, (0xA9, b"\x01\x01"), id="4103-a9-language"),
+        pytest.param(0x102, (0xA2, b"\x01\x01"), id="4102-a2-car-socket"),
+    ],
+)
+def test_a_waking_setter_turns_the_screen_on(
+    msgtype: int, field: tuple[int, bytes]
+) -> None:
+    """The app_log setters sent with the screen off whose next frame read it on.
+
+    ``4103 a3`` (4 of 4, e.g. 2026-07-02 15:11:59), ``a9`` (2026-09-18 06:36:25),
+    ``4102 a2`` (2026-09-01 02:26:41, 4 of 4); the reply's ``4421`` shows it.
+    """
+    device = A1783(clock=ManualClock())
+    client = authorized_client(device, TOKEN)
+
+    replies = command(device, client, msgtype, [field])
+
+    a4 = decode_field(Parameters.parse(replies[-1].plaintext), "a4", GreedyBytes)
+    assert a4[21] == 1
+
+
+@pytest.mark.parametrize(
+    ("msgtype", "field"),
+    [
+        pytest.param(0x101, (0xA4, b"\x02\xb0\x04"), id="4101-a4-ac-input-limit"),
+        pytest.param(0x101, (0xA6, b"\x01\x01"), id="4101-a6-ac-energy-saving"),
+        pytest.param(0x102, (0xA4, b"\x01\x01"), id="4102-a4-dc-energy-saving"),
+        pytest.param(0x103, (0xA4, b"\x02\x3c\x00"), id="4103-a4-display-timeout"),
+        pytest.param(0x103, (0xA8, b"\x01\x01"), id="4103-a8-port-memory"),
+        pytest.param(0x103, (0xB0, b"\x01\x00"), id="4103-b0-outage-alert"),
+    ],
+)
+def test_other_setters_leave_the_screen_off(
+    msgtype: int, field: tuple[int, bytes]
+) -> None:
+    """The same survey: each sent with the screen off left it off (1-3 times each)."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+
+    command(device, client, msgtype, [field])
+    clock.advance(5)
+    device.negotiated_module.check_pushes()
+
+    assert next_0421(device)[0]["screen_switch"] == 0
+
+
+def test_a_display_timeout_of_0_keeps_the_screen_on() -> None:
+    """``a4[15..16]`` 0 = never (a1783-control.md ``4103 a4``)."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(screen_off_time=0)
+
+    device.set_values(screen_switch=1)
+    clock.advance(86400)
+    device.negotiated_module.check_pushes()
+
+    assert device.negotiated_module.values["screen_switch"] == 1
+
+
+def test_a_wake_while_on_rearms_the_timeout() -> None:
+    """``screen_wake_apply`` re-arms the timeout (a1783-operation.md 05:46:21)."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(screen_off_time=300)
+    module = device.negotiated_module
+
+    device.set_values(screen_switch=1)
+    clock.advance(200)
+    module.check_pushes()
+    device.set_values(device_language=1)
+    clock.advance(250)
+    module.check_pushes()
+    rearmed = module.values["screen_switch"]
+    clock.advance(100)
+    module.check_pushes()
+
+    assert (rearmed, module.values["screen_switch"]) == (1, 0)
+
+
+def test_the_mains_auto_off_wakes_the_screen_for_its_timeout() -> None:
+    """Q13's auto-off (06:02:35) wakes the screen through the same wake."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(
+        **{**KASA_UNIT, "outage_alert_switch": False, "screen_off_time": 10}
+    )
+
+    device.set_values(ac_input_status=0)
+    woken = device.negotiated_module.values["screen_switch"]
+    clock.advance(10)
+    device.negotiated_module.check_pushes()
+
+    assert (woken, device.negotiated_module.values["screen_switch"]) == (1, 0)
+
+
+@pytest.mark.parametrize("model", MODELS)
+def test_the_0490_posts_every_540_s_from_the_start(model: Model) -> None:
+    """a1783-telemetry.md "When the display board posts c490": every 540 s.
+
+    The posts sit on one 540 s grid from the display board's start (2026-10-07
+    20:07:07 · 20:16:07 · 20:25:07 · 20:34:08).
+    """
+    clock = ManualClock()
+    device = model(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    posts = []
+
+    for step in (539, 1, 539, 1):
+        clock.advance(step)
+        out = pushed(client, [module.check_pushes()])
+        posts.append([int(cmd, 16) & 0xFFF for cmd, _ in out])
+
+    assert posts == [[], [0x490], [], [0x490]]
+
+
+def test_a_0490_stop_misses_posts_and_keeps_the_grid() -> None:
+    """2026-10-07: the last post 20:34:08, the next 22:40:07, 14 x 540 s on.
+
+    The switch off misses the posts; on again, the next one is on the grid,
+    not 540 s after the switch.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(device_point_switch=0)
+
+    clock.advance(1200)
+    missed = pushed(client, [module.check_pushes()])
+    device.set_values(device_point_switch=1)
+    clock.advance(419)
+    early = pushed(client, [module.check_pushes()])
+    clock.advance(1)
+
+    assert (missed, early) == ([], [])
+    assert len(pushed(client, [module.check_pushes()])) == 1
+
+
+def test_the_0490_grid_runs_without_a_link() -> None:
+    """2026-09-19: back at 18:54:34, 94 x 540 s after 04:48:33, the link idle between.
+
+    A post due with no link goes unsent; a link up at 1000 s gets the 1080 s one.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    clock.advance(1000)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+
+    clock.advance(79)
+    early = pushed(client, [module.check_pushes()])
+    clock.advance(1)
+
+    assert early == []
+    assert len(pushed(client, [module.check_pushes()])) == 1
+
+
+#: ``4090``: Time-of-Use with one Off-Peak record over the whole day.
+OFF_PEAK_ALL_DAY = [*TOU_HEAD, (0xA6, b"\x01\x01"), (0xA7, bytes.fromhex("04030018"))]
+
+
+def test_each_10_s_pass_counts_the_active_period() -> None:
+    """a1783-telemetry.md "0503" Trigger: +10 s a pass while ``d9[0]`` != 0."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**TOU_UNIT)
+    tou_on_the_cloud(device, TOKEN, CLOCK_15_44_00, OFF_PEAK_ALL_DAY)
+
+    clock.advance(30)
+    device.negotiated_module.check_pushes()
+    values = device.negotiated_module.values
+
+    assert (values["off_peak_time_delta"], values["tou_usage_passes"]) == (30, 3)
+
+
+def test_no_pass_counts_off_the_cloud() -> None:
+    """Off the cloud (BLE only, condition 2) no period is active, so none counts."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**TOU_UNIT)
+    tou_on_the_cloud(device, TOKEN, CLOCK_15_44_00, OFF_PEAK_ALL_DAY)
+    device.set_cloud(False)
+
+    clock.advance(30)
+    device.negotiated_module.check_pushes()
+
+    assert "tou_usage_passes" not in device.negotiated_module.values
+
+
+def test_every_120_passes_fold_into_the_0503_totals() -> None:
+    """The fold adds the deltas to the lifetime totals ``mqtt_frame(0x503)`` shows."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**TOU_UNIT)
+    tou_on_the_cloud(device, TOKEN, CLOCK_15_44_00, OFF_PEAK_ALL_DAY)
+    recorded = int(device.negotiated_module.mcu.state({})["off_peak_time"])
+
+    layout = device.layout
+    assert layout is not None
+    published = []
+    for step in (1199, 1):
+        clock.advance(step)
+        device.negotiated_module.check_pushes()
+        frame = decode(device.mqtt_frame(0x503))
+        published.append(layout.read(0x503, frame.payload)["off_peak_time"])
+
+    assert published == [recorded, recorded + 1200]
+    assert device.negotiated_module.values["off_peak_time_delta"] == 0
+
+
+def test_the_pass_count_restarts_after_pass_720() -> None:
+    """2 h of TOU-active time: pass 720 flushes, and the count starts again."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**TOU_UNIT)
+    tou_on_the_cloud(device, TOKEN, CLOCK_15_44_00, OFF_PEAK_ALL_DAY)
+    recorded = int(device.negotiated_module.mcu.state({})["off_peak_time"])
+
+    clock.advance(7210)
+    device.negotiated_module.check_pushes()
+    values = device.negotiated_module.values
+
+    assert (values["tou_usage_passes"], values["off_peak_time"]) == (1, recorded + 7200)
+
+
+#: UTC epochs of the 2026-10-06 (EDT) backup-plan witnesses (a1783-control.md
+#: "``d9`` tail", "``0425`` events").
+EPOCH_19_53_36 = 1791330816
+EPOCH_20_59_54 = 1791334794
+EPOCH_22_59_58 = 1791341998
+NO_END = 0xFFFFFFFF
+#: The app's "from now, no end" plan (start 2026-09-19 22:46:00 UTC), its 21-22
+#: EDT plan, and the Storm Guard window 23:00-09:00 EDT.
+PLAN_FROM_0919 = (1789857960, NO_END)
+PLAN_21_22 = (1791334800, 1791338400)
+STORM_23_09 = (1791342000, 1791378000)
+#: The firmware's never record, which a cancel writes over a plan.
+NEVER = (NO_END, NO_END)
+WINDOW_END_0B = ("4425", "a10131a202010ba3050400000000a4050400000000")
+
+
+def test_the_fast_charging_plan_on_and_off_replays_2026_10_06() -> None:
+    """19:53:37: ``405e`` on, ``0x0a`` on the next 100 ms pass; 19:54:14 off, ``0x0b``.
+
+    The ``0425`` comes from the firmware's pass, never the ``405e`` reply.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    clock_set = [(0xA1, EPOCH_19_53_36.to_bytes(4, "little")), (0xA3, EDT)]
+    exchange(module, client, 0x022, clock_set)
+
+    replies = command(device, client, 0x05E, backup_plan(0, 1, (PLAN_FROM_0919,)))
+    clock.advance(0.1)
+    started = pushed(client, [module.check_pushes()])
+    on = backup_tail(next_0421(device)[0])
+    command(device, client, 0x05E, backup_plan(0, 0))
+    clock.advance(0.1)
+    ended = pushed(client, [module.check_pushes()])
+
+    assert [cmd_hex(reply.frame) for reply in replies] == ["485e", "4421"]
+    assert started == [("4425", "a10131a202010aa30504a810af6aa40504ffffffff")]
+    assert on == (1, 1, 0, *PLAN_FROM_0919, *PLAN_FROM_0919)
+    assert ended == [WINDOW_END_0B]
+    assert backup_tail(next_0421(device)[0]) == (0, 0, 0, *PLAN_FROM_0919, 0, 0)
+
+
+def test_a_plan_window_starts_and_ends_on_its_own_replays_2026_10_06() -> None:
+    """21:00:00 ``0x0a`` with the 21-22 epochs, the bus to main; 22:00 ``0x0b``.
+
+    a1783-control.md 21:00:04: ``c0[24]`` 2 -> 0 and ``a3[0]`` 0 -> 2, the main
+    pack (96 %) taking the charge from the expansion.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(
+        **TOU_UNIT,
+        sub_package_status=2,
+        battery_level=96,
+        work_status=0,
+        charge_discharge_status=0,
+    )
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    clock_set = [(0xA1, EPOCH_20_59_54.to_bytes(4, "little")), (0xA3, EDT)]
+    exchange(module, client, 0x022, clock_set)
+    command(device, client, 0x05E, backup_plan(0, 1, (PLAN_21_22,)))
+
+    clock.advance(5.9)
+    early = pushed(client, [module.check_pushes()])
+    clock.advance(0.2)
+    started = pushed(client, [module.check_pushes()])
+    values = next_0421(device)[0]
+    clock.advance(3600)
+    ended = [p for p in pushed(client, [module.check_pushes()]) if p[0] == "4425"]
+
+    assert early == []
+    assert started == [("4425", "a10131a202010aa305049099c56aa40504a0a7c56a")]
+    assert backup_tail(values) == (1, 1, 0, *PLAN_21_22, *PLAN_21_22)
+    assert (
+        values["sub_package_status"],
+        values["work_status"],
+        values["charge_discharge_status"],
+    ) == (0, 2, 2)
+    assert ended == [WINDOW_END_0B]
+
+
+def test_a_storm_guard_window_start_replays_2026_10_06_23_00() -> None:
+    """BLE 23:00:01: ``4425 0x07`` with the 03:00-13:00 UTC epochs, type 2."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    clock_set = [(0xA1, EPOCH_22_59_58.to_bytes(4, "little")), (0xA3, EDT)]
+    exchange(module, client, 0x022, clock_set)
+    command(device, client, 0x05E, backup_plan(0, 1, (PLAN_21_22,)))
+    command(device, client, 0x05E, backup_plan(1, 1, (STORM_23_09,)))
+
+    clock.advance(2.1)
+    started = pushed(client, [module.check_pushes()])
+
+    assert started == [("4425", "a10131a2020107a30504b0b5c56aa405045042c66a")]
+    assert backup_tail(next_0421(device)[0]) == (2, 1, 1, *PLAN_21_22, *STORM_23_09)
+
+
+def test_with_none_running_storm_guard_is_chosen_first() -> None:
+    """a1783-control.md ``d9`` type row: auto (table 2) before manual (table 1)."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    clock_set = [(0xA1, EPOCH_22_59_58.to_bytes(4, "little")), (0xA3, EDT)]
+    exchange(module, client, 0x022, clock_set)
+    command(device, client, 0x05E, backup_plan(1, 1, ((STORM_23_09[0], NO_END),)))
+    command(device, client, 0x05E, backup_plan(0, 1, ((PLAN_21_22[0], NO_END),)))
+
+    clock.advance(2.1)
+    started = pushed(client, [module.check_pushes()])
+
+    assert [event[1][12:14] for event in started] == ["07"]
+
+
+def test_a_running_window_ends_into_the_other_with_no_0425() -> None:
+    """The running plan keeps going; at its end the type flips to Storm Guard."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    clock_set = [(0xA1, EPOCH_22_59_58.to_bytes(4, "little")), (0xA3, EDT)]
+    exchange(module, client, 0x022, clock_set)
+    manual = (EPOCH_22_59_58 - 60, STORM_23_09[0] + 60)
+    command(device, client, 0x05E, backup_plan(0, 1, (manual,)))
+    clock.advance(0.1)
+    started = pushed(client, [module.check_pushes()])
+    command(device, client, 0x05E, backup_plan(1, 1, (STORM_23_09,)))
+
+    clock.advance(2.1)
+    kept = (pushed(client, [module.check_pushes()]), next_0421(device)[0])
+    clock.advance(60)
+    flipped = (pushed(client, [module.check_pushes()]), next_0421(device)[0])
+
+    assert [event[1][12:14] for event in started] == ["0a"]
+    assert kept[0] == []
+    assert backup_tail(kept[1])[0] == 1
+    assert flipped[0] == []
+    assert backup_tail(flipped[1]) == (2, 1, 1, *manual, *STORM_23_09)
+
+
+def test_clear_all_zeroes_both_tables_and_switches() -> None:
+    """``a4 02``: tables and switches zeroed (``disaster_plan_clear_all``); ``0x0b``."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    clock_set = [(0xA1, EPOCH_19_53_36.to_bytes(4, "little")), (0xA3, EDT)]
+    exchange(module, client, 0x022, clock_set)
+    command(device, client, 0x05E, backup_plan(0, 1, (PLAN_FROM_0919,)))
+    command(device, client, 0x05E, backup_plan(1, 1, (STORM_23_09,)))
+    clock.advance(0.1)
+    module.check_pushes()
+
+    command(device, client, 0x05E, backup_plan(2))
+    clock.advance(0.1)
+    ended = pushed(client, [module.check_pushes()])
+
+    assert ended == [WINDOW_END_0B]
+    assert backup_tail(next_0421(device)[0]) == (0, 0, 0, 0, 0, 0, 0)
+    assert module.values["auto_backup_plans"] == bytes(24)
+
+
+def test_a_cancel_ends_the_running_plan_and_leaves_its_switch() -> None:
+    """``aa 01``: the plan becomes the never record, ``0x0b`` on the next pass."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    clock_set = [(0xA1, EPOCH_19_53_36.to_bytes(4, "little")), (0xA3, EDT)]
+    exchange(module, client, 0x022, clock_set)
+    command(device, client, 0x05E, backup_plan(0, 1, (PLAN_FROM_0919,)))
+    clock.advance(0.1)
+    module.check_pushes()
+
+    command(device, client, 0x05E, backup_plan(0, cancel=True))
+    clock.advance(0.1)
+    ended = pushed(client, [module.check_pushes()])
+
+    assert ended == [WINDOW_END_0B]
+    assert backup_tail(next_0421(device)[0]) == (0, 1, 0, *NEVER, 0, 0)
+
+
+def test_cancelling_storm_guard_turns_a_covering_plan_off() -> None:
+    """A Storm Guard cancel turns the manual switch off when table 1 covers now."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    clock_set = [(0xA1, EPOCH_22_59_58.to_bytes(4, "little")), (0xA3, EDT)]
+    exchange(module, client, 0x022, clock_set)
+    command(device, client, 0x05E, backup_plan(1, 1, (STORM_23_09,)))
+    command(device, client, 0x05E, backup_plan(0, 1, (PLAN_FROM_0919,)))
+    clock.advance(2.1)
+    module.check_pushes()
+
+    command(device, client, 0x05E, backup_plan(1, cancel=True))
+    clock.advance(0.1)
+    ended = pushed(client, [module.check_pushes()])
+
+    assert [event[1][12:14] for event in ended] == ["08"]
+    assert backup_tail(next_0421(device)[0])[:3] == (0, 0, 1)
+    plans = module.values["auto_backup_plans"]
+    assert isinstance(plans, bytes)
+    assert plans[:8] == bytes.fromhex("ffffffffffffffff")
+
+
+def test_the_plan_switched_off_also_ends_a_running_storm_guard() -> None:
+    """``a4 00 · a5 00`` wipes every Storm Guard entry covering now: ``0x08``."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    clock_set = [(0xA1, EPOCH_22_59_58.to_bytes(4, "little")), (0xA3, EDT)]
+    exchange(module, client, 0x022, clock_set)
+    command(device, client, 0x05E, backup_plan(1, 1, (STORM_23_09,)))
+    clock.advance(2.1)
+    module.check_pushes()
+
+    command(device, client, 0x05E, backup_plan(0, 0))
+    clock.advance(0.1)
+    ended = pushed(client, [module.check_pushes()])
+
+    assert [event[1][12:14] for event in ended] == ["08"]
+    assert backup_tail(next_0421(device)[0])[:3] == (0, 0, 1)
+
+
+def test_a_cancel_with_no_window_running_changes_nothing() -> None:
+    """``aa 01`` acts only while a window is active (0x0800dc30-0x0800dc7a)."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    clock_set = [(0xA1, EPOCH_19_53_36.to_bytes(4, "little")), (0xA3, EDT)]
+    exchange(module, client, 0x022, clock_set)
+    before = backup_tail(next_0421(device)[0])
+
+    command(device, client, 0x05E, backup_plan(0, cancel=True))
+    clock.advance(0.1)
+
+    assert pushed(client, [module.check_pushes()]) == []
+    assert backup_tail(next_0421(device)[0]) == before
+
+
+def test_no_window_runs_before_the_rtc_reads_2025() -> None:
+    """``rtc_year_valid?``: a plan covering 2024-06-01 never starts."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    clock_set = [(0xA1, (1717200000).to_bytes(4, "little")), (0xA3, EDT)]
+    exchange(module, client, 0x022, clock_set)
+
+    command(device, client, 0x05E, backup_plan(0, 1, ((1704067200, NO_END),)))
+    clock.advance(1)
+
+    assert pushed(client, [module.check_pushes()]) == []
+    assert backup_tail(next_0421(device)[0])[0] == 0
+
+
+def test_a_clock_set_into_a_plan_starts_it() -> None:
+    """The windows follow the clock: set to 21:00:00 EDT, the 21-22 plan starts."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    clock_set = [(0xA1, EPOCH_19_53_36.to_bytes(4, "little")), (0xA3, EDT)]
+    exchange(module, client, 0x022, clock_set)
+    command(device, client, 0x05E, backup_plan(0, 1, (PLAN_21_22,)))
+    clock.advance(0.1)
+    idle = pushed(client, [module.check_pushes()])
+
+    reset = [(0xA1, PLAN_21_22[0].to_bytes(4, "little")), (0xA3, EDT)]
+    exchange(module, client, 0x022, reset)
+    clock.advance(0.1)
+
+    assert idle == []
+    assert [e[1][12:14] for e in pushed(client, [module.check_pushes()])] == ["0a"]
+
+
+def test_the_c1000_gen_2_runs_the_window_with_no_0425() -> None:
+    """The A1763 records no ``0425``: its ``d9`` tail moves, nothing is pushed."""
+    clock = ManualClock()
+    device = A1763(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    clock_set = [(0xA1, EPOCH_19_53_36.to_bytes(4, "little")), (0xA3, EDT)]
+    exchange(module, client, 0x022, clock_set)
+
+    command(device, client, 0x05E, backup_plan(0, 1, (PLAN_FROM_0919,)))
+    clock.advance(0.1)
+
+    assert pushed(client, [module.check_pushes()]) == []
+    assert backup_tail(next_0421(device)[0])[0] == 1
+
+
+def test_a_window_start_leaves_a_full_main_pack_charging_the_expansion() -> None:
+    """The bus moves to the main only below 100 %; a full main leaves ``c0[24]`` 2."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(sub_package_status=2, battery_level=100)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    clock_set = [(0xA1, EPOCH_19_53_36.to_bytes(4, "little")), (0xA3, EDT)]
+    exchange(module, client, 0x022, clock_set)
+
+    command(device, client, 0x05E, backup_plan(0, 1, (PLAN_FROM_0919,)))
+    clock.advance(0.1)
+    module.check_pushes()
+    window = backup_tail(next_0421(device)[0])[0]
+
+    assert (window, module.values["sub_package_status"]) == (1, 2)
+
+
+@pytest.mark.parametrize("plans", [bytes(23), b"\x00" * 25, 5])
+def test_the_storm_guard_table_is_three_epoch_pairs(plans: Value) -> None:
+    """Hidden ``auto_backup_plans``: exactly 3 x (u32 start, u32 end), as bytes."""
+    device = A1783()
+
+    with pytest.raises(TypeError, match="auto_backup_plans"):
+        device.set_values(auto_backup_plans=plans)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param([(0xA3, b"\x01\x02"), (0xA4, b"\x01\x00")], id="a3-not-3"),
+        pytest.param([(0xA4, b"\x01\x00"), (0xA5, b"\x01\x01")], id="no-a3"),
+    ],
+)
+def test_a_405e_without_its_group_selector_changes_nothing(
+    fields: list[tuple[int, bytes]],
+) -> None:
+    """``a3`` must be 3 (a1783-control.md ``405e``); acked, nothing applied."""
+    device = A1783(clock=ManualClock())
+    client = authorized_client(device, TOKEN)
+    before = backup_tail(next_0421(device)[0])
+
+    replies = command(device, client, 0x05E, fields)
+
+    assert replies[0].plaintext[:1] == b"\x00"
+    assert backup_tail(next_0421(device)[0]) == before

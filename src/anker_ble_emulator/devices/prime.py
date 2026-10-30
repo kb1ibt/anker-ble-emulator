@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from construct import Flag, If, Int8ul, Struct, this
 
-from anker_ble_emulator.layouts import TYPE_BIN, TYPE_UI, TYPE_VAR, ui
+from anker_ble_emulator.layouts import TYPE_BIN, TYPE_SILE, TYPE_UI, TYPE_VAR, ui
 from anker_ble_emulator.mcu import EPOCH, RTC, Burst
 from anker_ble_emulator.messages import BLE_REPLY_ROUTE
 from anker_ble_emulator.parameters import (
@@ -107,6 +107,9 @@ SCHEDULE_HEAD_FIELDS = tuple(sc.name for sc in SCHEDULE_HEAD if sc.name)
 #: ``4207`` "reply ``a2`` port ``fe``"). The device writes its own clock; the
 #: request's stands in for it.
 PORT_ECHOES = {0x207: ("a2", "fe"), 0x208: ("a2", "a3", "fe"), 0x209: ("a2", "fe")}
+#: A ``4208``'s ``0308`` goes out before its ack (doc ``4208`` row: the ``0308``
+#: "arrives before the ack").
+TIMED_TASK_LEADS = {0x208: frozenset({0x308})}
 
 SWITCH = OptionsValidator(ui(1), 0, 1)
 #: ``4203 a2``: the screen timeout, the same enum as the snapshot's.
@@ -147,6 +150,72 @@ CountdownRecordRemainingFirst = Struct(
     "countdown_task_remaining_seconds" / ui(4),
     "countdown_task_seconds" / ui(4),
 )
+
+
+#: The unit's WiFi (link-state bit 1), set by ``set_wifi``; carried in no frame.
+WIFI_UP = "_wifi_up"
+#: The ``a1`` that reaches the BLE client; every push is built on it.
+BLE_ROUTE = 0x31
+#: Where each push goes (doc "Push routing"): its ``a1`` with BLE alone (None:
+#: not sent), then its ``a1`` s with WiFi up. Only ``0x31`` reaches BLE; the
+#: rest are MQTT (``64``/``44`` param_info, ``34`` device update, ``32``
+#: state_info). Pushes not listed stay on BLE.
+Routes = dict[int, tuple[int | None, tuple[int, ...]]]
+PUSH_ROUTES: Routes = {
+    0x300: (None, (0x32,)),
+    0x301: (None, (0x64,)),
+    0x303: (BLE_ROUTE, (0x34,)),
+    0x304: (BLE_ROUTE, (0x64, 0x44)),
+    0x312: (None, (0x32,)),
+    **dict.fromkeys(
+        (770, 773, *range(775, 780), 781, *range(783, 786)), (BLE_ROUTE, (100,))
+    ),
+}
+
+
+def reaches_ble(routes: Routes, msgtype: int, values: Mapping[str, Value]) -> bool:
+    """Whether a push goes out on the BLE link in the unit's link state."""
+    if msgtype not in routes:
+        return True
+    ble, wifi = routes[msgtype]
+    return BLE_ROUTE in (wifi if values.get(WIFI_UP) else (ble,))
+
+
+def mqtt_routed(
+    routes: Routes, msgtype: int, payload: bytes, values: Mapping[str, Value]
+) -> tuple[tuple[int, bytes], ...]:
+    """Return a push's MQTT copies in the unit's link state: (msgtype, payload).
+
+    Each carries its MQTT ``a1``; none while WiFi is down.
+    """
+    if msgtype not in routes or not values.get(WIFI_UP):
+        return ()
+    params = Parameters.parse(payload)
+    copies = []
+    for route in routes[msgtype][1]:
+        params["a1"] = ParameterContainer(
+            key=b"\xa1", type=None, value=Int8ul.build(route)
+        )
+        copies.append((msgtype, Parameters.build(params)))
+    return tuple(copies)
+
+
+def wifi_events(
+    before: Mapping[str, Value], after: Mapping[str, Value]
+) -> tuple[Timed, ...]:
+    """Return ``0301`` when the unit's WiFi comes up (doc "Push routing")."""
+    if after.get(WIFI_UP) and not before.get(WIFI_UP):
+        return (Timed(0, "wifi_up", _wifi_came_up),)
+    return ()
+
+
+def _wifi_came_up(
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """``0301``: the firmware version, as recorded (MQTT ``a10164a203024408``)."""
+    version = container("a2", TYPE_SILE, ui(2).build(state["firmware_version"]))
+    return Step(frames=(timed_push(0x301, {"a2": version}, state),))
 
 
 def timed_push(
@@ -300,7 +369,7 @@ def countdown_timers(
             tick = _Countdown(port, select, port in disarm_clears, remaining_first)
             events.append(Timed(COUNTDOWN_TICK, key, tick))
         elif before[switch] and not after[switch]:
-            events.append(Timed(0, key, _dropped))
+            events.append(Timed(0, key, drop_queued))
     return tuple(events)
 
 
@@ -326,7 +395,7 @@ def schedule_timers(
                 task = _TimedTask(port, select, half, int(now["weekdays"]), weekday)
                 events.append(Timed(delay, key, task))
             elif was != now:
-                events.append(Timed(0, key, _dropped))
+                events.append(Timed(0, key, drop_queued))
     return tuple(events)
 
 
@@ -409,7 +478,7 @@ class _TimedTask:
         )
 
 
-def _dropped(
+def drop_queued(
     values: Mapping[str, Value],  # noqa: ARG001  # replaces a pending event
     state: Mapping[str, Value],  # noqa: ARG001
 ) -> Step:

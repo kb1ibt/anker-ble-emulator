@@ -9,7 +9,13 @@ from .prime_fixtures import (
     device_clock,
     opened,
     prime_client,
+    pushed_by,
     snapshot,
+    theme_select,
+    unit_change,
+    upload_chunk,
+    upload_prepare,
+    usbc_identity,
 )
 
 
@@ -21,5 +27,11 @@ __all__ = [
     "device_clock",
     "opened",
     "prime_client",
+    "pushed_by",
     "snapshot",
+    "theme_select",
+    "unit_change",
+    "upload_chunk",
+    "upload_prepare",
+    "usbc_identity",
 ]
