@@ -3653,22 +3653,18 @@ FLOOR_LEVER = {
 def test_raising_min_soc_moves_the_bus_to_the_main_replays_2026_08_31() -> None:
     """a1783-operation.md "``min_soc`` as a lever": floor 60 over the expansion's 56 %.
 
-    The main at its 100 % cap may not charge, so :164 can't fire; the expansion
-    under its floor may not discharge, so :166 moves the bus after 300 steps.
-    Post n+1 (19:32:07): main 3/9 (on the bus, quiet), expansion 3/3.
+    The expansion under its new line hands the bus to the main (:164; :166's
+    zeroed allowance would too). Post n+1 (19:32:07): main 3/9 (on the bus,
+    quiet), expansion 3/3.
     """
     clock = ManualClock()
     device = A1783(clock=clock)
     device.set_values(**FLOOR_LEVER)
 
     device.set_values(discharge_limit_value=60)
-    clock.advance(3)
-    device.negotiated_module.check_pushes()
-    waiting = tuple(next_0490(device)[name] for name in SLOTS)
-    clock.advance(0.1)
+    clock.advance(3.1)
     device.negotiated_module.check_pushes()
 
-    assert waiting == (3, 3, 8, 9)
     assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 9, 3, 3)
 
 
@@ -3739,8 +3735,6 @@ def test_the_switch_gap_finds_the_expansion_at_its_floor() -> None:
     device = A1783(clock=clock)
     device.set_values(**FLOOR_LEVER)
     device.set_values(discharge_limit_value=60)
-    clock.advance(3.1)
-    device.negotiated_module.check_pushes()
     device.set_values(discharge_limit_value=5, total_output_power=60)
 
     device.set_values(pack_soc=990)
@@ -3780,39 +3774,41 @@ def test_a_main_below_its_cap_takes_the_bus_at_8() -> None:
     assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
 
 
-def test_a_main_at_its_cap_leaves_the_expansion_on_the_bus() -> None:
-    """:164 needs the main's charge allowance: at its cap the expansion keeps the bus.
-
-    Re-checked every step: the main falling below its cap takes it.
-    """
-    clock = ManualClock()
-    device = A1783(clock=clock)
+def test_a_main_at_its_cap_takes_the_bus_too() -> None:
+    """:164 reads the main's CAN-reported charge allowance, taken as non-zero."""
+    device = A1783(clock=ManualClock())
     device.set_values(**{**OFF_GRID_EXPANSION, "pack_soc": 980})
 
     device.set_values(sub_package_pack_soc=58)
-    clock.advance(4)
-    device.negotiated_module.check_pushes()
-    stayed = tuple(next_0490(device)[name] for name in SLOTS)
-    device.set_values(pack_soc=979)
 
-    assert stayed == (3, 3, 8, 9)
     assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
 
 
-def test_an_expansion_charged_off_its_floor_keeps_the_bus() -> None:
-    """:166 counts 300 steps at the floor: charged back above it first, no switch."""
+def test_an_expansion_taking_the_bus_under_its_line_hands_it_back() -> None:
+    """:164 is checked every step after the dwell, not only when the SoC crosses.
+
+    Above its floor the expansion may take discharge (:158) at 5.5 %, under its
+    5.9 % line; 3.01 s later it hands it back.
+    """
     clock = ManualClock()
     device = A1783(clock=clock)
-    device.set_values(**{**OFF_GRID_EXPANSION, "pack_soc": 980})
-
-    device.set_values(sub_package_pack_soc=50)
-    clock.advance(1)
+    device.set_values(**FLOOR_LEVER)
+    device.set_values(discharge_limit_value=60)
+    clock.advance(10)
     device.negotiated_module.check_pushes()
-    device.set_values(sub_package_pack_soc=51)
+    device.set_values(discharge_limit_value=5, total_output_power=60)
+    device.set_values(sub_package_pack_soc=55)
+
+    device.set_values(pack_soc=990)
+    taken = tuple(next_0490(device)[name] for name in SLOTS)
     clock.advance(3)
     device.negotiated_module.check_pushes()
+    dwelling = tuple(next_0490(device)[name] for name in SLOTS)
+    clock.advance(0.1)
+    device.negotiated_module.check_pushes()
 
-    assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
+    assert taken == dwelling == (3, 3, 8, 9)
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
 
 
 def test_a_charge_restarts_the_discharge_latch() -> None:

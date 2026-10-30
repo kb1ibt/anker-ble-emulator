@@ -1308,14 +1308,16 @@ OFF_BUS = (3, 3)
 #:   expansion above its floor; more than 200 steps since the last switch;
 #: - expansion -> main discharge (:164): 300 steps on the expansion, not
 #:   charging (the charge-cap latch clear), its SoC under ``min_soc`` + 0.9 %,
-#:   the main below its cap (its charge allowance, +0xe0);
-#: - expansion -> main discharge (:166): the expansion, not charging, at or
-#:   under its floor (it may not discharge) for 300 steps.
-#: A pack may charge below its cap; the expansion may discharge above its floor,
-#: the main always (+0xe2 = 60.0 A). Not modeled: the once-per-boot switch
-#: (:157), the pack-switch code (:161, :167), the allowance-only rows (:162,
-#: :163, :165) and :166's charge direction, ``raw+0x95``, the expansion's share
-#: of the discharge latch and the latches' other paths. Hidden: the pack
+#:   checked every step; the main's CAN-reported charge allowance (record 1
+#:   +0xe0) is taken as non-zero, its value at the cap being unread.
+#: The allowances are the packs' own CAN reports, which the host never re-gates
+#: by SoC: a pack may charge below its cap; the BP2000 zeroes its discharge
+#: allowance at or under ``min_soc`` (CAN ``0x046e``), the main's stays 60.0 A.
+#: :166 (the expansion's discharge allowance at 0 for 300 steps) moves the bus
+#: only once :164 would have. Not modeled: the once-per-boot switch (:157), the
+#: pack-switch code (:161, :167), the allowance-only rows (:162, :163, :165),
+#: ``raw+0x95``, the expansion's share of the discharge latch and the latches'
+#: other paths. Hidden: the pack
 #: on the bus (1 main, 2 expansion; unset, the expansion when one is attached,
 #: as on the A1783 recording, else the main), when it took it (UTC s), and the
 #: main's 0.1 % SoC the discharge latch counts its drop from.
@@ -1330,7 +1332,6 @@ SWITCH_GAP = 2.01
 CHARGE_CAP_LATCH = 1.0
 DISCHARGE_LATCH_DROP = 10
 PACK_HANDOVER = "pack_handover"
-EXPANSION_SPENT = "expansion_spent"
 LATCH_REFERENCE = "discharge_latch_reference"
 
 
@@ -1389,6 +1390,11 @@ def _bus_to(
     }
 
 
+def _expansion_may_discharge(state: Mapping[str, Value]) -> bool:
+    """Return whether the BP2000 reports a discharge allowance: above ``min_soc``."""
+    return _expansion_soc(state) > _floor(state)
+
+
 def _cap_latch_due(state: Mapping[str, Value]) -> bool:
     """Return whether the main, charging at its cap, owes the expansion its charge."""
     return (
@@ -1406,25 +1412,16 @@ def _discharge_latch_due(state: Mapping[str, Value]) -> bool:
         start is not None
         and _main_soc(state) <= int(start) - DISCHARGE_LATCH_DROP
         and int(start) > _expansion_floor_line(state)
-        and _expansion_soc(state) > _floor(state)
+        and _expansion_may_discharge(state)
         and _expansion_on(state)
     )
 
 
 def _main_due(state: Mapping[str, Value]) -> bool:
     """Return whether the expansion, under its line, owes the main the discharge."""
-    return (
-        state["sub_package_status"] != FLOW_CHARGE
-        and _expansion_soc(state) < _expansion_floor_line(state)
-        and _main_soc(state) < _cap(state)
-    )
-
-
-def _expansion_spent(state: Mapping[str, Value]) -> bool:
-    """Return whether the expansion, discharging at its floor, may not discharge."""
     return state["sub_package_status"] != FLOW_CHARGE and _expansion_soc(
         state
-    ) <= _floor(state)
+    ) < _expansion_floor_line(state)
 
 
 def _handovers(
@@ -1435,11 +1432,10 @@ def _handovers(
         return []
     if _bus_pack(after) == BUS_MAIN:
         return _main_handovers(before, after, own)
-    if _main_due(after) and not _main_due(before):
+    taken = _bus_pack(before) != BUS_EXPANSION
+    if _main_due(after) and (taken or not _main_due(before)):
         dwell = max(0.0, BUS_DWELL - _held_for(after, BUS_DWELL))
         return [Timed(dwell, PACK_HANDOVER, _bus_to_main)]
-    if _expansion_spent(after) and not _expansion_spent(before):
-        return [Timed(BUS_DWELL, EXPANSION_SPENT, _spent_to_main)]
     return []
 
 
@@ -1490,7 +1486,8 @@ def _discharge_to_expansion(
 ) -> Step:
     """Hand discharge to the expansion, the discharge latch set.
 
-    ``a3[0]`` and ``a5[1]`` read 0 at once and ``c0[24]`` the port flow.
+    ``a3[0]`` and ``a5[1]`` read 0 at once and ``c0[24]`` the port flow; :164
+    is checked once the expansion's dwell is over.
     """
     if not _discharge_latch_due(state):
         return Step()
@@ -1501,19 +1498,13 @@ def _discharge_to_expansion(
         "sub_package_status": FLOW_OUT if output else FLOW_IDLE,
         **_bus_to(BUS_EXPANSION, state, flowing=output),
     }
-    return Step(values=changes)
+    dwell = Timed(BUS_DWELL, PACK_HANDOVER, _bus_to_main)
+    return Step(values=changes, then=(dwell,))
 
 
 def _bus_to_main(values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
     """Hand discharge to the main, the expansion under its line (03:29:25)."""
     if not _main_due(state):
-        return Step()
-    return _switched_off(values, state)
-
-
-def _spent_to_main(values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
-    """Hand discharge to the main, the expansion 300 steps at its floor."""
-    if _bus_pack(state) != BUS_EXPANSION or not _expansion_spent(state):
         return Step()
     return _switched_off(values, state)
 
