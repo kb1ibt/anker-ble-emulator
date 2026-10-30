@@ -1302,11 +1302,14 @@ OFF_BUS = (3, 3)
 #: Pack selection (MainBMS ``pack_select_eval``, firmware/mainbms-control-fsms.md
 #: "Pack selection", 10 ms steps), re-checked on every change:
 #: - the charge-cap latch (:193, ``0x20000b64``): sets after 100 steps with the
-#:   on-bus pack charging at or above its cap and a charge source in
-#:   (``flag_00c7``), whatever the expansion's state; clears in discharge and
-#:   at once when the source goes; setting it clears the discharge latch, whose
-#:   arming clears it (:194). Its idle 60 s / 3 s paths, the no-SoC count and
-#:   the fault path aren't modeled;
+#:   on-bus pack charging at or above its cap and a source in (``flag_00c7``,
+#:   or ALT byte +9 at 2: hidden ``alternator_byte_9``, the ALT record's +9,
+#:   meaning unread), whatever the expansion's state; clears in discharge, and
+#:   with ``flag_00c7`` gone at once, or after 1 500 steps with +9 at 2. That
+#:   count is only reset by ``flag_00c7``, so once run out +9 alone sets
+#:   nothing (hidden ``charge_cap_latch_spent``). Setting it clears the
+#:   discharge latch, whose arming clears it (:194). Its idle 60 s / 3 s paths,
+#:   the no-SoC count and the fault path aren't modeled;
 #: - main -> expansion charge (:165): the charge-cap latch set, the expansion
 #:   below its cap, switched on, its path hold clear;
 #: - main -> expansion discharge (:164): the discharge latch (:194 (a): the
@@ -1345,6 +1348,11 @@ LATCH_SET = "discharge_latch"
 CAP_LATCH = "charge_cap_latch"
 CAP_LATCH_EVENT = "charge_cap_latch_count"
 CAP_LATCH_REFERENCE = "charge_cap_latch_clear"
+CAP_LATCH_SPENT = "charge_cap_latch_spent"
+CAP_LATCH_HOLDOVER = 15.0
+CAP_LATCH_HOLDOVER_EVENT = "charge_cap_latch_holdover"
+ALT_BYTE_9 = "alternator_byte_9"
+ALT_BYTE_9_SOURCE = 2
 EXPANSION_PACK_SOC = "sub_package_pack_soc"
 PATH_HOLD = "sub_package_path_hold"
 BUS_DWELL = 3.01
@@ -1412,23 +1420,41 @@ def _on_bus(state: Mapping[str, Value]) -> tuple[int, int]:
     return int(state["sub_package_status"]), _expansion_soc(state)
 
 
+def _alt_byte_9_source(state: Mapping[str, Value]) -> bool:
+    """Return whether ALT byte +9 reads 2, the charge-cap latch's other source."""
+    return state.get(ALT_BYTE_9) == ALT_BYTE_9_SOURCE
+
+
 def _cap_latch_counts(state: Mapping[str, Value]) -> bool:
     """Return whether the 1 s count that sets the charge-cap latch runs (:193).
 
-    The latch clear, the on-bus pack charging at or above its cap, a source in.
+    The latch clear, the on-bus pack charging at or above its cap, and
+    ``flag_00c7``, or +9 at 2 with the clear count not run out.
     """
     flow, soc = _on_bus(state)
+    source = _charge_source(state) or (
+        _alt_byte_9_source(state) and not state.get(CAP_LATCH_SPENT)
+    )
     return (
         not state.get(CAP_LATCH)
         and flow == FLOW_CHARGE
         and soc >= _cap(state)
-        and _charge_source(state)
+        and source
     )
 
 
 def _cap_latch_clears(state: Mapping[str, Value]) -> bool:
-    """Return whether the charge-cap latch clears: in discharge, or no source in."""
-    return _on_bus(state)[0] == FLOW_OUT or not _charge_source(state)
+    """Return whether the charge-cap latch clears at once.
+
+    In discharge, or with ``flag_00c7`` gone and +9 not at 2.
+    """
+    sourced = _charge_source(state) or _alt_byte_9_source(state)
+    return _on_bus(state)[0] == FLOW_OUT or not sourced
+
+
+def _cap_latch_holds_over(state: Mapping[str, Value]) -> bool:
+    """Return whether the latch's 15 s clear count runs: ``flag_00c7`` gone, +9 at 2."""
+    return not _charge_source(state) and _alt_byte_9_source(state)
 
 
 def _cap_latched(state: Mapping[str, Value]) -> bool:
@@ -1493,17 +1519,27 @@ def _handovers(
 def _cap_latch_events(
     before: Mapping[str, Value], after: Mapping[str, Value], own: frozenset[str]
 ) -> list[Timed]:
-    """Return the charge-cap latch's clearing, or its 1 s count, a change draws.
+    """Return the charge-cap latch's clearing, or the count, a change draws.
 
-    Each latch setting clears the other, so a clearing re-takes the baseline.
+    Each latch setting clears the other, so a clearing re-takes the baseline;
+    ``flag_00c7`` back resets the run-out clear count.
     """
-    if after.get(CAP_LATCH) and _cap_latch_clears(after):
-        marks = {CAP_LATCH: 0, LATCH_FROM: _main_soc(after)}
-        return [Timed(0.0, CAP_LATCH_REFERENCE, partial(_latch_marks, marks))]
-    if _cap_latch_counts(after) and not _cap_latch_counts(before):
+    marks: dict[str, Value] = {}
+    if after.get(CAP_LATCH_SPENT) and _charge_source(after):
+        marks[CAP_LATCH_SPENT] = 0
+    latched = bool(after.get(CAP_LATCH))
+    if latched and _cap_latch_clears(after):
+        marks |= {CAP_LATCH: 0, LATCH_FROM: _main_soc(after)}
+    events = []
+    if marks:
+        events.append(Timed(0.0, CAP_LATCH_REFERENCE, partial(_latch_marks, marks)))
+    if latched:
+        if _cap_latch_holds_over(after) and not _cap_latch_holds_over(before):
+            events.append(CAP_LATCH_EXPIRY)
+    elif _cap_latch_counts(after) and not _cap_latch_counts(before):
         latch = partial(_cap_latch_set, own)
-        return [Timed(CHARGE_CAP_LATCH, CAP_LATCH_EVENT, latch)]
-    return []
+        events.append(Timed(CHARGE_CAP_LATCH, CAP_LATCH_EVENT, latch))
+    return events
 
 
 def _main_handovers(
@@ -1580,7 +1616,31 @@ def _cap_latch_set(
     }
     if _charge_handover_due({**state, **changes}):
         changes |= _without(_charge_handover(state), own)
+    expiry = (CAP_LATCH_EXPIRY,) if _cap_latch_holds_over(state) else ()
+    return Step(values=changes, then=expiry)
+
+
+def _cap_latch_expires(
+    _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Clear the charge-cap latch 1 500 steps after ``flag_00c7`` went, +9 at 2.
+
+    The clear count stays run out until ``flag_00c7`` is back, so +9 alone sets
+    nothing meanwhile. An expansion on the bus under its line hands it back (:170).
+    """
+    if not (_cap_latched(state) and _cap_latch_holds_over(state)):
+        return Step()
+    changes = {CAP_LATCH: 0, LATCH_FROM: _main_soc(state), CAP_LATCH_SPENT: 1}
+    after = {**state, **changes}
+    if _bus_pack(after) == BUS_EXPANSION and _main_due(after):
+        dwell = max(0.0, BUS_DWELL - _held_for(after, BUS_DWELL))
+        return Step(values=changes, then=(Timed(dwell, PACK_HANDOVER, _bus_to_main),))
     return Step(values=changes)
+
+
+CAP_LATCH_EXPIRY = Timed(
+    CAP_LATCH_HOLDOVER, CAP_LATCH_HOLDOVER_EVENT, _cap_latch_expires
+)
 
 
 def _charge_handover(state: Mapping[str, Value]) -> dict[str, Value]:
@@ -2846,7 +2906,7 @@ class CGen2Layout(TableLayout):
         if msgtype == MSGTYPE_425:
             names.add(EVENT_SOC)
         if "d9" in self.FIELDS.get(msgtype, {}):
-            names |= {TOU_TABLE, PACK_SOC, AUTO_PLANS, BUS_PACK, PATH_HOLD}
+            names |= {TOU_TABLE, PACK_SOC, AUTO_PLANS, BUS_PACK, PATH_HOLD, ALT_BYTE_9}
         if OUTPUT_PORTS in self.GROUPS.get(msgtype, ()):
             names |= USB_C_DEVICES.keys()
         if msgtype == MSGTYPE_490:
@@ -2977,6 +3037,8 @@ class CGen2Layout(TableLayout):
         given = values or {}
         if msgtype == MSGTYPE_425 and EVENT_SOC in given:
             ui(1).build(given[EVENT_SOC])
+        if ALT_BYTE_9 in given:
+            ui(1).build(given[ALT_BYTE_9])
         if TOU_TABLE in given:
             _check_tou_table(given[TOU_TABLE])
         if BUS_PACK in given and given[BUS_PACK] not in {BUS_MAIN, BUS_EXPANSION}:

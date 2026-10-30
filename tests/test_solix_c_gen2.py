@@ -3977,6 +3977,119 @@ def test_the_cap_latch_clears(values: dict[str, Value]) -> None:
     assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
 
 
+def test_alternator_byte_9_sets_the_cap_latch_with_no_charge_source() -> None:
+    """:193's source is ``flag_00c7`` or ALT byte +9 == 2: +9 alone moves the charge."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**CHARGING_MAIN, "ac_input_status": 0, "ac_input_power": 0})
+    device.set_values(alternator_byte_9=2)
+
+    device.set_values(battery_level=95, pack_soc=950)
+    clock.advance(1)
+    device.negotiated_module.check_pushes()
+
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
+
+
+def test_the_source_going_holds_the_cap_latch_15_s_with_alternator_byte_9() -> None:
+    """``flag_00c7`` gone with +9 == 2: the latch clears after 1 500 steps, then :170.
+
+    The expansion, quiet under its line, keeps the bus 15 s; the main then takes
+    it, quiet at its 95 % cap.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**CHARGING_MAIN, "discharge_limit_value": 5})
+    device.set_values(alternator_byte_9=2)
+    device.set_values(battery_level=95, pack_soc=950)
+    clock.advance(1)
+    device.negotiated_module.check_pushes()
+
+    device.set_values(ac_input_status=0, ac_input_power=0, sub_package_status=0)
+    clock.advance(14)
+    device.negotiated_module.check_pushes()
+    held = tuple(next_0490(device)[name] for name in SLOTS)
+    clock.advance(4.1)
+    device.negotiated_module.check_pushes()
+
+    assert held == (3, 3, 8, 9)
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 9, 3, 3)
+
+
+def test_alternator_byte_9_alone_holds_the_cap_latch_15_s() -> None:
+    """Set with ``flag_00c7`` gone, the latch clears 1 500 steps on.
+
+    The path hold kept the main on the bus; cleared after that, it moves nothing.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**CHARGING_MAIN, "ac_input_status": 0, "ac_input_power": 0})
+    device.set_values(alternator_byte_9=2, sub_package_path_hold=1)
+    device.set_values(battery_level=95, pack_soc=950)
+    clock.advance(17)
+    device.negotiated_module.check_pushes()
+
+    device.set_values(sub_package_path_hold=0)
+
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
+
+
+def test_the_source_back_within_15_s_keeps_the_cap_latch() -> None:
+    """``flag_00c7`` back resets the clear count: the expansion keeps the bus."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**CHARGING_MAIN, "discharge_limit_value": 5})
+    device.set_values(alternator_byte_9=2)
+    device.set_values(battery_level=95, pack_soc=950)
+    clock.advance(1)
+    device.negotiated_module.check_pushes()
+    device.set_values(ac_input_status=0, ac_input_power=0, sub_package_status=0)
+    clock.advance(10)
+    device.negotiated_module.check_pushes()
+
+    device.set_values(ac_input_status=1)
+    clock.advance(10)
+    device.negotiated_module.check_pushes()
+
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
+
+
+def test_a_spent_cap_latch_waits_for_the_charge_source() -> None:
+    """The clear count outlives the clear: +9 alone re-sets nothing.
+
+    The latch counts again once ``flag_00c7`` is back.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**CHARGING_MAIN, "discharge_limit_value": 5})
+    device.set_values(alternator_byte_9=2)
+    device.set_values(battery_level=95, pack_soc=950)
+    clock.advance(1)
+    device.negotiated_module.check_pushes()
+    device.set_values(ac_input_status=0, ac_input_power=0, sub_package_status=0)
+    clock.advance(19)
+    device.negotiated_module.check_pushes()
+
+    device.set_values(charge_discharge_status=2)
+    clock.advance(2)
+    device.negotiated_module.check_pushes()
+    spent = tuple(next_0490(device)[name] for name in SLOTS)
+    device.set_values(ac_input_status=1, ac_input_power=1210)
+    clock.advance(1)
+    device.negotiated_module.check_pushes()
+
+    assert spent == (3, 9, 3, 3)
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
+
+
+def test_alternator_byte_9_is_a_byte() -> None:
+    """Hidden ``alternator_byte_9``: the ALT record's +9, one byte."""
+    device = A1783()
+
+    with pytest.raises(ConstructError):
+        device.set_values(alternator_byte_9=256)
+
+
 def test_the_cap_latch_keeps_an_idle_expansion_under_its_line_on_the_bus() -> None:
     """Handed the charge at 5.0 %, the expansion goes quiet with the source still in.
 
