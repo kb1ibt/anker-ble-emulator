@@ -2723,6 +2723,51 @@ def test_a2345_4212_a2_0_erases_the_holiday_record() -> None:
     }
 
 
+def test_a2345_4212_a2_0_mid_fetch_erases_but_the_fetch_still_lands() -> None:
+    """The erase doesn't cancel a fetch in flight: it lands and writes the record.
+
+    doc "Theme upload": the busy flag, kind and slot base stay set, a race.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_wifi(True)
+    window = holiday_schedule(RHYTHMIC_HUE, module.rtc, module.rtc + 60)
+    command(device, client, 0x212, window)
+    advance(device, client, clock, 4)
+
+    command(device, client, 0x212, [(0xA2, b"\x03" + ui(4).build(0))])
+    erased = module.values["_holiday_id"]
+    advance(device, client, clock, 5)
+
+    assert (erased, module.values["_holiday_id"]) == (0, RHYTHMIC_HUE)
+
+
+def test_a2345_holiday_fetch_lands_across_a_wifi_drop_with_no_0311() -> None:
+    """WiFi down mid-fetch: the module resumes at its offset, and it still lands.
+
+    doc "Theme upload"; the retry budget ending it with status 3 isn't modeled.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_wifi(True)
+    window = holiday_schedule(RHYTHMIC_HUE, module.rtc, module.rtc + 60)
+    command(device, client, 0x212, window)
+
+    on_ble = advance(device, client, clock, 3)
+    device.set_wifi(False)
+    on_ble += advance(device, client, clock, 3)
+    device.set_wifi(True)
+    on_ble += advance(device, client, clock, 3)
+
+    assert module.values["_holiday_id"] == RHYTHMIC_HUE
+    assert [cmd for cmd, _ in on_ble if cmd.endswith("311")] == []
+    assert [m for m, _ in published(device) if m == 0x311] == []
+
+
 def test_a2345_holiday_theme_shows_inside_its_window_on_the_local_rtc() -> None:
     """``4a02``: ``a4`` the fetch URL and ``a5 01`` from start to end, inclusive.
 

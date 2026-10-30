@@ -3784,30 +3784,39 @@ def test_a_main_at_its_cap_takes_the_bus_too() -> None:
     assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
 
 
-def test_an_expansion_taking_the_bus_under_its_line_hands_it_back() -> None:
-    """:164 is checked every step after the dwell, not only when the SoC crosses.
+def test_the_main_keeps_the_bus_over_an_expansion_in_its_band_replays_2026_09_03() -> (
+    None
+):
+    """a1783-operation.md "Expansion to its floor": ``c0[24]`` 0 03:29:25-08:00.
 
-    Above its floor the expansion may take discharge (:158) at 5.5 %, under its
-    5.9 % line; 3.01 s later it hands it back.
+    The main falls 96 -> 85 % while the expansion sits in its 5.0-5.9 % band:
+    :158 never hands it discharge back, however far the main drops.
     """
     clock = ManualClock()
     device = A1783(clock=clock)
-    device.set_values(**FLOOR_LEVER)
-    device.set_values(discharge_limit_value=60)
-    clock.advance(10)
+    device.set_values(**EXPANSION_DISCHARGING)
+    device.set_values(sub_package_pack_soc=58)
+    clock.advance(4)
     device.negotiated_module.check_pushes()
-    device.set_values(discharge_limit_value=5, total_output_power=60)
-    device.set_values(sub_package_pack_soc=55)
+    handed = tuple(next_0490(device)[name] for name in SLOTS)
 
-    device.set_values(pack_soc=990)
-    taken = tuple(next_0490(device)[name] for name in SLOTS)
-    clock.advance(3)
-    device.negotiated_module.check_pushes()
-    dwelling = tuple(next_0490(device)[name] for name in SLOTS)
-    clock.advance(0.1)
-    device.negotiated_module.check_pushes()
+    for soc in range(959, 849, -1):
+        device.set_values(pack_soc=soc)
+        clock.advance(6)
+        device.negotiated_module.check_pushes()
 
-    assert taken == dwelling == (3, 3, 8, 9)
+    assert handed == (8, 9, 3, 3)
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
+    assert next_0421(device)[0]["sub_package_status"] == 0
+
+
+def test_an_expansion_put_on_the_bus_under_its_line_hands_it_back() -> None:
+    """:164 is checked every step, so it arms when the bus is set by name too."""
+    device = A1783(clock=ManualClock())
+    device.set_values(**{**CHARGING_MAIN, "discharge_limit_value": 5})
+
+    device.set_values(pack_on_bus=2, sub_package_status=1)
+
     assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
 
 
