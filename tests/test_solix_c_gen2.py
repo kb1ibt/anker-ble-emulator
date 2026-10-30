@@ -4057,7 +4057,7 @@ def test_the_source_back_within_15_s_keeps_the_cap_latch() -> None:
 def test_a_spent_cap_latch_waits_for_the_charge_source() -> None:
     """The clear count outlives the clear: +9 alone re-sets nothing.
 
-    The latch counts again once ``flag_00c7`` is back.
+    With ``flag_00c7`` back it sets at once, its 1 s count run out before.
     """
     clock = ManualClock()
     device = A1783(clock=clock)
@@ -4075,8 +4075,6 @@ def test_a_spent_cap_latch_waits_for_the_charge_source() -> None:
     device.negotiated_module.check_pushes()
     spent = tuple(next_0490(device)[name] for name in SLOTS)
     device.set_values(ac_input_status=1, ac_input_power=1210)
-    clock.advance(1)
-    device.negotiated_module.check_pushes()
 
     assert spent == (3, 9, 3, 3)
     assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
@@ -4088,6 +4086,29 @@ def test_alternator_byte_9_is_a_byte() -> None:
 
     with pytest.raises(ConstructError):
         device.set_values(alternator_byte_9=256)
+
+
+def test_the_1_s_charging_count_runs_once() -> None:
+    """``0x20000b78`` is never reset: after its first second the latch sets at once.
+
+    fsms "Charge-cap latch counters". Back on the main at its cap, a second
+    charge hands over without the 1 s.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**CHARGING_MAIN, "discharge_limit_value": 5})
+    device.set_values(battery_level=95, pack_soc=950)
+    clock.advance(1)
+    device.negotiated_module.check_pushes()
+    device.set_values(ac_input_status=0, ac_input_power=0, sub_package_status=0)
+    clock.advance(4)
+    device.negotiated_module.check_pushes()
+    back = tuple(next_0490(device)[name] for name in SLOTS)
+
+    device.set_values(ac_input_status=1, ac_input_power=1210, charge_discharge_status=2)
+
+    assert back == (3, 9, 3, 3)
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
 
 
 def test_the_cap_latch_keeps_an_idle_expansion_under_its_line_on_the_bus() -> None:

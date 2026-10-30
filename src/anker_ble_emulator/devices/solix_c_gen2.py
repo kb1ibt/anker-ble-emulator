@@ -1301,15 +1301,18 @@ QUIET_AT_CAP = (3, 9)
 OFF_BUS = (3, 3)
 #: Pack selection (MainBMS ``pack_select_eval``, firmware/mainbms-control-fsms.md
 #: "Pack selection", 10 ms steps), re-checked on every change:
-#: - the charge-cap latch (:193, ``0x20000b64``): sets after 100 steps with the
-#:   on-bus pack charging at or above its cap and a source in (``flag_00c7``,
-#:   or ALT byte +9 at 2: hidden ``alternator_byte_9``, the ALT record's +9,
-#:   meaning unread), whatever the expansion's state; clears in discharge, and
-#:   with ``flag_00c7`` gone at once, or after 1 500 steps with +9 at 2. That
-#:   count is only reset by ``flag_00c7``, so once run out +9 alone sets
-#:   nothing (hidden ``charge_cap_latch_spent``). Setting it clears the
-#:   discharge latch, whose arming clears it (:194). Its idle 60 s / 3 s paths,
-#:   the no-SoC count and the fault path aren't modeled;
+#: - the charge-cap latch (:193, ``0x20000b64``; the counters under "Charge-cap
+#:   latch counters"): sets with the on-bus pack charging at or above its cap
+#:   and a source in (``flag_00c7``, or ALT byte +9 at 2: hidden
+#:   ``alternator_byte_9``, the ALT record's +9, meaning unread), whatever the
+#:   expansion's state: after 100 steps the first time, at once after that, the
+#:   count never reset (hidden ``charge_cap_latch_primed``). It clears in
+#:   discharge, and with ``flag_00c7`` gone at once, or after 1 500 steps with
+#:   +9 at 2. That count is only reset by ``flag_00c7``, so once run out +9
+#:   alone sets nothing (hidden ``charge_cap_latch_spent``). Setting it clears
+#:   the discharge latch, whose arming clears it (:194). Its idle and no-SoC
+#:   counts (both reset on vext / vbat, which no value carries) and the fault
+#:   path aren't modeled;
 #: - main -> expansion charge (:165): the charge-cap latch set, the expansion
 #:   below its cap, switched on, its path hold clear;
 #: - main -> expansion discharge (:164): the discharge latch (:194 (a): the
@@ -1349,6 +1352,7 @@ CAP_LATCH = "charge_cap_latch"
 CAP_LATCH_EVENT = "charge_cap_latch_count"
 CAP_LATCH_REFERENCE = "charge_cap_latch_clear"
 CAP_LATCH_SPENT = "charge_cap_latch_spent"
+CAP_LATCH_PRIMED = "charge_cap_latch_primed"
 CAP_LATCH_HOLDOVER = 15.0
 CAP_LATCH_HOLDOVER_EVENT = "charge_cap_latch_holdover"
 ALT_BYTE_9 = "alternator_byte_9"
@@ -1537,8 +1541,9 @@ def _cap_latch_events(
         if _cap_latch_holds_over(after) and not _cap_latch_holds_over(before):
             events.append(CAP_LATCH_EXPIRY)
     elif _cap_latch_counts(after) and not _cap_latch_counts(before):
+        delay = 0.0 if after.get(CAP_LATCH_PRIMED) else CHARGE_CAP_LATCH
         latch = partial(_cap_latch_set, own)
-        events.append(Timed(CHARGE_CAP_LATCH, CAP_LATCH_EVENT, latch))
+        events.append(Timed(delay, CAP_LATCH_EVENT, latch))
     return events
 
 
@@ -1603,7 +1608,7 @@ def _latch_marks(
 def _cap_latch_set(
     own: frozenset[str], _values: Mapping[str, Value], state: Mapping[str, Value]
 ) -> Step:
-    """Set the charge-cap latch after 1 s counting, and hand the charge over (:165).
+    """Set the charge-cap latch, the count run out, and hand the charge over (:165).
 
     Setting it clears the discharge latch and re-takes its baseline (:194).
     """
@@ -1611,6 +1616,7 @@ def _cap_latch_set(
         return Step()
     changes: dict[str, Value] = {
         CAP_LATCH: 1,
+        CAP_LATCH_PRIMED: 1,
         LATCH_SET: 0,
         LATCH_FROM: _main_soc(state),
     }
