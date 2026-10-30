@@ -11,9 +11,10 @@ handler names (``setACPortTimedTask``, ``setACPortCountdownTask``,
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from functools import partial
 from typing import TYPE_CHECKING
 
-from construct import Flag, If, Int8ul, Struct, this
+from construct import Array, Flag, If, Int8sl, Int8ul, Int16ul, Struct, this
 
 from anker_ble_emulator.layouts import TYPE_BIN, TYPE_SILE, TYPE_UI, TYPE_VAR, ui
 from anker_ble_emulator.mcu import EPOCH, RTC, Burst
@@ -201,12 +202,82 @@ def mqtt_routed(
 
 
 def wifi_events(
-    before: Mapping[str, Value], after: Mapping[str, Value]
+    before: Mapping[str, Value],
+    after: Mapping[str, Value],
+    timers: tuple[Timed, ...],
 ) -> tuple[Timed, ...]:
-    """Return ``0301`` when the unit's WiFi comes up (doc "Push routing")."""
+    """Return what the unit's WiFi coming up or going down starts or stops.
+
+    Up sends ``0301`` (doc "Push routing") and starts ``timers``, the MQTT-only
+    periodics; down stops them. The MCU's timers free-run from boot, so their
+    phase here, a full period after WiFi comes up, is the emulator's.
+    """
     if after.get(WIFI_UP) and not before.get(WIFI_UP):
-        return (Timed(0, "wifi_up", _wifi_came_up),)
+        return (Timed(0, "wifi_up", _wifi_came_up), *timers)
+    if before.get(WIFI_UP) and not after.get(WIFI_UP):
+        return tuple(Timed(0, timer.key, drop_queued) for timer in timers)
     return ()
+
+
+def every(
+    period: float,
+    key: str,
+    build: Callable[[Mapping[str, Value]], tuple[int, bytes] | None],
+) -> Timed:
+    """Return a timer sending ``build``'s push every ``period`` s (none for None)."""
+    return Timed(period, key, partial(_tick, period, key, build))
+
+
+def _tick(
+    period: float,
+    key: str,
+    build: Callable[[Mapping[str, Value]], tuple[int, bytes] | None],
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Send the timer's push, if any, and arm the next."""
+    frame = build(state)
+    return Step(
+        frames=() if frame is None else (frame,),
+        then=(every(period, key, build),),
+    )
+
+
+#: ``0300``'s six ports, bit 0 first: C1-C4, A1, A2 (doc "``state_info`` (MQTT)").
+STATS_PORTS = ("pd1", "pd2", "pd3", "pd4", "usb1", "usb2")
+StatsPorts = Struct("active" / Int8ul, "power" / Array(len(STATS_PORTS), Int16ul))
+#: ``0300`` every 6 000 and ``0312`` every 600 ticks of 100 ms (doc "Periodic
+#: pushes"), both MQTT ``state_info`` only.
+STATS_PERIOD = 600.0
+COUNTRY_PERIOD = 60.0
+SECONDS_PER_HOUR = 3600
+
+
+def utc_hours(state: Mapping[str, Value]) -> int:
+    """Return the clock's UTC offset in whole hours: local time less UTC."""
+    return round((int(state[RTC]) - int(state[EPOCH])) / SECONDS_PER_HOUR)
+
+
+def stats_push(state: Mapping[str, Value], *, step: int) -> tuple[int, bytes]:
+    """``0300``: the active ports' bitmap, six port powers, their total, UTC hours.
+
+    A port is active when its block's status is 1. Power is the port blocks'
+    0.01 W, rounded down to a multiple of ``step`` (the A2345's 0.1 W is 10).
+    """
+    powers = [int(state[f"{p}_output_power"]) // step * step for p in STATS_PORTS]
+    active = sum(
+        1 << bit
+        for bit, port in enumerate(STATS_PORTS)
+        if state[f"{port}_output_status"] == 1
+    )
+    fields = {
+        "a2": container(
+            "a2", TYPE_BIN, StatsPorts.build({"active": active, "power": powers})
+        ),
+        "a3": container("a3", TYPE_SILE, ui(2).build(sum(powers))),
+        "a4": container("a4", TYPE_UI, Int8sl.build(utc_hours(state))),
+    }
+    return timed_push(0x300, fields, state)
 
 
 def _wifi_came_up(
@@ -226,12 +297,18 @@ def timed_push(
     The clock is the device's UTC epoch, where a command's pushes carry the
     request's.
     """
+    clock = container("fe", TYPE_VAR, ui(4).build(state[EPOCH]))
+    return untimed_push(msgtype, {**fields, "fe": clock})
+
+
+def untimed_push(
+    msgtype: int, fields: Mapping[str, ParameterContainer]
+) -> tuple[int, bytes]:
+    """Return a push the MCU sends on its own that carries no clock (``0311``)."""
     route = ParameterContainer(
         key=b"\xa1", type=None, value=Int8ul.build(BLE_REPLY_ROUTE)
     )
-    clock = container("fe", TYPE_VAR, ui(4).build(state[EPOCH]))
-    payload = ParameterDict({"a1": route, **fields, "fe": clock})
-    return msgtype, Parameters.build(payload)
+    return msgtype, Parameters.build(ParameterDict({"a1": route, **fields}))
 
 
 def set_screen_timeout(request: ParameterDict) -> dict[str, Value] | None:

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
@@ -45,6 +46,7 @@ from .prime import (
     REALTIME_BURST,
     SCHEDULE_HEAD,
     SCHEDULE_HEAD_FIELDS,
+    STATS_PERIOD,
     SWITCH,
     TIMED_TASK_LEADS,
     WIFI_UP,
@@ -53,10 +55,12 @@ from .prime import (
     ac_port_timed_task,
     countdown_push,
     countdown_timers,
+    every,
     mqtt_routed,
     reaches_ble,
     schedule_timers,
     set_screen_timeout,
+    stats_push,
     timed_task_conflict,
     timed_task_push,
     wifi_events,
@@ -294,7 +298,7 @@ class A91B2Layout(TableLayout):
                 PORT_BY_SELECT, before, after, disarm_clears=USB_C, remaining_first=True
             ),
             *schedule_timers(PORT_BY_SELECT, before, after),
-            *wifi_events(before, after),
+            *wifi_events(before, after, PERIODICS),
         )
 
     def sends(self, msgtype: int, values: Mapping[str, Value]) -> bool:
@@ -308,6 +312,9 @@ class A91B2Layout(TableLayout):
         return mqtt_routed(ROUTES, msgtype, payload, values)
 
 
+#: Its MQTT-only periodic while WiFi is up: ``0300`` stats, power unrounded
+#: (doc "``state_info``"); it has no ``0312``.
+PERIODICS = (every(STATS_PERIOD, "stats_0300", partial(stats_push, step=1)),)
 #: Its push routes: the A2345's, but ``0308`` goes to ``34`` with WiFi up
 #: (doc "Push routing").
 ROUTES = {**PUSH_ROUTES, 0x308: (BLE_ROUTE, (0x34,))}

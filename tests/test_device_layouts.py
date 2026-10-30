@@ -18,6 +18,7 @@ from anker_ble_emulator.mcu import McuScript
 from anker_ble_emulator.parameters import (
     ParameterDict,
     Parameters,
+    ScalarFieldLayout,
     TableLayout,
     decode_field,
 )
@@ -141,36 +142,12 @@ def test_a_read_reply_sets_its_status_or_stays_silent_and_leads_its_pushes() -> 
     assert layout.reply(0x221, bytes.fromhex("a10121"), {}) is None
 
 
-def test_a_follow_up_the_layout_holds_back_is_not_sent() -> None:
-    """``sends`` gates a command's follow-ups (a Prime on WiFi routes them off BLE)."""
+def test_a_device_shows_what_it_published_to_mqtt() -> None:
+    assert A2345().mqtt_published == []
 
-    def push(
-        _request: ParameterDict,
-        _before: Mapping[str, Value],
-        _after: Mapping[str, Value],
-    ) -> ParameterDict:
-        return ParameterDict()
 
-    class Gated(TableLayout):
-        COMMANDS = MappingProxyType({0x207: lambda _request: {}})
-        FOLLOW_UPS = MappingProxyType({0x207: ((0x302, push), (0x303, push))})
-
-        def sends(  # a layout hook
-            self,
-            msgtype: int,
-            values: Mapping[str, Value],
-        ) -> bool:
-            return msgtype != 0x302 or not values.get("_wifi_up")
-
-    script = McuScript(layout=Gated())
-
-    on_ble = script.respond(0x207, request=bytes.fromhex("a10121"))
-    on_wifi = script.respond(
-        0x207, request=bytes.fromhex("a10121"), values={"_wifi_up": 1}
-    )
-
-    assert [frame.cmd.msgtype for frame in on_ble] == [0xA07, 0x302, 0x303]
-    assert [frame.cmd.msgtype for frame in on_wifi] == [0xA07, 0x303]
+def test_a_scalar_layout_publishes_nothing_for_a_held_push() -> None:
+    assert ScalarFieldLayout().mqtt_routed(0x421, b"", {}) == ()
 
 
 def test_a_layout_starts_its_timers_with_the_mcu_and_again_on_a_new_script() -> None:

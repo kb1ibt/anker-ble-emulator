@@ -455,6 +455,15 @@ class TableLayout(StructFieldLayout, CommandDispatchLayout):
         """Whether the MCU sends its push of ``msgtype`` now: always."""
         return True
 
+    def mqtt_routed(
+        self,
+        msgtype: int,  # noqa: ARG002  # a push kept off BLE publishes nothing
+        payload: bytes,  # noqa: ARG002
+        values: Mapping[str, Value],  # noqa: ARG002
+    ) -> tuple[tuple[int, bytes], ...]:
+        """Return what the MCU publishes for a push kept off BLE: nothing."""
+        return ()
+
     def read(self, msgtype: int, payload: bytes) -> dict[str, Value]:
         """Return the named values ``payload`` carries."""
         fields = self.FIELDS.get(msgtype, {})
@@ -575,6 +584,15 @@ class ScalarFieldLayout:
     ) -> bool:
         """Whether the MCU sends its push of ``msgtype`` now: always."""
         return True
+
+    def mqtt_routed(
+        self,
+        msgtype: int,  # noqa: ARG002  # a push kept off BLE publishes nothing
+        payload: bytes,  # noqa: ARG002
+        values: Mapping[str, Value],  # noqa: ARG002
+    ) -> tuple[tuple[int, bytes], ...]:
+        """Return what the MCU publishes for a push kept off BLE: nothing."""
+        return ()
 
     def read(self, msgtype: int, payload: bytes) -> dict[str, Value]:
         """Return the named values ``payload`` carries."""

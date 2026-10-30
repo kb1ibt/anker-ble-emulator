@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import calendar
 from dataclasses import replace
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import pytest
@@ -28,9 +29,9 @@ from anker_ble_emulator.frame import (
     fragment,
     make_frame,
 )
-from anker_ble_emulator.mcu import Burst
+from anker_ble_emulator.mcu import Burst, mcu_frame
 from anker_ble_emulator.module import AuthMode, Output
-from anker_ble_emulator.parameters import TableLayout
+from anker_ble_emulator.parameters import ParameterDict, TableLayout
 from anker_ble_emulator.timed import Step, Timed
 from anker_ble_emulator.tlv import encode_fields
 from tests.fixtures.client import (
@@ -408,6 +409,88 @@ def test_an_action_gets_the_set_values_and_the_whole_state() -> None:
     rig.clock.advance(1.0)
     rig.module.check_pushes()
     assert seen[-1][1]["cloud"] == 1
+
+
+def test_a_follow_up_kept_off_ble_is_published_as_its_mqtt_copies() -> None:
+    """A Prime on WiFi: ``sends`` keeps a push off BLE, ``mqtt_routed`` publishes it."""
+
+    def push(
+        _request: ParameterDict,
+        _before: Mapping[str, Value],
+        _after: Mapping[str, Value],
+    ) -> ParameterDict:
+        return ParameterDict()
+
+    class Routed(TableLayout):
+        COMMANDS = MappingProxyType({0x207: lambda _request: {}})
+        FOLLOW_UPS = MappingProxyType({0x207: ((0x302, push), (0x303, push))})
+
+        def sends(  # a layout hook
+            self,
+            msgtype: int,
+            values: Mapping[str, Value],  # routes by msgtype
+        ) -> bool:
+            return msgtype != 0x302
+
+        def mqtt_routed(  # a layout hook
+            self,
+            msgtype: int,
+            payload: bytes,
+            values: Mapping[str, Value],  # routes by msgtype
+        ) -> tuple[tuple[int, bytes], ...]:
+            return ((msgtype, b"\xa1\x01\x64" + payload[3:]),)
+
+    rig = build_module()
+    client = AppClient()
+    rig.module.mcu = replace(rig.module.mcu, layout=Routed())
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+
+    out = rig.module.write(client.request(0x207, [(0xA1, b"\x21")], SESSION))
+
+    replies = [client.open(frame) for frame in out.frames]
+    assert [cmd_hex(r.frame) for r in replies if r] == ["4a07", "4303"]
+    assert rig.module.published == [
+        (0x302, encode(mcu_frame(0x302, bytes.fromhex("a10164"))))
+    ]
+
+
+def test_a_push_publishes_with_no_link_but_not_through_a_jump() -> None:
+    """MQTT needs no BLE link; a jump bypasses a publish as it does a push."""
+
+    class Offline(TableLayout):
+        def sends(  # a layout hook
+            self,
+            msgtype: int,  # keeps everything off BLE
+            values: Mapping[str, Value],
+        ) -> bool:
+            return False
+
+        def mqtt_routed(  # a layout hook
+            self,
+            msgtype: int,
+            payload: bytes,
+            values: Mapping[str, Value],  # copies it as it is
+        ) -> tuple[tuple[int, bytes], ...]:
+            return ((msgtype, payload),)
+
+    rig = build_module()
+    rig.module.mcu = replace(rig.module.mcu, layout=Offline())
+    rig.module.disconnect()
+    step = Step(pushes=(0x421,), published=((0x503, b"\xa1\x01\x12"),))
+
+    rig.module.schedule(Timed(1.0, "event", lambda _values, _state: step))
+    rig.clock.advance(1.0)
+    rig.module.check_pushes()
+    rig.module.schedule(Timed(1.0, "event", lambda _values, _state: step))
+    rig.clock.jump(2.0)
+    rig.module.check_pushes()
+    rig.module.push(0x421)
+
+    assert rig.module.published == [
+        (0x421, encode(mcu_frame(0x421, PUSH))),
+        (0x503, encode(mcu_frame(0x503, b"\xa1\x01\x12"))),
+        (0x421, encode(mcu_frame(0x421, PUSH))),
+    ]
 
 
 def test_a_bursts_first_push_the_layout_holds_back_is_not_sent() -> None:

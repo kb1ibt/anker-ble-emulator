@@ -470,6 +470,15 @@ class EmulatedDevice:
             raise NotImplementedError(msg)
         return self.module
 
+    @property
+    def mqtt_published(self) -> list[tuple[int, bytes]]:
+        """What the device published to MQTT on its own, in order.
+
+        Each is (msgtype, plain ``ff09`` frame): the timed MQTT messages and the
+        pushes its link state routes off BLE. ``mqtt_frame`` builds the rest.
+        """
+        return self.negotiated_module.published
+
     def set_values(self, **values: Value) -> None:
         """Set telemetry values by field name in every later frame that carries them.
 

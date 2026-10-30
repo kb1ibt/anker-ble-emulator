@@ -101,6 +101,11 @@ class LayoutProtocol(Protocol):
     def sends(self, msgtype: int, values: Mapping[str, Value]) -> bool:
         """Whether the MCU sends its push of ``msgtype`` now, given the set values."""
 
+    def mqtt_routed(
+        self, msgtype: int, payload: bytes, values: Mapping[str, Value]
+    ) -> tuple[tuple[int, bytes], ...]:
+        """Return the (msgtype, cleartext) MQTT copies of a push held off BLE."""
+
 
 #: Type bytes, every code the firmware writes (names from anker-solix-api's
 #: ``DeviceHexDataTypes``): string, u8, u16, 4 bytes, a raw block, and a

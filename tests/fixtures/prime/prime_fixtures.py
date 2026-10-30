@@ -11,6 +11,7 @@ from construct import Int32ul
 from anker_ble_emulator import Outer
 from anker_ble_emulator.devices.a2345 import DeviceIdentities, DeviceIds
 from anker_ble_emulator.devices.prime import MSGTYPE_303
+from anker_ble_emulator.frame import decode
 from anker_ble_emulator.layouts import ui
 from anker_ble_emulator.parameters import ParameterDict, Parameters, decode_field
 from tests.fixtures.client import (
@@ -169,6 +170,14 @@ def upload_chunk(image: bytes, index: int, chunk: int) -> list[tuple[int, bytes]
     """Return ``4221``'s fields: the index, then one ignored byte and the chunk."""
     data = image[index * chunk : (index + 1) * chunk]
     return [(0xA2, b"\x02" + ui(2).build(index)), (0xA3, b"\x00" + data)]
+
+
+def published(device: EmulatedDevice) -> list[tuple[int, str]]:
+    """Return what the device published to MQTT as (msgtype, cleartext hex)."""
+    return [
+        (msgtype, decode(frame).payload.hex())
+        for msgtype, frame in device.mqtt_published
+    ]
 
 
 def device_clock(seconds: int) -> str:

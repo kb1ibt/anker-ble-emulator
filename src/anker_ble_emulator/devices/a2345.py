@@ -16,6 +16,7 @@ from construct import (
     ExprValidator,
     Flag,
     GreedyBytes,
+    Int32sl,
     Padding,
     Struct,
 )
@@ -48,6 +49,7 @@ from anker_ble_emulator.validators import OptionsValidator
 
 from .base import Advert, ProductDevice, Profile, register
 from .prime import (
+    COUNTRY_PERIOD,
     MSGTYPE_303,
     MSGTYPE_A00,
     PORT_ECHOES,
@@ -56,6 +58,7 @@ from .prime import (
     REALTIME_BURST,
     SCHEDULE_HEAD,
     SCHEDULE_HEAD_FIELDS,
+    STATS_PERIOD,
     SWITCH,
     TIMED_TASK_LEADS,
     WIFI_UP,
@@ -64,13 +67,17 @@ from .prime import (
     countdown_push,
     countdown_timers,
     drop_queued,
+    every,
     mqtt_routed,
     reaches_ble,
     schedule_timers,
     set_screen_timeout,
+    stats_push,
     timed_push,
     timed_task_conflict,
     timed_task_push,
+    untimed_push,
+    utc_hours,
     wifi_events,
 )
 
@@ -239,10 +246,10 @@ SNAPSHOT_FIELDS: dict[str, FieldSpec] = {
 # --- Commands (fid 0x0f) ------------------------------------------------------
 # PiField/docs/re/prime-a2345-a91b2.md "Commands (fid 0x0f, table 0x00072250,
 # 36 slots)": every command below has a captured or firmware-documented
-# payload shape. 4201 (factory reset), 4202 (a read), 420a (region/owner) and
-# 4212 (holiday theme schedule) have no handler here: a recording or the
-# command table answers them, and the profile's factory_reset runs 4201's
-# reset. 4206 mode 5 (custom charge profile) isn't modeled.
+# payload shape. 4201 (factory reset) and 4202 (a read) have no handler here:
+# a recording or the command table answers them, and the profile's
+# factory_reset runs 4201's reset. 4206 mode 5 (custom charge profile) isn't
+# modeled.
 
 #: Port index 0-3 = pd1-pd4; 4 = usb (combined, per the doc's own "open" note
 #: on that mapping) -- shared by 4207/4208/4209's port selector.
@@ -280,9 +287,23 @@ IMAGE_THEMES = frozenset({3, CUSTOM_THEME})
 THEME_BY_KIND = {0: 3, 2: CUSTOM_THEME}
 #: A network or custom ``4205`` needs a URL at least this long.
 MIN_URL = 16
-#: ``4311 a3``: the image stored and shown, or wanted from the app (WiFi down).
+#: ``4311 a3``: the image stored and shown, or wanted from the app (WiFi down);
+#: with WiFi up the device fetches it itself (2, then 3 at its first chunk);
+#: 0 answers a ``4205`` while a fetch is busy (doc "``4311`` image state").
+IMAGE_BUSY = 0
 IMAGE_SHOWN = 1
+IMAGE_FETCHING = 2
+IMAGE_FIRST_CHUNK = 3
 IMAGE_WANTED = 4
+#: The self-fetch's states land this long after its ``4205``, as recorded
+#: (2026-09-08 16:17:43 MQTT: 0.38 s, 1.73 s, 8.6 s).
+FETCH_STARTED = 0.38
+FETCH_FIRST_CHUNK = 1.73
+FETCH_DONE = 8.6
+#: The theme being fetched, carried in no frame: its kind, id and CRC.
+FETCH_THEME = "_fetch_theme"
+FETCH_ID = "_fetch_id"
+FETCH_CRC = "_fetch_crc"
 #: The upload's state, carried in no frame: the theme a ``4205`` staged, the
 #: ``4220`` it opened, the next index and running CRC32, and the answer the last
 #: ``4221`` drew (a ``4a21`` status, or none).
@@ -369,16 +390,19 @@ def _stored(theme_id: int) -> str:
 def _theme_staging(
     request: ParameterDict, state: Mapping[str, Value]
 ) -> dict[str, Value]:
-    """Show a stored network or custom theme; stage any other for its upload.
+    """Show a stored network or custom theme; fetch or stage any other.
 
-    With WiFi down, the only link state modeled, the app then uploads the image.
+    With WiFi up the device fetches the image itself; with it down the app
+    uploads it. Nothing changes while a fetch is busy.
     """
     taken = _theme_request(request)
-    if taken is None:
+    if taken is None or state.get(FETCH_ID):
         return {}
     theme, theme_id, crc = taken
     if state.get(_stored(theme_id)) == crc:
         return _shown(theme, theme_id)
+    if state.get(WIFI_UP):
+        return {FETCH_THEME: theme, FETCH_ID: theme_id, FETCH_CRC: crc}
     return {STAGED_THEME_ID: theme_id}
 
 
@@ -395,16 +419,100 @@ def _theme_state(theme_id: int, image_state: int, theme: int) -> ParameterDict:
 
 def _theme_selected(
     request: ParameterDict,
-    before: Mapping[str, Value],  # noqa: ARG001  # the request decides it
+    before: Mapping[str, Value],
     after: Mapping[str, Value],
 ) -> ParameterDict | None:
-    """``4311`` after a network or custom ``4205``: 1 shown, 4 the image wanted."""
+    """``4311`` after a network or custom ``4205``.
+
+    1 shown, 4 the image wanted, 0 while a fetch is busy; none when a fetch
+    starts, whose states follow on their own (``_theme_fetch``).
+    """
     taken = _theme_request(request)
     if taken is None:
         return None
     theme, theme_id, crc = taken
-    stored = after.get(_stored(theme_id)) == crc
-    return _theme_state(theme_id, IMAGE_SHOWN if stored else IMAGE_WANTED, theme)
+    if before.get(FETCH_ID):
+        return _theme_state(theme_id, IMAGE_BUSY, theme)
+    if after.get(_stored(theme_id)) == crc:
+        return _theme_state(theme_id, IMAGE_SHOWN, theme)
+    if after.get(FETCH_ID):
+        return None
+    return _theme_state(theme_id, IMAGE_WANTED, theme)
+
+
+def _theme_fetch(
+    before: Mapping[str, Value], after: Mapping[str, Value]
+) -> tuple[Timed, ...]:
+    """Return a self-fetch's first state report, if a ``4205`` started one."""
+    if after.get(FETCH_ID) and not before.get(FETCH_ID):
+        return (Timed(FETCH_STARTED, "theme_fetch", _fetch_started),)
+    return ()
+
+
+def _fetch_report(state: Mapping[str, Value], image_state: int) -> tuple[int, bytes]:
+    """``0311`` for the image being fetched; it carries no clock."""
+    fields = _theme_state(int(state[FETCH_ID]), image_state, int(state[FETCH_THEME]))
+    return untimed_push(0x311, fields)
+
+
+def _fetch_started(
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """``0311`` 2: the device fetches the URL itself."""
+    then = Timed(FETCH_FIRST_CHUNK - FETCH_STARTED, "theme_fetch", _fetch_chunked)
+    return Step(frames=(_fetch_report(state, IMAGE_FETCHING),), then=(then,))
+
+
+def _fetch_chunked(
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """``0311`` 3: the first fetched chunk arrived."""
+    then = Timed(FETCH_DONE - FETCH_FIRST_CHUNK, "theme_fetch", _fetched)
+    return Step(frames=(_fetch_report(state, IMAGE_FIRST_CHUNK),), then=(then,))
+
+
+def _fetched(
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """``0311`` 1: the last chunk stored the image, and the theme shows.
+
+    The emulator fetches no bytes, so the image always passes its CRC.
+    """
+    theme, theme_id = int(state[FETCH_THEME]), int(state[FETCH_ID])
+    return Step(
+        values={_stored(theme_id): state[FETCH_CRC]} | _shown(theme, theme_id),
+        unset=(FETCH_THEME, FETCH_ID, FETCH_CRC),
+        frames=(_fetch_report(state, IMAGE_SHOWN),),
+    )
+
+
+def _country_utc(state: Mapping[str, Value]) -> tuple[int, bytes] | None:
+    """``0312``: the ``420a`` country and the UTC offset in hours (int32).
+
+    Sent only with the holiday switch on and a country stored (doc "Periodic
+    pushes"); WiFi up is the timer's own gate.
+    """
+    country = state.get(STORED_COUNTRY)
+    if not isinstance(country, bytes) or not country:
+        return None
+    if not state["holiday_screensaver_switch"]:
+        return None
+    fields = {
+        "a2": container("a2", TYPE_BIN, country),
+        "a3": container("a3", TYPE_VAR, Int32sl.build(utc_hours(state))),
+    }
+    return timed_push(0x312, fields, state)
+
+
+#: The A2345's MQTT-only periodics while WiFi is up: ``0300`` stats (0.1 W) and
+#: ``0312`` country / UTC.
+PERIODICS = (
+    every(STATS_PERIOD, "stats_0300", partial(stats_push, step=10)),
+    every(COUNTRY_PERIOD, "country_0312", _country_utc),
+)
 
 
 def _prepare_upload(request: ParameterDict) -> dict[str, Value] | None:
@@ -522,6 +630,35 @@ def _upload_done(
 def _set_holiday_screensaver(request: ParameterDict) -> dict[str, Value] | None:
     """Return the holiday screensaver switch if ``a2`` is 0 or 1."""
     return {"holiday_screensaver_switch": bool(decode_field(request, "a2", SWITCH))}
+
+
+#: The holiday theme schedule ``4212`` stores, carried in no frame: the theme id
+#: (0 = none), then each field as sent, named by tag where the doc gives no
+#: meaning (``a3``/``a4`` u32, ``a5``/``a6`` 7-byte datetimes of unknown layout).
+HOLIDAY_ID = "_holiday_id"
+HOLIDAY_FIELDS = {
+    "a3": ("_holiday_a3", ui(4)),
+    "a4": ("_holiday_a4", ui(4)),
+    "a5": ("_holiday_a5", Bytes(7)),
+    "a6": ("_holiday_a6", Bytes(7)),
+    "a7": ("_holiday_url", GreedyBytes),
+}
+
+
+def _set_holiday_schedule(request: ParameterDict) -> dict[str, Value]:
+    """Return the holiday theme schedule ``4212`` stores; ``a2 = 0`` clears it.
+
+    A non-zero id needs every field; a request missing one changes nothing.
+    Either way the handler sends no reply.
+    """
+    if "a2" not in request:
+        return {}
+    theme_id = decode_field(request, "a2", ui(4))
+    if not theme_id:
+        return {HOLIDAY_ID: 0}
+    if any(tag not in request for tag in HOLIDAY_FIELDS):
+        return {}
+    return {HOLIDAY_ID: theme_id} | decode_request(request, HOLIDAY_FIELDS)
 
 
 def _set_region_owner(request: ParameterDict) -> dict[str, Value] | None:
@@ -1314,6 +1451,7 @@ class A2345Layout(TableLayout):
             0x20D: _set_easter_egg,
             0x20E: _set_button_rotate_direction,
             0x20F: _set_holiday_screensaver,
+            0x212: _set_holiday_schedule,
             0x210: _set_time_format,
             0x211: _set_custom_charge_mode_switch,
             0x213: _set_screensaver_window,
@@ -1326,7 +1464,8 @@ class A2345Layout(TableLayout):
         }
     )
     ECHOES = MappingProxyType(PORT_ECHOES)
-    SILENT = frozenset({0x222})
+    #: ``4212``'s and ``4222``'s handlers send no reply.
+    SILENT = frozenset({0x212, 0x222})
     #: The ``0308`` before ``4208``'s ack, ``4311`` 1 before the last ``4a21``.
     LEADING = MappingProxyType({**TIMED_TASK_LEADS, 0x221: frozenset({0x311})})
     #: ``4311`` carries no clock (doc "``4311`` theme image state").
@@ -1416,7 +1555,8 @@ class A2345Layout(TableLayout):
             *_attach_events(before, after),
             *_secret_features(before, after),
             *_power_expert(before, after),
-            *wifi_events(before, after),
+            *_theme_fetch(before, after),
+            *wifi_events(before, after, PERIODICS),
         )
         if before["charging_mode"] == after["charging_mode"]:
             return events

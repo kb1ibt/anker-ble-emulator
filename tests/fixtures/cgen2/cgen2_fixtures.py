@@ -129,6 +129,22 @@ def next_0421(device: EmulatedDevice) -> tuple[dict[str, Value], ParameterDict]:
     return layout.read(0x421, frame.payload), Parameters.parse(frame.payload)
 
 
+def next_0490(device: EmulatedDevice) -> dict[str, Value]:
+    """Return the named values of the ``0490`` the device would post now.
+
+    Raises:
+        TypeError: If the device posts no ``0490``.
+
+    """
+    module = device.negotiated_module
+    push_490 = module.mcu.push_490
+    if push_490 is None:
+        msg = f"{device.pn} posts no 0490"
+        raise TypeError(msg)
+    frame = module.mcu.push(0x490, values=module.values, rtc=module.rtc)
+    return push_490.read(frame.payload)
+
+
 def socket_and_ports(fields: ParameterDict) -> tuple[int, str, str, str, str, int]:
     """Return ``b2[0]``, the PD1-PD3 blocks (hex), ``a6[0:2]`` (hex) and ``a5[1]``."""
     return (

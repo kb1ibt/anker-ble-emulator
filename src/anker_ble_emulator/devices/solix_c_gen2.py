@@ -1130,6 +1130,9 @@ BATTERY_ONLY_AUTO_OFF = 2
 FLOW_IDLE = 0
 FLOW_OUT = 1
 FLOW_CHARGE = 2
+#: ``a3[0]`` follows ``a5[1]`` after its 20-sample pack-current test, 100 ms a
+#: sample: 2 s (on the wire 2.0-3.0 s; a1783-telemetry.md "``a5[1]`` vs ``a3[0]``").
+FLOW_LAG = 2.0
 #: The mains sequence, a1783-control.md "``a4[31]`` witnesses": the 2026-10-26
 #: run's timings, with the range both bench runs measured.
 #: The auto-off after mains goes: 0 s (0-1 s).
@@ -1186,9 +1189,9 @@ def _ac_charge(
 ) -> Step:
     """Start AC charging into the pack below its cap (a1783-telemetry.md "Flow state").
 
-    The main below its cap charges (``a3[0]`` and ``a5[1]`` 2); at it, an
-    attached expansion below its own takes the charge (``c0[24]`` 2, 06:03:06);
-    with every pack at its cap no AC input comes.
+    The main below its cap charges (``a5[1]`` 2, ``a3[0]`` following); at it,
+    an attached expansion below its own takes the charge (``c0[24]`` 2,
+    06:03:06); with every pack at its cap no AC input comes.
     """
     if state["ac_input_status"] == AC_INPUT_NONE or state[DISABLE] == BATTERY_ONLY_ON:
         return Step()
@@ -1196,7 +1199,6 @@ def _ac_charge(
     if int(state["battery_level"]) < cap:
         changes: dict[str, Value] = {
             "ac_input_power": AC_CHARGE_POWER,
-            "work_status": FLOW_CHARGE,
             "charge_discharge_status": FLOW_CHARGE,
         }
     elif state.get("sub_package_connection_status") and (
@@ -1205,7 +1207,7 @@ def _ac_charge(
         changes = {"ac_input_power": AC_CHARGE_POWER, "sub_package_status": FLOW_CHARGE}
     else:
         return Step()
-    return Step(values=_without(changes, own))
+    return _flow_step(_without(changes, own))
 
 
 def _mains_back(after: Mapping[str, Value], own: frozenset[str]) -> list[Timed]:
@@ -1223,8 +1225,9 @@ def _battery_only_switched(
 ) -> list[Timed]:
     """Return what switching Battery-Only Power with mains in does.
 
-    On, ``a7[3]`` reads 2 and AC input stops (19:39:18); off, it reads 1 and AC
-    charging restarts (19:40:42, 6-9 s later).
+    On, ``a7[3]`` reads 2 and AC input stops (19:39:18), and a charge only AC
+    fed leaves ``a5[1]`` / ``c0[24]`` at once for the port flow, ``a3[0]``
+    following; off, it reads 1 and AC charging restarts (19:40:42, 6-9 s later).
     """
     switched_on = after[DISABLE] == BATTERY_ONLY_ON
     changes: dict[str, Value] = {
@@ -1232,7 +1235,8 @@ def _battery_only_switched(
     }
     if switched_on:
         changes["ac_input_power"] = 0
-    events = [Timed(0.0, "battery_only", partial(_step, _without(changes, own)))]
+        changes |= _ac_charge_left(after)
+    events = [Timed(0.0, "battery_only", partial(_flow_change, _without(changes, own)))]
     if before[DISABLE] == BATTERY_ONLY_ON and "ac_input_power" not in own:
         charge = partial(_ac_charge, own)
         events.append(Timed(BATTERY_ONLY_CHARGE_DELAY, "ac_charge", charge))
@@ -1246,6 +1250,410 @@ def _step(
 ) -> Step:
     """Return a step that sets ``changes``."""
     return Step(values=changes)
+
+
+def _flow_change(
+    changes: dict[str, Value],
+    _values: Mapping[str, Value],
+    _state: Mapping[str, Value],
+) -> Step:
+    """Return a step that sets ``changes``, ``a3[0]`` following a moved ``a5[1]``."""
+    return _flow_step(changes)
+
+
+def _flow_step(changes: dict[str, Value], then: tuple[Timed, ...] = ()) -> Step:
+    """Return a step setting ``changes``; a moved ``a5[1]`` draws ``a3[0]``'s follow."""
+    if "charge_discharge_status" in changes:
+        then = (*then, FLOW_FOLLOW)
+    return Step(values=changes, then=then)
+
+
+def _flow_follows(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Set ``a3[0]`` to ``a5[1]``'s state, its 20 samples passed."""
+    return Step(values={"work_status": int(state["charge_discharge_status"])})
+
+
+FLOW_FOLLOW = Timed(FLOW_LAG, "work_status_follow", _flow_follows)
+
+
+def _ac_charge_left(state: Mapping[str, Value]) -> dict[str, Value]:
+    """Return the port flow a charge only AC fed leaves ``a5[1]`` / ``c0[24]`` at."""
+    if state["pv1_input_power"] or state.get("external_device_mode") == (
+        ExternalDeviceMode.CHARGING
+    ):
+        return {}
+    flow = FLOW_OUT if state["total_output_power"] else FLOW_IDLE
+    return {
+        name: flow
+        for name in ("charge_discharge_status", "sub_package_status")
+        if state.get(name) == FLOW_CHARGE
+    }
+
+
+#: ``0490`` ``.15.5`` / ``.15.6`` (main, then expansion): the pack holding the bus
+#: reads (8, 9), or (3, 9) when quiet at or above its cap; the other (3, 3)
+#: (a1783-operation.md "``.15.5`` against the limits", "Observed handovers").
+#: Set at each switch; the expansion's quiet 13 at its cap isn't modeled.
+MAIN_SLOTS = ("stage_a_state", "stage_b_state")
+EXPANSION_SLOTS = ("sub_package_stage_a_state", "sub_package_stage_b_state")
+ON_BUS = (8, 9)
+QUIET_AT_CAP = (3, 9)
+OFF_BUS = (3, 3)
+#: Pack selection (MainBMS ``pack_select_eval``, firmware/mainbms-control-fsms.md
+#: "Pack selection", 10 ms steps), re-checked on every change:
+#: - main -> expansion charge (:159): the charge-cap latch, 100 steps charging
+#:   at the cap (:187); the expansion below its cap;
+#: - main -> expansion discharge (:158): the discharge latch, the main above its
+#:   line and a >= 1.0 % drop in its SoC since it last charged (:188 (a)); the
+#:   expansion above its floor; more than 200 steps since the last switch;
+#: - expansion -> main discharge (:164): 300 steps on the expansion, not
+#:   charging (the charge-cap latch clear), its SoC under ``min_soc`` + 0.9 %,
+#:   the main above its floor.
+#: A pack may charge below its cap and discharge above its floor. Not modeled:
+#: the once-per-boot switch (:157), the pack-switch code (:161, :167), the
+#: allowance-only rows (:162, :163, :165, :166), ``raw+0x95``, the expansion's
+#: share of the discharge latch and the latches' other paths. Hidden: the pack
+#: on the bus (1 main, 2 expansion; unset, the expansion when one is attached,
+#: as on the A1783 recording, else the main), when it took it (UTC s), and the
+#: main's 0.1 % SoC the discharge latch counts its drop from.
+BUS_PACK = "pack_on_bus"
+BUS_MAIN = 1
+BUS_EXPANSION = 2
+BUS_TAKEN = "bus_taken"
+LATCH_FROM = "discharge_latch_from"
+EXPANSION_PACK_SOC = "sub_package_pack_soc"
+BUS_DWELL = 3.01
+SWITCH_GAP = 2.01
+CHARGE_CAP_LATCH = 1.0
+DISCHARGE_LATCH_DROP = 10
+PACK_HANDOVER = "pack_handover"
+LATCH_REFERENCE = "discharge_latch_reference"
+
+
+def _bus_pack(state: Mapping[str, Value]) -> int:
+    """Return the pack holding the bus."""
+    held = state.get(BUS_PACK)
+    if held is not None:
+        return int(held)
+    return BUS_EXPANSION if state.get("sub_package_connection_status") else BUS_MAIN
+
+
+def _main_soc(state: Mapping[str, Value]) -> int:
+    """Return the main pack's SoC in 0.1 %: ``pack_soc``, else the whole percent."""
+    if PACK_SOC in state:
+        return int(state[PACK_SOC])
+    return int(state["battery_level"]) * SOC_STEPS_PER_PERCENT
+
+
+def _expansion_soc(state: Mapping[str, Value]) -> int:
+    """Return the expansion's SoC in 0.1 %, as ``_main_soc`` does the main's."""
+    if EXPANSION_PACK_SOC in state:
+        return int(state[EXPANSION_PACK_SOC])
+    return int(state["sub_package_battery_level"]) * SOC_STEPS_PER_PERCENT
+
+
+def _cap(state: Mapping[str, Value]) -> int:
+    """Return ``max_soc`` in 0.1 %."""
+    return int(state["charging_limit_value"]) * SOC_STEPS_PER_PERCENT
+
+
+def _floor(state: Mapping[str, Value]) -> int:
+    """Return ``min_soc`` in 0.1 %."""
+    return int(state["discharge_limit_value"]) * SOC_STEPS_PER_PERCENT
+
+
+def _expansion_floor_line(state: Mapping[str, Value]) -> int:
+    """Return the handover line, ``min_soc`` + 0.9 %, in 0.1 %."""
+    return _floor(state) + LOW_BATTERY_MARGIN
+
+
+def _held_for(state: Mapping[str, Value], at_least: float) -> float:
+    """Return how long the bus has been held; ``at_least`` when not known."""
+    taken = state.get(BUS_TAKEN)
+    return at_least if taken is None else float(int(state[EPOCH]) - int(taken))
+
+
+def _bus_to(
+    holder: int, state: Mapping[str, Value], *, flowing: bool
+) -> dict[str, Value]:
+    """Return the values of ``holder`` taking the bus: its slots and hidden marks."""
+    soc = _main_soc(state) if holder == BUS_MAIN else _expansion_soc(state)
+    held = ON_BUS if flowing or soc < _cap(state) else QUIET_AT_CAP
+    main, expansion = (held, OFF_BUS) if holder == BUS_MAIN else (OFF_BUS, held)
+    slots = zip((*MAIN_SLOTS, *EXPANSION_SLOTS), (*main, *expansion), strict=True)
+    return {
+        **dict(slots),
+        BUS_PACK: holder,
+        BUS_TAKEN: int(state[EPOCH]),
+        LATCH_FROM: _main_soc(state),
+    }
+
+
+def _cap_latch_due(state: Mapping[str, Value]) -> bool:
+    """Return whether the main, charging at its cap, owes the expansion its charge."""
+    return (
+        state["charge_discharge_status"] == FLOW_CHARGE
+        and _main_soc(state) >= _cap(state)
+        and _expansion_soc(state) < _cap(state)
+    )
+
+
+def _discharge_latch_due(state: Mapping[str, Value]) -> bool:
+    """Return whether the discharge latch is set and the expansion may discharge."""
+    start = state.get(LATCH_FROM)
+    return (
+        start is not None
+        and _main_soc(state) <= int(start) - DISCHARGE_LATCH_DROP
+        and int(start) > _expansion_floor_line(state)
+        and _expansion_soc(state) > _floor(state)
+    )
+
+
+def _main_due(state: Mapping[str, Value]) -> bool:
+    """Return whether the expansion, under its line, owes the main the discharge."""
+    return (
+        state["sub_package_status"] != FLOW_CHARGE
+        and _expansion_soc(state) < _expansion_floor_line(state)
+        and _main_soc(state) > _floor(state)
+    )
+
+
+def _handovers(
+    before: Mapping[str, Value], after: Mapping[str, Value], own: frozenset[str]
+) -> list[Timed]:
+    """Return the pack switch, or the latch's new start, a change draws."""
+    if not after.get("sub_package_connection_status"):
+        return []
+    if _bus_pack(after) == BUS_MAIN:
+        return _main_handovers(before, after, own)
+    if _main_due(after) and not _main_due(before):
+        dwell = max(0.0, BUS_DWELL - _held_for(after, BUS_DWELL))
+        return [Timed(dwell, PACK_HANDOVER, _bus_to_main)]
+    return []
+
+
+def _main_handovers(
+    before: Mapping[str, Value], after: Mapping[str, Value], own: frozenset[str]
+) -> list[Timed]:
+    """Return the switch to the expansion, or the latch's new start, the main draws."""
+    if _cap_latch_due(after) and not _cap_latch_due(before):
+        charge = partial(_charge_to_expansion, own)
+        return [Timed(CHARGE_CAP_LATCH, PACK_HANDOVER, charge)]
+    if _discharge_latch_due(after) and not _discharge_latch_due(before):
+        gap = max(0.0, SWITCH_GAP - _held_for(after, SWITCH_GAP))
+        return [Timed(gap, PACK_HANDOVER, _discharge_to_expansion)]
+    start = after.get(LATCH_FROM)
+    if start is not None and _main_soc(after) > int(start):
+        restart = partial(_latch_from, _main_soc(after))
+        return [Timed(0.0, LATCH_REFERENCE, restart)]
+    return []
+
+
+def _latch_from(
+    soc: int, _values: Mapping[str, Value], _state: Mapping[str, Value]
+) -> Step:
+    """Restart the discharge latch's drop from ``soc``, the main having charged."""
+    return Step(values={LATCH_FROM: soc})
+
+
+def _charge_to_expansion(
+    own: frozenset[str], _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Hand the main's charge to the expansion, the latch set (2026-10-06 20:20:03).
+
+    ``a3[0]`` and ``a5[1]`` read 0 at once, the expansion holding the bus.
+    """
+    if not _cap_latch_due(state):
+        return Step()
+    changes: dict[str, Value] = {
+        "work_status": FLOW_IDLE,
+        "charge_discharge_status": FLOW_IDLE,
+        "sub_package_status": FLOW_CHARGE,
+        **_bus_to(BUS_EXPANSION, state, flowing=True),
+    }
+    return Step(values=_without(changes, own))
+
+
+def _discharge_to_expansion(
+    _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Hand discharge to the expansion, the discharge latch set.
+
+    ``a3[0]`` and ``a5[1]`` read 0 at once and ``c0[24]`` the port flow.
+    """
+    if not _discharge_latch_due(state):
+        return Step()
+    output = bool(state["total_output_power"])
+    changes: dict[str, Value] = {
+        "work_status": FLOW_IDLE,
+        "charge_discharge_status": FLOW_IDLE,
+        "sub_package_status": FLOW_OUT if output else FLOW_IDLE,
+        **_bus_to(BUS_EXPANSION, state, flowing=output),
+    }
+    return Step(values=changes)
+
+
+def _bus_to_main(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Hand discharge to the main, the expansion under its line (03:29:25).
+
+    ``c0[24]`` reads 0 and ``a5[1]`` the port flow at once, ``a3[0]`` following.
+    """
+    if not _main_due(state):
+        return Step()
+    output = bool(state["total_output_power"])
+    changes: dict[str, Value] = {
+        "sub_package_status": FLOW_IDLE,
+        "charge_discharge_status": FLOW_OUT if output else FLOW_IDLE,
+        **_bus_to(BUS_MAIN, state, flowing=output),
+    }
+    return _flow_step(changes)
+
+
+#: The AC top-off (a1783-telemetry.md "AC top-off burst", "Top-off hysteresis"):
+#: the on-bus pack's charge reopens once its 0.1 % SoC (``pack_soc``) falls
+#: below the clear threshold, and AC charges ~1 min until it is past the set
+#: one (2026-10-20 04:57:40, off by 04:59). ``soc_status_thresholds_load``:
+#: set / clear = ``max_soc`` + 0.7 % / ``max_soc``; 98.9 / 98.5 % at a 99 %
+#: cap, 100.0 / 99.9 % at 100 %.
+TOP_OFF_MARGIN = 7
+TOP_OFF_BURST = 60.0
+
+
+def _top_off_band(cap: int) -> tuple[int, int]:
+    """Return the top-off (set, clear) thresholds for ``cap``, in 0.1 %."""
+    if cap * SOC_STEPS_PER_PERCENT >= SOC_FULL:
+        return SOC_FULL, SOC_FULL - 1
+    if cap == 99:  # noqa: PLR2004  # the firmware's own 99 % case
+        return 989, 985
+    return cap * SOC_STEPS_PER_PERCENT + TOP_OFF_MARGIN, cap * SOC_STEPS_PER_PERCENT
+
+
+def _top_offs(
+    before: Mapping[str, Value], after: Mapping[str, Value], own: frozenset[str]
+) -> list[Timed]:
+    """Return the top-off burst the main's SoC falling below the clear threshold draws.
+
+    Only AC into the main on the bus: mains in, Battery-Only Power off, and the
+    expansion not on the bus (``c0[24]`` 0, the closest the frames show).
+    """
+    _, clear = _top_off_band(int(after["charging_limit_value"]))
+    if PACK_SOC not in before:  # the first set is the baseline, crossing nothing
+        return []
+    if not int(before[PACK_SOC]) >= clear > int(after[PACK_SOC]):
+        return []
+    if after["ac_input_status"] != AC_INPUT_MAINS or after[DISABLE] == BATTERY_ONLY_ON:
+        return []
+    if after["sub_package_status"] != FLOW_IDLE:
+        return []
+    return [Timed(0.0, "top_off", partial(_top_off, own))]
+
+
+def _top_off(
+    own: frozenset[str], _values: Mapping[str, Value], _state: Mapping[str, Value]
+) -> Step:
+    """Start the top-off burst: AC in, ``a5[1]`` 2 with ``a3[0]`` following."""
+    changes: dict[str, Value] = {
+        "ac_input_power": AC_CHARGE_POWER,
+        "charge_discharge_status": FLOW_CHARGE,
+    }
+    end = Timed(TOP_OFF_BURST, "top_off_end", _top_off_end)
+    return _flow_step(_without(changes, own), (end,))
+
+
+def _top_off_end(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """End the burst at the set threshold: AC in 0 W, ``a5[1]`` the port flow."""
+    top, _ = _top_off_band(int(state["charging_limit_value"]))
+    flow = FLOW_OUT if state["total_output_power"] else FLOW_IDLE
+    changes: dict[str, Value] = {
+        "ac_input_power": 0,
+        "charge_discharge_status": flow,
+        PACK_SOC: top,
+    }
+    return _flow_step(changes)
+
+
+#: The OTA precheck (``ota_precheck_update``, a1783-control.md ``4089``): 0 2
+#: while the main's SoC, or an attached expansion's, is under 6 % (whole
+#: percent), else 1 0. A changed pair pushes ``0489`` 0.15 s after the frame
+#: (MQTT 2026-10-06 20:21:28, BLE 2026-10-15 07:45:55). Upgrade and BMS boot
+#: mode aren't modeled.
+OTA_SOC_MIN = 6
+OTA_ALLOWED = (1, 0)
+OTA_LOW_SOC = (0, 2)
+OTA_PRECHECK_DELAY = 0.15
+OTA_PAIR = ("ota_enable", "ota_block_reason")
+
+
+def _ota_pair(state: Mapping[str, Value]) -> tuple[int, int]:
+    """Return the precheck pair the SoCs in ``state`` give."""
+    levels = [int(state["battery_level"])]
+    if state.get("sub_package_connection_status"):
+        levels.append(int(state["sub_package_battery_level"]))
+    return OTA_LOW_SOC if min(levels) < OTA_SOC_MIN else OTA_ALLOWED
+
+
+def _ota_prechecks(
+    before: Mapping[str, Value], after: Mapping[str, Value], own: frozenset[str]
+) -> list[Timed]:
+    """Return the ``0489`` a SoC change that changes the pair draws.
+
+    The pair compared is the one the SoCs give, not the recorded one; a call
+    that sets the pair itself keeps it.
+    """
+    if own & set(OTA_PAIR) or _ota_pair(before) == _ota_pair(after):
+        return []
+    return [Timed(OTA_PRECHECK_DELAY, "ota_precheck", _ota_precheck)]
+
+
+def _ota_precheck(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Set the precheck pair and push ``0489`` with it."""
+    return Step(
+        values=dict(zip(OTA_PAIR, _ota_pair(state), strict=True)), pushes=(MSGTYPE_489,)
+    )
+
+
+#: Battery-Only Power at the main's floor (a1783-operation.md "Battery-Only Power
+#: at the floor", 2026-10-15): the main pack's BMS raises its low-battery bit
+#: under ``min_soc`` + 0.9 % (a1783-control.md ``4101 ab`` clearing), which drops
+#: the mode to state 2 with mains accepted (05:45:36); AC charging starts 4 s
+#: later (05:45:40); back over it, state 2 clears 1 s later with the screen woken
+#: (05:46:20 -> :21). The ``dc`` low-battery code, the outputs' dip and the
+#: min-cell path aren't modeled.
+LOW_BATTERY_MARGIN = 9
+FLOOR_CHARGE_DELAY = 4.0
+FLOOR_CLEAR_DELAY = 1.0
+
+
+def _floor_exits(
+    before: Mapping[str, Value], after: Mapping[str, Value]
+) -> list[Timed]:
+    """Return the drop or clear the main crossing its low-battery line draws."""
+    if PACK_SOC not in before:
+        return []
+    line = int(after["discharge_limit_value"]) * SOC_STEPS_PER_PERCENT
+    line += LOW_BATTERY_MARGIN
+    was, now = int(before[PACK_SOC]), int(after[PACK_SOC])
+    held = after[DISABLE] == BATTERY_ONLY_ON
+    if was >= line > now and held and after["ac_input_status"] == AC_INPUT_BATTERY_ONLY:
+        return [Timed(0.0, "floor_exit", _floor_exit)]
+    if was < line <= now and after[DISABLE] == BATTERY_ONLY_AUTO_OFF:
+        return [Timed(FLOOR_CLEAR_DELAY, "floor_exit_clear", _floor_exit_clear)]
+    return []
+
+
+def _floor_exit(_values: Mapping[str, Value], _state: Mapping[str, Value]) -> Step:
+    """Drop Battery-Only Power to state 2, mains accepted, AC charging following."""
+    charge = Timed(FLOOR_CHARGE_DELAY, "ac_charge", partial(_ac_charge, frozenset()))
+    changes = {DISABLE: BATTERY_ONLY_AUTO_OFF, "ac_input_status": AC_INPUT_MAINS}
+    return Step(values=changes, then=(charge,))
+
+
+def _floor_exit_clear(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Clear state 2 and wake the screen (05:46:21)."""
+    if state[DISABLE] != BATTERY_ONLY_AUTO_OFF:
+        return Step()
+    wake = Timed(0.0, SCREEN_WAKE, partial(_screen_wake, frozenset()))
+    return Step(values={DISABLE: BATTERY_ONLY_OFF}, then=(wake,))
 
 
 def _other_input_charging(params: ParameterDict) -> bool:
@@ -1353,7 +1761,7 @@ def _port_power(
     }
     if state["charge_discharge_status"] == FLOW_IDLE and total:
         changes["charge_discharge_status"] = FLOW_OUT
-    return Step(values=_without(changes, own))
+    return _flow_step(_without(changes, own))
 
 
 #: ``0403``: MainMcu's own event push, ``a1 01 31 · a2 02 01 <code>`` with no
@@ -1559,8 +1967,27 @@ def _usage_pass(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Ste
             folded = int(changes.get(name, state.get(name, 0)))
             changes[total] = int(state[total]) + folded
             changes[name] = 0
-    changes[USAGE_PASSES] = 0 if count == USAGE_FLUSH_PASSES else count
-    return Step(values=changes, then=then)
+    if count < USAGE_FLUSH_PASSES:
+        changes[USAGE_PASSES] = count
+        return Step(values=changes, then=then)
+    rtc = int(state[RTC])
+    changes |= {USAGE_PASSES: 0, "time_save": rtc - rtc % 60}
+    flushed = _tou_totals({**state, **changes})
+    return Step(values=changes, published=((MSGTYPE_503, flushed),), then=then)
+
+
+def _tou_totals(state: Mapping[str, Value]) -> bytes:
+    """Return the ``0503`` cleartext of ``state``'s totals, at its MQTT ``a1`` 12.
+
+    The flush stamps Time Save with the RTC to the whole minute; an active
+    period needs the cloud, so the send is never dropped here.
+    """
+    route = ParameterContainer(key=b"\xa1", type=None, value=STATE_INFO_ROUTE)
+    fields = ParameterDict({"a1": route})
+    for tag, (codec, type_byte, zeros) in TOU_TOTALS_FIELDS.items():
+        named = {name: state[name] for name in zeros}
+        fields[tag] = container(tag, type_byte, codec.build(named))
+    return Parameters.build(fields)
 
 
 # Backup plans (405e) and their windows: a1783-control.md "005e means different
@@ -1746,7 +2173,8 @@ def _backup_window(
         delay = max(min(edges) - now - 1, 0) or BACKUP_PASS
         later = partial(_backup_window, reports)
         then = (Timed(delay, BACKUP_WINDOW_EVENT, later),)
-    return Step(values=changes, pushes=pushes if reports else (), then=then)
+    step = _flow_step(changes, then)
+    return Step(values=step.values, pushes=pushes if reports else (), then=step.then)
 
 
 def _window_event(code: int, start: int, end: int) -> dict[str, Value]:
@@ -1759,16 +2187,15 @@ def _window_event(code: int, start: int, end: int) -> dict[str, Value]:
 
 
 def _charge_to_main(state: Mapping[str, Value]) -> dict[str, Value]:
-    """Move an expansion's charge to a main pack below 100 % (21:00:04)."""
+    """Move an expansion's charge to a main pack below 100 % (21:00:04).
+
+    ``a5[1]`` goes 2 at once and ``a3[0]`` follows.
+    """
     if state.get("sub_package_status") != FLOW_CHARGE:
         return {}
     if int(state["battery_level"]) >= SOC_FULL // SOC_STEPS_PER_PERCENT:
         return {}
-    return {
-        "sub_package_status": FLOW_IDLE,
-        "work_status": FLOW_CHARGE,
-        "charge_discharge_status": FLOW_CHARGE,
-    }
+    return {"sub_package_status": FLOW_IDLE, "charge_discharge_status": FLOW_CHARGE}
 
 
 #: ``4091`` tag -> (the ``da`` leaf it writes, its width): a1783-control.md
@@ -2136,7 +2563,7 @@ class CGen2Layout(TableLayout):
         if msgtype == MSGTYPE_425:
             names.add(EVENT_SOC)
         if "d9" in self.FIELDS.get(msgtype, {}):
-            names |= {TOU_TABLE, PACK_SOC, AUTO_PLANS}
+            names |= {TOU_TABLE, PACK_SOC, AUTO_PLANS, BUS_PACK}
         if OUTPUT_PORTS in self.GROUPS.get(msgtype, ()):
             names |= USB_C_DEVICES.keys()
         if msgtype == MSGTYPE_490:
@@ -2214,6 +2641,13 @@ class CGen2Layout(TableLayout):
         events += _timers_started(own, after)
         events += _soc_floors_crossed(before, after)
         events += _screen_wakes(own, after)
+        if "charge_discharge_status" in own and "work_status" not in own:
+            events.append(FLOW_FOLLOW)
+        events += _handovers(before, after, own)
+        if PACK_SOC in own:
+            events += _top_offs(before, after, own)
+            events += _floor_exits(before, after)
+        events += _ota_prechecks(before, after, own)
         events += _backup_passes(own, self.EVENT_REPORTS)
         return tuple(events)
 
@@ -2258,6 +2692,9 @@ class CGen2Layout(TableLayout):
             ui(1).build(given[EVENT_SOC])
         if TOU_TABLE in given:
             _check_tou_table(given[TOU_TABLE])
+        if BUS_PACK in given and given[BUS_PACK] not in {BUS_MAIN, BUS_EXPANSION}:
+            msg = f"{BUS_PACK} is {BUS_MAIN} (main) or {BUS_EXPANSION} (expansion)"
+            raise TypeError(msg)
         if AUTO_PLANS in given and (
             len(_bytes_value(given, AUTO_PLANS)) != len(AUTO_PLANS_EMPTY)
         ):
@@ -2310,12 +2747,10 @@ class CGen2Layout(TableLayout):
             ended = None if held else _hold_ended(params, values)
         if "a7" not in fields:
             return
-        if (
-            held
-            or _battery_only_on(params)
-            or (ended is not None and ended < TOU_RAMP[0][0])
-        ):
+        if held or (ended is not None and ended < TOU_RAMP[0][0]):
             self._hold_ac_charge(fields, params)
+        elif _battery_only_on(params):
+            self._hold_ac_charge(fields, params, work=False)
         elif ended is not None:
             self._ramp_ac_input(fields, params, ended)
 
@@ -2330,14 +2765,19 @@ class CGen2Layout(TableLayout):
             self._encode_field(params, tag, codec, type_byte, ac_input_power=ramped)
 
     def _hold_ac_charge(
-        self, fields: Mapping[str, FieldSpec], params: ParameterDict
+        self,
+        fields: Mapping[str, FieldSpec],
+        params: ParameterDict,
+        *,
+        work: bool = True,
     ) -> None:
         """Show grid charging held off: AC input 0 W, and no AC-only charging state.
 
-        With no DC or alternator input, a charging ``a3[0]`` reads idle and a
-        charging ``a5[1]`` / ``c0[24]`` the port flow left, output on or none: the
-        Peak hold, cloud ``0421`` 2026-10-21 15:49:53 (a1783-telemetry.md "Flow
-        state").
+        With no DC or alternator input, a charging ``a5[1]`` / ``c0[24]`` reads
+        the port flow left, output on or none, and with ``work`` a charging
+        ``a3[0]`` reads idle: the Peak hold, cloud ``0421`` 2026-10-21 15:49:53
+        (a1783-telemetry.md "Flow state"). Battery-Only Power leaves ``a3[0]``
+        to its stored lag (19:39:18 -> 19:39:22).
         """
         for tag in ("a6", "a7"):
             codec, type_byte, _ = fields[tag]
@@ -2346,11 +2786,12 @@ class CGen2Layout(TableLayout):
             return
         output = decode_field(params, "a6", MainData).total_output_power
         flow = FLOW_OUT if output else FLOW_IDLE
-        for tag, name, idle in (
+        held = (
             ("a3", "work_status", FLOW_IDLE),
             ("a5", "charge_discharge_status", flow),
             ("c0", "sub_package_status", flow),
-        ):
+        )
+        for tag, name, idle in held if work else held[1:]:
             spec = fields.get(tag)
             if spec is None:
                 continue

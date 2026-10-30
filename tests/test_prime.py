@@ -47,6 +47,7 @@ from tests.fixtures.prime import (
     command,
     device_clock,
     prime_client,
+    published,
     pushed_by,
     snapshot,
     theme_select,
@@ -2388,45 +2389,34 @@ def test_a_prime_push_the_routing_table_doesnt_name_stays_on_ble() -> None:
 
 
 @pytest.mark.parametrize(
-    ("model", "layout", "version"),
+    ("model", "version"),
     [
-        pytest.param(A2345, A2345Layout(), "4408", id="A2345 v2.1.1.6"),
-        pytest.param(A91B2, A91B2Layout(), "6404", id="A91B2 v1.1.2.4"),
+        pytest.param(A2345, "4408", id="A2345 v2.1.1.6"),
+        pytest.param(A91B2, "6404", id="A91B2 v1.1.2.4"),
     ],
 )
-def test_a_prime_wifi_coming_up_sends_0301_to_mqtt_only(
-    model: type[A2345 | A91B2], layout: A2345Layout | A91B2Layout, version: str
+def test_a_prime_wifi_coming_up_publishes_0301(
+    model: type[A2345 | A91B2], version: str
 ) -> None:
-    """``0301``: the firmware version, nothing on the BLE link.
+    """``0301``: the firmware version, published at ``64``; nothing on BLE.
 
     As recorded: collector.mqtt-101626.log.gz :5298 ``a10164a203024408fe05...``.
     """
     clock = ManualClock()
     device = model(clock=clock)
     client = prime_client(device, TOKEN)
-    module = device.negotiated_module
-    before = {
-        **module.mcu.state(module.values),
-        "rtc": module.rtc,
-        "epoch": module.epoch,
-    }
 
     on_ble = pushed_by(device, client, lambda: device.set_wifi(True))
-    events = layout.timed(before, {**before, "_wifi_up": True})
-    step = next(e for e in events if e.key == "wifi_up").action(module.values, before)
 
     assert on_ble == []
-    assert [
-        (push, body.hex())
-        for msgtype, payload in step.frames
-        for push, body in layout.mqtt_routed(msgtype, payload, module.values)
-    ] == [(0x301, f"a10164a20302{version}{device_clock(0)}")]
+    assert published(device) == [(0x301, f"a10164a20302{version}{device_clock(0)}")]
 
 
-def test_a_prime_push_leaves_ble_while_wifi_is_up() -> None:
-    """With WiFi up a change push and the ``4303`` stream leave BLE; the reply stays.
+def test_a_prime_push_leaves_ble_for_mqtt_while_wifi_is_up() -> None:
+    """With WiFi up the change pushes publish at ``64``, ``0303`` at ``34``.
 
-    doc "Push routing": ``0302``/``0307`` to ``64``, ``0303`` to ``34``.
+    The replies stay on BLE (doc "Push routing"); with WiFi down again the
+    pushes come back to BLE and nothing more is published.
     """
     clock = ManualClock()
     device = A2345(clock=clock)
@@ -2438,6 +2428,7 @@ def test_a_prime_push_leaves_ble_while_wifi_is_up() -> None:
     command(device, client, 0x209, [port, arm(1)])
     expired = advance(device, client, clock, 1)
     stream = command(device, client, 0x20B, []), advance(device, client, clock, 5)
+    while_up = published(device)
     device.set_wifi(False)
     back = command(device, client, 0x207, [port, (0xA3, b"\x01\x01")])
 
@@ -2445,6 +2436,222 @@ def test_a_prime_push_leaves_ble_while_wifi_is_up() -> None:
     assert expired == []
     assert ([cmd for cmd, _ in stream[0]], stream[1]) == (["4a0b"], [])
     assert [cmd for cmd, _ in back] == ["4a07", "4302"]
+    assert published(device) == while_up
+    assert [(msgtype, payload[:6]) for msgtype, payload in while_up] == [
+        (0x301, "a10164"),
+        (0x302, "a10164"),
+        (0x307, "a10164"),
+        (0x307, "a10164"),
+        *[(0x303, "a10134")] * 6,
+    ]
+
+
+def test_a_prime_plug_with_wifi_up_publishes_0304_twice() -> None:
+    """``0304`` goes once per cloud lane, ``64`` then ``44`` (doc ``0304`` row)."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_wifi(True)
+
+    on_ble = pushed_by(device, client, lambda: device.plug(4, 0x05AC, 0x7117))
+
+    mask = "a203030a00"  # C2 recorded active, C4 plugged
+    assert on_ble == []
+    assert published(device)[1:] == [
+        (0x304, f"a10164{mask}{device_clock(0)}"),
+        (0x304, f"a10144{mask}{device_clock(0)}"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("model", "ports", "stats"),
+    [
+        pytest.param(
+            A2345,
+            {"pd1": (1, 1987), "pd2": (1, 15), "pd4": (1, 10)},
+            "a20e040bbc070a0000000a0000000000a30302d007",
+            id="A2345 rounds down to 0.1 W, as recorded",
+        ),
+        pytest.param(
+            A91B2,
+            {"pd3": (1, 205)},
+            "a20e040400000000cd00000000000000a30302cd00",
+            id="A91B2 unrounded",
+        ),
+    ],
+)
+def test_a_prime_publishes_0300_every_10_minutes_while_wifi_is_up(
+    model: type[A2345 | A91B2], ports: dict[str, tuple[int, int]], stats: str
+) -> None:
+    """``0300`` at ``32``: active ports, six port powers, the total, UTC hours.
+
+    doc "``state_info`` (MQTT)": ``a10132a20e040bbc070a0000000a0000000000a30302d007
+    a40201fc`` (2026-06-01 17:51:02); the A91B2 sends its power unrounded.
+    """
+    clock = ManualClock()
+    device = model(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(
+        **{
+            f"{port}_output_{field}": ports.get(port, (0, 0))[index]
+            for port in ("pd1", "pd2", "pd3", "pd4", "usb1", "usb2")
+            for index, field in enumerate(("status", "power"))
+        }
+    )
+    device.set_wifi(True)
+
+    advance(device, client, clock, 599)
+    early = published(device)[1:]
+    on_ble = advance(device, client, clock, 1) + advance(device, client, clock, 600)
+    device.set_wifi(False)
+    advance(device, client, clock, 1200)
+
+    assert (early, on_ble) == ([], [])
+    assert published(device)[1:] == [
+        (0x300, f"a10132{stats}a40201fc{device_clock(600)}"),
+        (0x300, f"a10132{stats}a40201fc{device_clock(1200)}"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("holiday", "country", "sent"),
+    [
+        pytest.param(True, b"\x04us", True, id="holiday switch on, country US"),
+        pytest.param(False, b"\x04us", False, id="holiday switch off"),
+        pytest.param(True, None, False, id="no country"),
+    ],
+)
+def test_a2345_publishes_0312_every_minute_with_the_holiday_switch_on(
+    holiday: bool,  # noqa: FBT001  # a parameter
+    country: bytes | None,
+    sent: bool,  # noqa: FBT001  # a parameter
+) -> None:
+    """``0312`` at ``32``: the ``420a`` country and the UTC offset in hours.
+
+    Gates: holiday switch on, WiFi up, a country (doc "Periodic pushes"); as
+    recorded, ``a10132a203045553a30503fcfffffffe0503171fd86a`` (2026-10-20).
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(holiday_screensaver_switch=holiday)
+    if country is not None:
+        command(device, client, 0x20A, [(0xA2, country), (0xA3, b"\x04" + ACCOUNT)])
+    device.set_wifi(True)
+
+    advance(device, client, clock, 60)
+    advance(device, client, clock, 60)
+
+    expected = [
+        f"a10132a203045553a30503fcffffff{device_clock(seconds)}"
+        for seconds in (60, 120)
+    ]
+    assert [p for m, p in published(device) if m == 0x312] == (expected if sent else [])
+
+
+#: The recorded self-fetched theme: Rhythmic Hue, catalog id 496957652.
+RHYTHMIC_HUE = 0x1D9EF8D4
+
+
+def test_a2345_fetches_a_network_theme_itself_with_wifi_up() -> None:
+    """``0311`` 2, 3, then 1 at 0.38, 1.73 and 8.6 s; the theme then shows.
+
+    doc "``4311`` image state": 2026-09-08 16:17:43 MQTT ``a10164a20504d4f89e1d
+    a3020102a4020103`` (2), 44.809 (3), 51.694 (1); the app sends nothing.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_wifi(True)
+
+    selected = command(device, client, 0x205, theme_select(IMAGE, RHYTHMIC_HUE))
+    states = []
+    for seconds in (0.37, 0.02, 1.33, 0.02, 6.85, 0.02):
+        advance(device, client, clock, seconds)
+        states.append([p[26:28] for m, p in published(device) if m == 0x311])
+    again = command(device, client, 0x205, theme_select(IMAGE, RHYTHMIC_HUE))
+
+    values = device.negotiated_module.values
+    assert [cmd for cmd, _ in selected] == [cmd for cmd, _ in again] == ["4a05"]
+    assert states == [
+        [],
+        ["02"],
+        ["02"],
+        ["02", "03"],
+        ["02", "03"],
+        ["02", "03", "01"],
+    ]
+    assert published(device)[1][1] == "a10164a20504d4f89e1da3020102a4020103"
+    assert (values["screen_saver_theme"], values["screen_saver_theme_id"]) == (
+        3,
+        RHYTHMIC_HUE,
+    )
+
+
+def test_a2345_theme_request_during_a_fetch_answers_0() -> None:
+    """``4205`` while a fetch is busy: ``0311`` 0 with the request's id and kind.
+
+    ``push_0311(a3, 0, a2 & 0x3f)``; the fetch still completes.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_wifi(True)
+
+    command(device, client, 0x205, theme_select(IMAGE, RHYTHMIC_HUE))
+    advance(device, client, clock, 1)
+    command(device, client, 0x205, theme_select(IMAGE, THEME_ID, theme=0x85))
+    advance(device, client, clock, 8)
+
+    assert [
+        (p[6:20], p[26:28], p[34:36]) for m, p in published(device) if m == 0x311
+    ] == [
+        ("a20504d4f89e1d", "02", "03"),
+        ("a205048eb81a0e", "00", "05"),
+        ("a20504d4f89e1d", "03", "03"),
+        ("a20504d4f89e1d", "01", "03"),
+    ]
+    assert device.negotiated_module.values["screen_saver_theme_id"] == RHYTHMIC_HUE
+
+
+def test_a2345_4212_stores_the_holiday_schedule_and_a2_0_clears_it() -> None:
+    """``4212``: id, ``a3``/``a4`` u32, ``a5``/``a6`` 7-byte datetimes, URL; no reply.
+
+    ``a2 = 0`` clears the schedule (doc ``4212`` row).
+    """
+    device = A2345(clock=ManualClock())
+    client = prime_client(device, TOKEN)
+    url = b"https://example.invalid/holiday.jpg"
+
+    scheduled = command(
+        device,
+        client,
+        0x212,
+        [
+            (0xA2, b"\x03" + ui(4).build(RHYTHMIC_HUE)),
+            (0xA3, b"\x03" + ui(4).build(7)),
+            (0xA4, b"\x03" + ui(4).build(8)),
+            (0xA5, b"\x04" + bytes(range(1, 8))),
+            (0xA6, b"\x04" + bytes(range(2, 9))),
+            (0xA7, b"\x04" + url),
+        ],
+    )
+    values = device.negotiated_module.values
+    stored = {name: values[name] for name in values if name.startswith("_holiday")}
+    cleared = command(device, client, 0x212, [(0xA2, b"\x03" + ui(4).build(0))])
+    partial_request = [(0xA2, b"\x03" + ui(4).build(RHYTHMIC_HUE))]
+    incomplete = command(device, client, 0x212, partial_request)
+
+    assert scheduled == cleared == incomplete == []
+    assert stored == {
+        "_holiday_id": RHYTHMIC_HUE,
+        "_holiday_a3": 7,
+        "_holiday_a4": 8,
+        "_holiday_a5": bytes(range(1, 8)),
+        "_holiday_a6": bytes(range(2, 9)),
+        "_holiday_url": url,
+    }
+    assert device.negotiated_module.values["_holiday_id"] == 0
 
 
 def test_a2345_420a_stores_the_country_uppercased() -> None:

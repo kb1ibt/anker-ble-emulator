@@ -65,7 +65,7 @@ from .tlv import FieldError, decode_fields
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Iterable, Mapping
 
     from construct import Container
 
@@ -363,6 +363,8 @@ class Module:
         self._link: _Link | None = None
         #: Bound and on WiFi to the cloud (``EmulatedDevice.set_cloud``).
         self.cloud = False
+        #: What the MCU published to MQTT, in order: (msgtype, plain ``ff09`` frame).
+        self.published: list[tuple[int, bytes]] = []
         #: The scheduled events, soonest first.
         self._queue: list[_Queued] = []
         self._order = itertools.count()
@@ -539,13 +541,38 @@ class Module:
             msgtype: The push's 12-bit message type.
 
         """
-        link, layout = self._link, self.mcu.layout
+        frames = self._route_pushes(
+            [self.mcu.push(msgtype, values=self.values, rtc=self.rtc)]
+        )
+        link = self._link
         if link is None or not link.authorized:
             return Output()
-        if layout is not None and not layout.sends(msgtype, self.values):
-            return Output()
-        return self._relay(
-            link, [self.mcu.push(msgtype, values=self.values, rtc=self.rtc)]
+        return self._relay(link, frames)
+
+    def _route_pushes(self, frames: list[Frame]) -> list[Frame]:
+        """Return the frames that go out on BLE; publish the held pushes' MQTT copies.
+
+        The layout's ``sends`` keeps a push off BLE (a Prime on WiFi), and its
+        ``mqtt_routed`` gives what the MCU publishes for it instead. A reply
+        always goes out.
+        """
+        layout = self.mcu.layout
+        if layout is None:
+            return frames
+        ble = []
+        for frame in frames:
+            msgtype = frame.cmd.msgtype
+            if msgtype & RESPONSE or layout.sends(msgtype, self.values):
+                ble.append(frame)
+            else:
+                self._publish(layout.mqtt_routed(msgtype, frame.payload, self.values))
+        return ble
+
+    def _publish(self, messages: Iterable[tuple[int, bytes]]) -> None:
+        """Add ``messages`` to what the device published, as plain ``ff09`` frames."""
+        self.published.extend(
+            (msgtype, encode(mcu_frame(msgtype, payload, self.mcu.channel)))
+            for msgtype, payload in messages
         )
 
     def check_pushes(self) -> Output:
@@ -557,14 +584,14 @@ class Module:
         return Output(self._relay(link, frames).frames, disconnect=disconnect)
 
     def _run_due(self) -> tuple[list[Frame], bool]:
-        """Run every event due by now, in order; return its pushes and any drop.
+        """Run every event due by now, in order; return its BLE pushes and any drop.
 
-        Each sets its values; one a jump bypassed, or one with no authorized link
-        to send on, sends nothing.
+        Each sets its values; one a jump bypassed sends and publishes nothing, and
+        one with no authorized link publishes to MQTT but sends nothing on BLE.
         """
         frames: list[Frame] = []
         disconnect = False
-        layout, link = self.mcu.layout, self._link
+        link = self._link
         while self._queue and self._queue[0].due <= self.clock.now():
             queued = heapq.heappop(self._queue)
             step = queued.event.action(dict(self.values), self._state())
@@ -572,19 +599,25 @@ class Module:
             for name in step.unset:
                 self.values.pop(name, None)
             self.schedule(*step.then, start=queued.due)
-            if self.clock.bypassed(queued.due) or link is None or not link.authorized:
+            if self.clock.bypassed(queued.due):
+                continue
+            ble = self._route_pushes(
+                [
+                    *(
+                        self.mcu.push(msgtype, values=self.values, rtc=self.rtc)
+                        for msgtype in step.pushes
+                    ),
+                    *(
+                        mcu_frame(msgtype, payload, self.mcu.channel)
+                        for msgtype, payload in step.frames
+                    ),
+                ]
+            )
+            self._publish(step.published)
+            if link is None or not link.authorized:
                 continue
             disconnect = disconnect or step.disconnect
-            frames.extend(
-                self.mcu.push(msgtype, values=self.values, rtc=self.rtc)
-                for msgtype in step.pushes
-                if layout is None or layout.sends(msgtype, self.values)
-            )
-            frames.extend(
-                mcu_frame(msgtype, payload, self.mcu.channel)
-                for msgtype, payload in step.frames
-                if layout is None or layout.sends(msgtype, self.values)
-            )
+            frames.extend(ble)
         return frames, disconnect
 
     def check_timers(self) -> Output:
@@ -984,23 +1017,23 @@ class Module:
         timed, disconnect = self._run_due()
         timed = [*overdue, *timed]
         disconnect = disconnect or dropped
-        frames = self.mcu.respond(
-            frame.cmd.msgtype,
-            request=plaintext,
-            values=self.values,
-            before=before,
-            rtc=self.rtc,
+        frames = self._route_pushes(
+            self.mcu.respond(
+                frame.cmd.msgtype,
+                request=plaintext,
+                values=self.values,
+                before=before,
+                rtc=self.rtc,
+            )
         )
         if frame.cmd.msgtype == self.mcu.factory_reset:
             self.enrolled.clear()
             self.values.clear()
             self.schedule(Timed(FACTORY_RESET_DELAY, "factory_reset", _drop, link=True))
-        burst, layout = self.mcu.burst, self.mcu.layout
+        burst = self.mcu.burst
         if burst is not None and frame.cmd.msgtype == burst.trigger:
-            if layout is None or layout.sends(burst.push, self.values):
-                frames.append(
-                    self.mcu.push(burst.push, values=self.values, rtc=self.rtc)
-                )
+            first = self.mcu.push(burst.push, values=self.values, rtc=self.rtc)
+            frames.extend(self._route_pushes([first]))
             self.schedule(*_burst(burst, burst.count - 1))
         out = self._relay(link, [*frames, *timed])
         return Output(out.frames, disconnect=disconnect)

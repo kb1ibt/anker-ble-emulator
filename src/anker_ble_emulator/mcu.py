@@ -191,7 +191,6 @@ class McuScript:
                     for push, payload in layout.follow_ups(
                         msgtype, request, prior, after
                     )
-                    if layout.sends(push, values or {})
                 ]
                 lead = layout.leading(msgtype)
                 frames = [

@@ -22,6 +22,8 @@ class Step:
         unset: The set values it clears, back to what the recordings carry.
         pushes: The msgtypes the MCU pushes from its recordings, in order.
         frames: The (msgtype, cleartext) pushes it builds itself, after those.
+        published: The (msgtype, cleartext) messages it publishes straight to
+            MQTT, never BLE.
         then: The events it starts, timed from its own due time.
         disconnect: The device drops the link.
 
@@ -31,6 +33,7 @@ class Step:
     unset: tuple[str, ...] = ()
     pushes: tuple[int, ...] = ()
     frames: tuple[tuple[int, bytes], ...] = ()
+    published: tuple[tuple[int, bytes], ...] = ()
     then: tuple[Timed, ...] = ()
     disconnect: bool = False
 
