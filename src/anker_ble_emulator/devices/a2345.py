@@ -1647,7 +1647,7 @@ class A2345Layout(TableLayout):
     ) -> None:
         """``4a02`` with the holiday theme showing: ``a4`` its URL, then ``a5 01``.
 
-        doc "``4a02`` screensaver reply"; ``a5``'s type byte is assumed ``01``.
+        doc "``4a02`` screensaver reply": ``a5 02 01 01``, type ``01``, value 1.
         """
         if msgtype != MSGTYPE_A02:
             return
