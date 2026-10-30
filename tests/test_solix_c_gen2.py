@@ -3131,7 +3131,7 @@ def test_with_none_running_storm_guard_is_chosen_first() -> None:
     clock_set = [(0xA1, EPOCH_22_59_58.to_bytes(4, "little")), (0xA3, EDT)]
     exchange(module, client, 0x022, clock_set)
     command(device, client, 0x05E, backup_plan(1, 1, ((STORM_23_09[0], NO_END),)))
-    command(device, client, 0x05E, backup_plan(0, 1, ((PLAN_21_22[0], NO_END),)))
+    command(device, client, 0x05E, backup_plan(0, 1, ((STORM_23_09[0], NO_END),)))
 
     clock.advance(2.1)
     started = pushed(client, [module.check_pushes()])
@@ -3216,8 +3216,10 @@ def test_cancelling_storm_guard_turns_a_covering_plan_off() -> None:
     clock_set = [(0xA1, EPOCH_22_59_58.to_bytes(4, "little")), (0xA3, EDT)]
     exchange(module, client, 0x022, clock_set)
     command(device, client, 0x05E, backup_plan(1, 1, (STORM_23_09,)))
-    command(device, client, 0x05E, backup_plan(0, 1, (PLAN_FROM_0919,)))
     clock.advance(2.1)
+    module.check_pushes()
+    command(device, client, 0x05E, backup_plan(0, 1, (PLAN_FROM_0919,)))
+    clock.advance(0.1)
     module.check_pushes()
 
     command(device, client, 0x05E, backup_plan(1, cancel=True))
@@ -3506,8 +3508,10 @@ CHARGING_MAIN = {
     "charging_limit_value": 95,
     "work_status": 2,
     "charge_discharge_status": 2,
+    "pack_soc": 940,
     "sub_package_connection_status": 1,
     "sub_package_battery_level": 5,
+    "sub_package_pack_soc": 50,
     "sub_package_status": 0,
     "pack_on_bus": 1,
     **MAIN_ON_BUS,
@@ -3525,7 +3529,7 @@ def test_the_main_at_its_cap_hands_the_charge_over_replays_2026_10_06() -> None:
     device = A1783(clock=clock)
     device.set_values(**CHARGING_MAIN)
 
-    device.set_values(battery_level=95)
+    device.set_values(battery_level=95, pack_soc=950)
     latching = next_0421(device)[0]["charge_discharge_status"]
     clock.advance(1)
     device.negotiated_module.check_pushes()
@@ -3545,7 +3549,10 @@ def test_the_main_at_its_cap_hands_the_charge_over_replays_2026_10_06() -> None:
     "values",
     [
         pytest.param({"sub_package_connection_status": 0}, id="no-expansion"),
-        pytest.param({"sub_package_battery_level": 95}, id="expansion-at-its-cap"),
+        pytest.param(
+            {"sub_package_battery_level": 95, "sub_package_pack_soc": 950},
+            id="expansion-at-its-cap",
+        ),
         pytest.param({"charge_discharge_status": 1}, id="main-not-charging"),
     ],
 )
@@ -3557,7 +3564,7 @@ def test_no_cap_handover_without_an_expansion_to_charge(
     device = A1783(clock=clock)
     device.set_values(**{**CHARGING_MAIN, **values})
 
-    device.set_values(battery_level=95)
+    device.set_values(battery_level=95, pack_soc=950)
     clock.advance(2)
     device.negotiated_module.check_pushes()
 
@@ -3565,9 +3572,13 @@ def test_no_cap_handover_without_an_expansion_to_charge(
 
 
 #: 2026-09-03 03:29: the expansion on the bus (the recording's) feeding the
-#: ES720 at 92 W, ``min_soc`` 5, its 0.1 % SoC at 6.0 %.
+#: ES720 at 92 W, ``min_soc`` 5, ``max_soc`` 98, the main at 96 %, the
+#: expansion's 0.1 % SoC at 6.0 % (a1783-operation.md "Expansion to its floor").
 EXPANSION_DISCHARGING = {
     **KASA_UNIT,
+    "charging_limit_value": 98,
+    "battery_level": 96,
+    "pack_soc": 960,
     "discharge_limit_value": 5,
     "total_output_power": 92,
     "work_status": 0,
@@ -3628,11 +3639,13 @@ FLOOR_LEVER = {
     "charging_limit_value": 100,
     "discharge_limit_value": 5,
     "battery_level": 100,
+    "pack_soc": 1000,
     "total_output_power": 0,
     "work_status": 0,
     "charge_discharge_status": 0,
     "sub_package_connection_status": 1,
     "sub_package_battery_level": 56,
+    "sub_package_pack_soc": 560,
     "sub_package_status": 0,
 }
 
@@ -3640,13 +3653,22 @@ FLOOR_LEVER = {
 def test_raising_min_soc_moves_the_bus_to_the_main_replays_2026_08_31() -> None:
     """a1783-operation.md "``min_soc`` as a lever": floor 60 over the expansion's 56 %.
 
+    The main at its 100 % cap may not charge, so :164 can't fire; the expansion
+    under its floor may not discharge, so :166 moves the bus after 300 steps.
     Post n+1 (19:32:07): main 3/9 (on the bus, quiet), expansion 3/3.
     """
-    device = A1783(clock=ManualClock())
+    clock = ManualClock()
+    device = A1783(clock=clock)
     device.set_values(**FLOOR_LEVER)
 
     device.set_values(discharge_limit_value=60)
+    clock.advance(3)
+    device.negotiated_module.check_pushes()
+    waiting = tuple(next_0490(device)[name] for name in SLOTS)
+    clock.advance(0.1)
+    device.negotiated_module.check_pushes()
 
+    assert waiting == (3, 3, 8, 9)
     assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 9, 3, 3)
 
 
@@ -3660,7 +3682,7 @@ def test_lowering_min_soc_waits_for_a_1_percent_drop() -> None:
     device = A1783(clock=clock)
     device.set_values(**FLOOR_LEVER)
     device.set_values(discharge_limit_value=60)
-    clock.advance(5)
+    clock.advance(10)
     device.negotiated_module.check_pushes()
 
     device.set_values(discharge_limit_value=5)
@@ -3681,7 +3703,7 @@ def test_a_new_holder_keeps_the_bus_for_its_dwell() -> None:
     device = A1783(clock=clock)
     device.set_values(**FLOOR_LEVER)
     device.set_values(discharge_limit_value=60)
-    clock.advance(5)
+    clock.advance(10)
     device.negotiated_module.check_pushes()
     device.set_values(discharge_limit_value=5, total_output_power=60)
     device.set_values(pack_soc=990)
@@ -3703,7 +3725,7 @@ def test_a_main_leaving_charge_within_the_latch_keeps_the_charge() -> None:
     device = A1783(clock=clock)
     device.set_values(**CHARGING_MAIN)
 
-    device.set_values(battery_level=95)
+    device.set_values(battery_level=95, pack_soc=950)
     device.set_values(charge_discharge_status=0, work_status=0)
     clock.advance(2)
     device.negotiated_module.check_pushes()
@@ -3717,6 +3739,8 @@ def test_the_switch_gap_finds_the_expansion_at_its_floor() -> None:
     device = A1783(clock=clock)
     device.set_values(**FLOOR_LEVER)
     device.set_values(discharge_limit_value=60)
+    clock.advance(3.1)
+    device.negotiated_module.check_pushes()
     device.set_values(discharge_limit_value=5, total_output_power=60)
 
     device.set_values(pack_soc=990)
@@ -3732,11 +3756,11 @@ def test_an_expansion_back_above_its_line_within_its_dwell_keeps_the_bus() -> No
     clock = ManualClock()
     device = A1783(clock=clock)
     device.set_values(**{**CHARGING_MAIN, "discharge_limit_value": 5})
-    device.set_values(battery_level=95)
+    device.set_values(battery_level=95, pack_soc=950)
     clock.advance(1)
     device.negotiated_module.check_pushes()
 
-    device.set_values(sub_package_status=1, sub_package_pack_soc=58)
+    device.set_values(sub_package_status=1, sub_package_pack_soc=58, pack_soc=940)
     clock.advance(1)
     device.negotiated_module.check_pushes()
     device.set_values(sub_package_pack_soc=60)
@@ -3749,26 +3773,46 @@ def test_an_expansion_back_above_its_line_within_its_dwell_keeps_the_bus() -> No
 def test_a_main_below_its_cap_takes_the_bus_at_8() -> None:
     """``.15.5`` reads 3 only quiet at or above the cap; inside the band, 8."""
     device = A1783(clock=ManualClock())
-    device.set_values(**{**FLOOR_LEVER, "battery_level": 80})
+    device.set_values(**{**FLOOR_LEVER, "battery_level": 80, "pack_soc": 800})
 
     device.set_values(discharge_limit_value=60)
 
     assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
 
 
-def test_the_main_back_above_its_floor_takes_the_bus() -> None:
-    """Re-checked every step: under its line with the main at its floor, then above."""
+def test_a_main_at_its_cap_leaves_the_expansion_on_the_bus() -> None:
+    """:164 needs the main's charge allowance: at its cap the expansion keeps the bus.
+
+    Re-checked every step: the main falling below its cap takes it.
+    """
     clock = ManualClock()
     device = A1783(clock=clock)
-    device.set_values(
-        **{**EXPANSION_DISCHARGING, "battery_level": 5, "sub_package_pack_soc": 58}
-    )
+    device.set_values(**{**OFF_GRID_EXPANSION, "pack_soc": 980})
 
+    device.set_values(sub_package_pack_soc=58)
+    clock.advance(4)
+    device.negotiated_module.check_pushes()
     stayed = tuple(next_0490(device)[name] for name in SLOTS)
-    device.set_values(battery_level=6)
+    device.set_values(pack_soc=979)
 
     assert stayed == (3, 3, 8, 9)
     assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
+
+
+def test_an_expansion_charged_off_its_floor_keeps_the_bus() -> None:
+    """:166 counts 300 steps at the floor: charged back above it first, no switch."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**OFF_GRID_EXPANSION, "pack_soc": 980})
+
+    device.set_values(sub_package_pack_soc=50)
+    clock.advance(1)
+    device.negotiated_module.check_pushes()
+    device.set_values(sub_package_pack_soc=51)
+    clock.advance(3)
+    device.negotiated_module.check_pushes()
+
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
 
 
 def test_a_charge_restarts_the_discharge_latch() -> None:
@@ -3787,6 +3831,136 @@ def test_a_charge_restarts_the_discharge_latch() -> None:
     device.set_values(pack_soc=795)
 
     assert kept == (8, 9, 3, 3)
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
+
+
+#: ``4104`` ``a4``: the expansion's switch, off (0) or on (1).
+EXPANSION_OFF = [(0xA4, b"\x01\x00")]
+EXPANSION_ON = [(0xA4, b"\x01\x01")]
+
+
+def test_the_expansion_switch_shows_the_app_value_for_2_s_replays_2026_10_06() -> None:
+    """a1783-control.md "``4104``": MQTT 19:43:30 ``c0[28]`` 0, 19:43:32 back to 1.
+
+    Mains charging (``flag_00c7``), the off arms nothing: the override shows the
+    app's 0 until the block-0xf reread 2 s later pushes a ``0421`` with the
+    expansion's own switch-on state.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**CHARGING_MAIN)
+    client = authorized_client(device, TOKEN)
+
+    command(device, client, 0x104, EXPANSION_OFF)
+    shown = next_0421(device)[0]["sub_package_switch_status"]
+    clock.advance(1.9)
+    still = pushed(client, [device.negotiated_module.check_pushes()])
+    clock.advance(0.1)
+    reread = pushed(client, [device.negotiated_module.check_pushes()])
+
+    assert shown == 0
+    assert "4421" not in {cmd for cmd, _ in still}
+    assert "4421" in {cmd for cmd, _ in reread}
+    assert next_0421(device)[0]["sub_package_switch_status"] == 1
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
+
+
+#: The expansion discharging to the ES720 with no charge source in.
+OFF_GRID_EXPANSION = {
+    **EXPANSION_DISCHARGING,
+    "ac_input_disable_switch": 0,
+    "ac_input_status": 0,
+}
+
+
+def test_switching_the_expansion_off_returns_the_bus_to_the_main() -> None:
+    """No charge source: the off reaches the expansion and the main takes the bus.
+
+    ``pack_select_eval`` returns the selection to the main (``0x21``) at once;
+    the reread 2 s later still reads 0, the expansion now off (``flag_0b56``).
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**OFF_GRID_EXPANSION)
+    client = authorized_client(device, TOKEN)
+
+    command(device, client, 0x104, EXPANSION_OFF)
+    values = next_0421(device)[0]
+    slots = tuple(next_0490(device)[name] for name in SLOTS)
+    clock.advance(2)
+    device.negotiated_module.check_pushes()
+
+    assert (values["sub_package_status"], values["charge_discharge_status"]) == (0, 1)
+    assert slots == (8, 9, 3, 3)
+    assert next_0421(device)[0]["sub_package_switch_status"] == 0
+
+
+def test_switching_the_expansion_back_on_reads_1() -> None:
+    """An on reaches the expansion whatever the source; the main keeps the bus."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**OFF_GRID_EXPANSION)
+    client = authorized_client(device, TOKEN)
+    command(device, client, 0x104, EXPANSION_OFF)
+    clock.advance(2)
+    device.negotiated_module.check_pushes()
+
+    command(device, client, 0x104, EXPANSION_ON)
+    clock.advance(2)
+    device.negotiated_module.check_pushes()
+
+    assert next_0421(device)[0]["sub_package_switch_status"] == 1
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
+
+
+def test_a_switched_off_expansion_takes_no_charge_at_the_cap() -> None:
+    """Off, the expansion may not charge: the main keeps charging past its cap."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**CHARGING_MAIN, "ac_input_status": 0, "ac_input_power": 0})
+    client = authorized_client(device, TOKEN)
+    command(device, client, 0x104, EXPANSION_OFF)
+    clock.advance(2)
+    device.negotiated_module.check_pushes()
+
+    device.set_values(ac_input_status=1, ac_input_power=1210, charge_discharge_status=2)
+    device.set_values(battery_level=95, pack_soc=950)
+    clock.advance(2)
+    device.negotiated_module.check_pushes()
+
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
+
+
+def test_battery_only_mains_is_a_charge_source_for_the_switch() -> None:
+    """``.14.30`` bit 0x02 is set with ``a7[3]`` 2 too: the off arms nothing.
+
+    a1783-telemetry.md ``.14.30`` bits (2026-10-06 23:34:07, 0x12 with ``a7[3]`` 2).
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**EXPANSION_DISCHARGING)
+    client = authorized_client(device, TOKEN)
+
+    command(device, client, 0x104, EXPANSION_OFF)
+    clock.advance(2)
+    device.negotiated_module.check_pushes()
+
+    assert next_0421(device)[0]["sub_package_switch_status"] == 1
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
+
+
+def test_pv_input_is_a_charge_source_for_the_switch() -> None:
+    """``.14.30`` bit 0 (PV / DC in) sets ``flag_00c7``: the off arms nothing."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**OFF_GRID_EXPANSION, "pv1_input_power": 120})
+    client = authorized_client(device, TOKEN)
+
+    command(device, client, 0x104, EXPANSION_OFF)
+    clock.advance(2)
+    device.negotiated_module.check_pushes()
+
+    assert next_0421(device)[0]["sub_package_switch_status"] == 1
     assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
 
 

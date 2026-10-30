@@ -29,7 +29,7 @@ from anker_ble_emulator.frame import (
     fragment,
     make_frame,
 )
-from anker_ble_emulator.mcu import Burst, mcu_frame
+from anker_ble_emulator.mcu import EPOCH, Burst, mcu_frame
 from anker_ble_emulator.module import AuthMode, Output
 from anker_ble_emulator.parameters import ParameterDict, TableLayout
 from anker_ble_emulator.timed import Step, Timed
@@ -1007,6 +1007,24 @@ def test_the_stored_tz_replaces_a3_a_tenth_of_a_second_later() -> None:
 
     assert at_once == utc - 3600
     assert rig.module.rtc == utc - 14400
+
+
+def test_an_overdue_event_sees_the_clock_at_its_due_time() -> None:
+    """An event run late (one long advance) reads its own moment, as on the unit."""
+    rig = build_module()
+    negotiate(rig.module, AppClient(), ENROLLED_TOKEN)
+    utc = Int32ul.parse(TIMESTAMP)
+    seen: list[Value] = []
+
+    def stamp(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+        seen.append(state[EPOCH])
+        return Step()
+
+    rig.module.schedule(Timed(3.0, "stamp", stamp))
+    rig.clock.advance(10.0)
+    rig.module.check_pushes()
+
+    assert seen == [utc + 3]
 
 
 def test_a_late_tz_tick_keeps_the_clock_continuous() -> None:

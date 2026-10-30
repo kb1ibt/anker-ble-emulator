@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import zlib
+from datetime import UTC, datetime
 from functools import partial
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -16,6 +17,7 @@ from construct import (
     ExprValidator,
     Flag,
     GreedyBytes,
+    Int8ul,
     Int32sl,
     Padding,
     Struct,
@@ -29,13 +31,14 @@ from anker_ble_emulator.layouts import (
     TYPE_VAR,
     ui,
 )
-from anker_ble_emulator.mcu import COMMAND, UNIT_EVENT
+from anker_ble_emulator.mcu import COMMAND, RTC, UNIT_EVENT
 from anker_ble_emulator.module import AuthMode
 from anker_ble_emulator.parameters import (
     FieldGroup,
     FieldSpec,
     ParameterContainer,
     ParameterDict,
+    Parameters,
     TableLayout,
     container,
     decode_field,
@@ -632,33 +635,143 @@ def _set_holiday_screensaver(request: ParameterDict) -> dict[str, Value] | None:
     return {"holiday_screensaver_switch": bool(decode_field(request, "a2", SWITCH))}
 
 
-#: The holiday theme schedule ``4212`` stores, carried in no frame: the theme id
-#: (0 = none), then each field as sent, named by tag where the doc gives no
-#: meaning (``a3``/``a4`` u32, ``a5``/``a6`` 7-byte datetimes of unknown layout).
+#: The holiday slot's record (``0xff0000``), carried in no frame: the theme id
+#: (0 = none), the file CRC32, ``a4`` (stored, its role unread), the window's
+#: start and end as sent, the URL, and the ``420a`` country when it landed.
 HOLIDAY_ID = "_holiday_id"
+HOLIDAY_START = "_holiday_start"
+HOLIDAY_END = "_holiday_end"
+HOLIDAY_URL = "_holiday_url"
+HOLIDAY_COUNTRY = "_holiday_country"
 HOLIDAY_FIELDS = {
-    "a3": ("_holiday_a3", ui(4)),
+    "a2": (HOLIDAY_ID, ui(4)),
+    "a3": ("_holiday_crc", ui(4)),
     "a4": ("_holiday_a4", ui(4)),
-    "a5": ("_holiday_a5", Bytes(7)),
-    "a6": ("_holiday_a6", Bytes(7)),
-    "a7": ("_holiday_url", GreedyBytes),
+    "a5": (HOLIDAY_START, Bytes(7)),
+    "a6": (HOLIDAY_END, Bytes(7)),
+    "a7": (HOLIDAY_URL, GreedyBytes),
 }
+#: The erased slot: every record value back to nothing.
+HOLIDAY_ERASED: dict[str, Value] = {
+    HOLIDAY_ID: 0,
+    "_holiday_crc": 0,
+    "_holiday_a4": 0,
+    HOLIDAY_START: b"",
+    HOLIDAY_END: b"",
+    HOLIDAY_URL: b"",
+    HOLIDAY_COUNTRY: b"",
+}
+#: ``4212``'s window bounds: ``[year - 2000, month, day, hour, min, sec, -]``,
+#: local time (doc ``4212`` row).
+HolidayTime = Struct(
+    *(name / Int8ul for name in ("year", "month", "day", "hour", "minute", "second")),
+    Padding(1),
+)
+#: The fetch in flight, carried in no frame: its ``4212`` request, and a count
+#: that starts each one.
+HOLIDAY_FETCH = "_holiday_fetch"
+HOLIDAY_FETCHES = "_holiday_fetches"
+YEAR_BASE = 2000
 
 
-def _set_holiday_schedule(request: ParameterDict) -> dict[str, Value]:
-    """Return the holiday theme schedule ``4212`` stores; ``a2 = 0`` clears it.
+def _holiday_schedule_taken(
+    request: ParameterDict,  # noqa: ARG001  # applied with the state below
+) -> dict[str, Value]:
+    """Take any ``4212``: the handler never replies or rejects one.
 
-    A non-zero id needs every field; a request missing one changes nothing.
-    Either way the handler sends no reply.
+    ``_holiday_schedule`` applies it, with the WiFi state it needs.
+    """
+    return {}
+
+
+def _holiday_schedule(
+    request: ParameterDict, state: Mapping[str, Value]
+) -> dict[str, Value]:
+    """``4212``: ``a2 = 0`` erases the holiday slot; any other id fetches its image.
+
+    The image is fetched over WiFi at once; with WiFi down the request is
+    dropped, nothing stored. A request missing a field changes nothing.
     """
     if "a2" not in request:
         return {}
-    theme_id = decode_field(request, "a2", ui(4))
-    if not theme_id:
-        return {HOLIDAY_ID: 0}
-    if any(tag not in request for tag in HOLIDAY_FIELDS):
+    if not decode_field(request, "a2", ui(4)):
+        return dict(HOLIDAY_ERASED)
+    if any(tag not in request for tag in HOLIDAY_FIELDS) or not state.get(WIFI_UP):
         return {}
-    return {HOLIDAY_ID: theme_id} | decode_request(request, HOLIDAY_FIELDS)
+    return {
+        HOLIDAY_FETCH: Parameters.build(request),
+        HOLIDAY_FETCHES: int(state.get(HOLIDAY_FETCHES, 0)) + 1,
+    }
+
+
+def _holiday_fetch(
+    before: Mapping[str, Value], after: Mapping[str, Value]
+) -> tuple[Timed, ...]:
+    """Return the holiday image landing, if a ``4212`` started its fetch."""
+    if after.get(HOLIDAY_FETCHES) != before.get(HOLIDAY_FETCHES):
+        return (Timed(FETCH_DONE, "holiday_fetch", _holiday_landed),)
+    return ()
+
+
+def _holiday_landed(
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Land the holiday image: the slot record takes the request and the country.
+
+    No message marks the landing, so the recorded network self-fetch's 8.6 s
+    stands in; the emulator fetches no bytes, so the CRC always matches. No
+    ``0311`` (kind 1 pushes none, doc "Theme upload").
+    """
+    fetch = stored_bytes(state, HOLIDAY_FETCH)
+    record = decode_request(Parameters.parse(fetch), HOLIDAY_FIELDS)
+    country = state.get(STORED_COUNTRY, b"")
+    return Step(values={**record, HOLIDAY_COUNTRY: country}, unset=(HOLIDAY_FETCH,))
+
+
+def stored_bytes(values: Mapping[str, Value], name: str) -> bytes:
+    """Return the bytes value ``name``.
+
+    Raises:
+        TypeError: If it isn't bytes.
+
+    """
+    value = values[name]
+    if not isinstance(value, bytes):
+        msg = f"{name} is a bytes value"
+        raise TypeError(msg)
+    return value
+
+
+def _holiday_time(values: Mapping[str, Value], name: str) -> tuple[int, ...]:
+    """Return window bound ``name`` as (year - 2000, month, day, hour, min, sec)."""
+    parsed = HolidayTime.parse(stored_bytes(values, name))
+    return tuple(
+        parsed[name] for name in ("year", "month", "day", "hour", "minute", "second")
+    )
+
+
+def _holiday_showing(switch: bool, values: Mapping[str, Value]) -> bool:  # noqa: FBT001
+    """Whether the holiday theme shows (``holiday_theme_active``).
+
+    The holiday ``switch`` on, a record whose country is the current ``420a``
+    one, and the local RTC inside [start, end].
+    """
+    if not switch or not values.get(HOLIDAY_ID):
+        return False
+    if values.get(HOLIDAY_COUNTRY) != values.get(STORED_COUNTRY):
+        return False
+    now = datetime.fromtimestamp(int(values[RTC]), tz=UTC)
+    clock = (
+        now.year - YEAR_BASE,
+        now.month,
+        now.day,
+        now.hour,
+        now.minute,
+        now.second,
+    )
+    start = _holiday_time(values, HOLIDAY_START)
+    return start <= clock <= _holiday_time(values, HOLIDAY_END)
 
 
 def _set_region_owner(request: ParameterDict) -> dict[str, Value] | None:
@@ -1451,7 +1564,7 @@ class A2345Layout(TableLayout):
             0x20D: _set_easter_egg,
             0x20E: _set_button_rotate_direction,
             0x20F: _set_holiday_screensaver,
-            0x212: _set_holiday_schedule,
+            0x212: _holiday_schedule_taken,
             0x210: _set_time_format,
             0x211: _set_custom_charge_mode_switch,
             0x213: _set_screensaver_window,
@@ -1485,6 +1598,7 @@ class A2345Layout(TableLayout):
             0x20A: _owner_change,
             0x20D: _secret_prompt,
             0x211: _custom_mode_switch_off,
+            0x212: _holiday_schedule,
             0x221: _upload_step,
         }
     )
@@ -1521,6 +1635,35 @@ class A2345Layout(TableLayout):
         }
     )
 
+    def names(self, msgtype: int) -> frozenset[str]:
+        """Return the names a frame reads; ``4a02`` adds the holiday record's."""
+        names = super().names(msgtype)
+        if msgtype == MSGTYPE_A02:
+            return names | {*HOLIDAY_ERASED, STORED_COUNTRY}
+        return names
+
+    def finish(
+        self, msgtype: int, params: ParameterDict, values: Mapping[str, Value]
+    ) -> None:
+        """``4a02`` with the holiday theme showing: ``a4`` its URL, then ``a5 01``.
+
+        doc "``4a02`` screensaver reply"; ``a5``'s type byte is assumed ``01``.
+        """
+        if msgtype != MSGTYPE_A02:
+            return
+        switch = decode_field(params, "a2", ScreensaverRead).holiday_screensaver_switch
+        if not _holiday_showing(switch, values):
+            return
+        url = stored_bytes(values, HOLIDAY_URL)
+        fields = dict(params)
+        params.clear()
+        for tag, field in fields.items():
+            if tag == "a4":
+                params["a4"] = container("a4", TYPE_BIN, url)
+                params["a5"] = container("a5", TYPE_UI, b"\x01")
+            else:
+                params[tag] = field
+
     def sends(self, msgtype: int, values: Mapping[str, Value]) -> bool:
         """Whether a push reaches the BLE link: with WiFi up, most go to MQTT."""
         return reaches_ble(PUSH_ROUTES, msgtype, values)
@@ -1556,6 +1699,7 @@ class A2345Layout(TableLayout):
             *_secret_features(before, after),
             *_power_expert(before, after),
             *_theme_fetch(before, after),
+            *_holiday_fetch(before, after),
             *wifi_events(before, after, PERIODICS),
         )
         if before["charging_mode"] == after["charging_mode"]:

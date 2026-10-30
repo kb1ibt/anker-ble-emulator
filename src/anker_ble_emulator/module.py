@@ -399,13 +399,21 @@ class Module:
     @property
     def rtc(self) -> int:
         """The MCU's RTC: local seconds, counting from 0 until a clock set."""
-        return (self.epoch - self._clock_set[2]) % RTC_MODULUS
+        return self._rtc_at(self.clock.now())
 
     @property
     def epoch(self) -> int:
         """The UTC epoch the device stamps a push's ``fe`` with; 0 until a clock set."""
+        return self._epoch_at(self.clock.now())
+
+    def _epoch_at(self, now: float) -> int:
+        """Return the UTC epoch at device-clock instant ``now``."""
         set_at, utc, _ = self._clock_set
-        return (utc + int(self.clock.now() - set_at)) % RTC_MODULUS
+        return (utc + int(now - set_at)) % RTC_MODULUS
+
+    def _rtc_at(self, now: float) -> int:
+        """Return the local RTC at device-clock instant ``now``."""
+        return (self._epoch_at(now) - self._clock_set[2]) % RTC_MODULUS
 
     def connect(self) -> None:
         """Bring a link up with fresh state, after what fell due without one."""
@@ -471,12 +479,18 @@ class Module:
             after[UNIT_EVENT] = unit_event.encode()
         self.schedule(*layout.timed(prior, after))
 
-    def _state(self) -> dict[str, Value]:
-        """Return the device's whole state: values, set ones, the clock, the cloud."""
+    def _state(self, at: float | None = None) -> dict[str, Value]:
+        """Return the device's whole state: values, set ones, the clock, the cloud.
+
+        Args:
+            at: The device-clock instant the clock is read at; now if None.
+
+        """
+        now = self.clock.now() if at is None else at
         return {
             **self.mcu.state(self.values),
-            RTC: self.rtc,
-            EPOCH: self.epoch,
+            RTC: self._rtc_at(now),
+            EPOCH: self._epoch_at(now),
             CLOUD: int(self.cloud),
         }
 
@@ -594,17 +608,18 @@ class Module:
         link = self._link
         while self._queue and self._queue[0].due <= self.clock.now():
             queued = heapq.heappop(self._queue)
-            step = queued.event.action(dict(self.values), self._state())
+            step = queued.event.action(dict(self.values), self._state(queued.due))
             self.values.update(step.values)
             for name in step.unset:
                 self.values.pop(name, None)
             self.schedule(*step.then, start=queued.due)
             if self.clock.bypassed(queued.due):
                 continue
+            rtc = self._rtc_at(queued.due)
             ble = self._route_pushes(
                 [
                     *(
-                        self.mcu.push(msgtype, values=self.values, rtc=self.rtc)
+                        self.mcu.push(msgtype, values=self.values, rtc=rtc)
                         for msgtype in step.pushes
                     ),
                     *(

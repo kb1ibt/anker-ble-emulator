@@ -1308,11 +1308,14 @@ OFF_BUS = (3, 3)
 #:   expansion above its floor; more than 200 steps since the last switch;
 #: - expansion -> main discharge (:164): 300 steps on the expansion, not
 #:   charging (the charge-cap latch clear), its SoC under ``min_soc`` + 0.9 %,
-#:   the main above its floor.
-#: A pack may charge below its cap and discharge above its floor. Not modeled:
-#: the once-per-boot switch (:157), the pack-switch code (:161, :167), the
-#: allowance-only rows (:162, :163, :165, :166), ``raw+0x95``, the expansion's
-#: share of the discharge latch and the latches' other paths. Hidden: the pack
+#:   the main below its cap (its charge allowance, +0xe0);
+#: - expansion -> main discharge (:166): the expansion, not charging, at or
+#:   under its floor (it may not discharge) for 300 steps.
+#: A pack may charge below its cap; the expansion may discharge above its floor,
+#: the main always (+0xe2 = 60.0 A). Not modeled: the once-per-boot switch
+#: (:157), the pack-switch code (:161, :167), the allowance-only rows (:162,
+#: :163, :165) and :166's charge direction, ``raw+0x95``, the expansion's share
+#: of the discharge latch and the latches' other paths. Hidden: the pack
 #: on the bus (1 main, 2 expansion; unset, the expansion when one is attached,
 #: as on the A1783 recording, else the main), when it took it (UTC s), and the
 #: main's 0.1 % SoC the discharge latch counts its drop from.
@@ -1327,6 +1330,7 @@ SWITCH_GAP = 2.01
 CHARGE_CAP_LATCH = 1.0
 DISCHARGE_LATCH_DROP = 10
 PACK_HANDOVER = "pack_handover"
+EXPANSION_SPENT = "expansion_spent"
 LATCH_REFERENCE = "discharge_latch_reference"
 
 
@@ -1339,17 +1343,13 @@ def _bus_pack(state: Mapping[str, Value]) -> int:
 
 
 def _main_soc(state: Mapping[str, Value]) -> int:
-    """Return the main pack's SoC in 0.1 %: ``pack_soc``, else the whole percent."""
-    if PACK_SOC in state:
-        return int(state[PACK_SOC])
-    return int(state["battery_level"]) * SOC_STEPS_PER_PERCENT
+    """Return the main pack's SoC in 0.1 % (``pack_soc``)."""
+    return int(state[PACK_SOC])
 
 
 def _expansion_soc(state: Mapping[str, Value]) -> int:
-    """Return the expansion's SoC in 0.1 %, as ``_main_soc`` does the main's."""
-    if EXPANSION_PACK_SOC in state:
-        return int(state[EXPANSION_PACK_SOC])
-    return int(state["sub_package_battery_level"]) * SOC_STEPS_PER_PERCENT
+    """Return the expansion's SoC in 0.1 % (``sub_package_pack_soc``)."""
+    return int(state[EXPANSION_PACK_SOC])
 
 
 def _cap(state: Mapping[str, Value]) -> int:
@@ -1395,6 +1395,7 @@ def _cap_latch_due(state: Mapping[str, Value]) -> bool:
         state["charge_discharge_status"] == FLOW_CHARGE
         and _main_soc(state) >= _cap(state)
         and _expansion_soc(state) < _cap(state)
+        and _expansion_on(state)
     )
 
 
@@ -1406,6 +1407,7 @@ def _discharge_latch_due(state: Mapping[str, Value]) -> bool:
         and _main_soc(state) <= int(start) - DISCHARGE_LATCH_DROP
         and int(start) > _expansion_floor_line(state)
         and _expansion_soc(state) > _floor(state)
+        and _expansion_on(state)
     )
 
 
@@ -1414,8 +1416,15 @@ def _main_due(state: Mapping[str, Value]) -> bool:
     return (
         state["sub_package_status"] != FLOW_CHARGE
         and _expansion_soc(state) < _expansion_floor_line(state)
-        and _main_soc(state) > _floor(state)
+        and _main_soc(state) < _cap(state)
     )
+
+
+def _expansion_spent(state: Mapping[str, Value]) -> bool:
+    """Return whether the expansion, discharging at its floor, may not discharge."""
+    return state["sub_package_status"] != FLOW_CHARGE and _expansion_soc(
+        state
+    ) <= _floor(state)
 
 
 def _handovers(
@@ -1429,6 +1438,8 @@ def _handovers(
     if _main_due(after) and not _main_due(before):
         dwell = max(0.0, BUS_DWELL - _held_for(after, BUS_DWELL))
         return [Timed(dwell, PACK_HANDOVER, _bus_to_main)]
+    if _expansion_spent(after) and not _expansion_spent(before):
+        return [Timed(BUS_DWELL, EXPANSION_SPENT, _spent_to_main)]
     return []
 
 
@@ -1493,13 +1504,25 @@ def _discharge_to_expansion(
     return Step(values=changes)
 
 
-def _bus_to_main(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
-    """Hand discharge to the main, the expansion under its line (03:29:25).
+def _bus_to_main(values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Hand discharge to the main, the expansion under its line (03:29:25)."""
+    if not _main_due(state):
+        return Step()
+    return _switched_off(values, state)
+
+
+def _spent_to_main(values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Hand discharge to the main, the expansion 300 steps at its floor."""
+    if _bus_pack(state) != BUS_EXPANSION or not _expansion_spent(state):
+        return Step()
+    return _switched_off(values, state)
+
+
+def _switched_off(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Hand discharge to the main: the selection's ``0x21``.
 
     ``c0[24]`` reads 0 and ``a5[1]`` the port flow at once, ``a3[0]`` following.
     """
-    if not _main_due(state):
-        return Step()
     output = bool(state["total_output_power"])
     changes: dict[str, Value] = {
         "sub_package_status": FLOW_IDLE,
@@ -1537,13 +1560,11 @@ def _top_offs(
     expansion not on the bus (``c0[24]`` 0, the closest the frames show).
     """
     _, clear = _top_off_band(int(after["charging_limit_value"]))
-    if PACK_SOC not in before:  # the first set is the baseline, crossing nothing
-        return []
     if not int(before[PACK_SOC]) >= clear > int(after[PACK_SOC]):
         return []
     if after["ac_input_status"] != AC_INPUT_MAINS or after[DISABLE] == BATTERY_ONLY_ON:
         return []
-    if after["sub_package_status"] != FLOW_IDLE:
+    if after.get("sub_package_status", FLOW_IDLE) != FLOW_IDLE:
         return []
     return [Timed(0.0, "top_off", partial(_top_off, own))]
 
@@ -1561,8 +1582,14 @@ def _top_off(
 
 
 def _top_off_end(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
-    """End the burst at the set threshold: AC in 0 W, ``a5[1]`` the port flow."""
-    top, _ = _top_off_band(int(state["charging_limit_value"]))
+    """End the burst at the set threshold: AC in 0 W, ``a5[1]`` the port flow.
+
+    The burst refills a dip just under the clear threshold; from deeper the
+    charge runs on to the set threshold, which no value models.
+    """
+    top, clear = _top_off_band(int(state["charging_limit_value"]))
+    if int(state[PACK_SOC]) < clear - 1:
+        return Step()
     flow = FLOW_OUT if state["total_output_power"] else FLOW_IDLE
     changes: dict[str, Value] = {
         "ac_input_power": 0,
@@ -1628,8 +1655,6 @@ def _floor_exits(
     before: Mapping[str, Value], after: Mapping[str, Value]
 ) -> list[Timed]:
     """Return the drop or clear the main crossing its low-battery line draws."""
-    if PACK_SOC not in before:
-        return []
     line = int(after["discharge_limit_value"]) * SOC_STEPS_PER_PERCENT
     line += LOW_BATTERY_MARGIN
     was, now = int(before[PACK_SOC]), int(after[PACK_SOC])
@@ -2233,12 +2258,67 @@ def _set_screen_saver_params(request: ParameterDict) -> dict[str, Value] | None:
 
 
 def _set_bms_params(request: ParameterDict) -> dict[str, Value] | None:
-    """Return the expansion's switch state; ``a5`` (locate blink) changes no field.
-
-    The real pack re-closes an "off" within ~2 s (``contactor_fsm?``); the
-    emulator reports the commanded state.
-    """
+    """Return ``c0[28]``'s override, the app's ``a4``; ``a5`` (blink) sets none."""
     return decode_request(request, EXPANSION_GROUP)
+
+
+#: ``4104 a4`` (a1783-control.md "``4104``"): ``c0[28]`` shows the app's value
+#: until the block-0xf reread 2 s later pushes a ``0421`` with the expansion's
+#: own switch-on state (``flag_0b56``; hidden, unset = on). An on reaches the
+#: expansion; an off only with no external charge source (``flag_00c7``:
+#: ``.14.30`` AC in, ``a7[3]`` 1 or 2, or PV in), the main then taking the bus.
+EXPANSION_SWITCHED_ON = "expansion_switched_on"
+SWITCH_REQUESTS = "expansion_switch_requests"
+SWITCH_REREAD = 2.0
+SWITCH_REREAD_EVENT = "expansion_switch_reread"
+
+
+def _charge_source(state: Mapping[str, Value]) -> bool:
+    """Return whether an external charge source is in (``flag_00c7``)."""
+    return state["ac_input_status"] != AC_INPUT_NONE or bool(state["pv1_input_power"])
+
+
+def _expansion_on(state: Mapping[str, Value]) -> bool:
+    """Return the expansion's own switch-on state (``flag_0b56``)."""
+    return bool(state.get(EXPANSION_SWITCHED_ON, 1))
+
+
+def _expansion_switch(
+    request: ParameterDict, state: Mapping[str, Value]
+) -> dict[str, Value]:
+    """Return what a ``4104 a4`` does to the expansion: an on, or an unblocked off."""
+    if "a4" not in request:
+        return {}
+    changes: dict[str, Value] = {
+        SWITCH_REQUESTS: int(state.get(SWITCH_REQUESTS, 0)) + 1
+    }
+    if decode_field(request, "a4", ui(1)):
+        changes[EXPANSION_SWITCHED_ON] = 1
+    elif not _charge_source(state):
+        changes[EXPANSION_SWITCHED_ON] = 0
+    return changes
+
+
+def _switch_reread(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Clear the override: ``c0[28]`` reads the expansion's own state, pushed."""
+    own = int(_expansion_on(state))
+    return Step(values={"sub_package_switch_status": own}, pushes=(MSGTYPE_421,))
+
+
+def _switch_events(
+    before: Mapping[str, Value], after: Mapping[str, Value], own: frozenset[str]
+) -> list[Timed]:
+    """Return the reread a ``4104 a4`` arms and the bus move an off draws."""
+    events = []
+    if SWITCH_REQUESTS in own:
+        events.append(Timed(SWITCH_REREAD, SWITCH_REREAD_EVENT, _switch_reread))
+    if (
+        _expansion_on(before)
+        and not _expansion_on(after)
+        and _bus_pack(after) == BUS_EXPANSION
+    ):
+        events.append(Timed(0.0, PACK_HANDOVER, _switched_off))
+    return events
 
 
 #: ``4051``'s restored settings (a1783-control.md "``4051`` factory defaults"):
@@ -2416,6 +2496,88 @@ def _bytes_value(state: Mapping[str, Value], name: str) -> bytes:
     return value
 
 
+#: ``f9[12:16]`` INVVersion reads only while the ACDC stage is energised (mains
+#: in, or AC output on): it shows ~1 s after mains arrives and clears ~1 s after
+#: mains goes, or 47-49 s after AC output switches off; 49 s sits in that
+#: recorded bracket (a1783-telemetry.md "Versions (``f9``)").
+INV_SHOWN_DELAY = 1.0
+INV_MAINS_GONE_DELAY = 1.0
+INV_OUTPUT_OFF_DELAY = 49.0
+INV_EVENT = "inv_version"
+#: ``f9[4:8]`` subMCUVersion reads 0 for ~1 s about once a minute with both AC
+#: paths off. The timer free-runs from the MCU's start; its phase is ours.
+SUB_MCU_PERIOD = 60.0
+SUB_MCU_DIP = 1.0
+SUB_MCU_EVENT = "sub_mcu_version"
+#: Where a dropped-out version waits, carried in no frame.
+HIDDEN_VERSIONS = {
+    "inv_version": "_inv_version",
+    "sub_mcu_version": "_sub_mcu_version",
+}
+NO_VERSION = bytes(VERSION_SIZE)
+
+
+def _energised(state: Mapping[str, Value]) -> bool:
+    """Whether the ACDC stage is energised: mains in, or AC output on."""
+    return state["ac_input_status"] != AC_INPUT_NONE or bool(state["ac_output_status"])
+
+
+def _inv_version_events(
+    before: Mapping[str, Value], after: Mapping[str, Value]
+) -> tuple[Timed, ...]:
+    """Return INVVersion's return or dropout when the ACDC stage turns on or off."""
+    was, now = _energised(before), _energised(after)
+    if now and not was:
+        shown = partial(_version_shown, "inv_version")
+        return (Timed(INV_SHOWN_DELAY, INV_EVENT, shown),)
+    if was and not now:
+        mains_went = before["ac_input_status"] != AC_INPUT_NONE
+        delay = INV_MAINS_GONE_DELAY if mains_went else INV_OUTPUT_OFF_DELAY
+        return (Timed(delay, INV_EVENT, partial(_version_hidden, "inv_version")),)
+    return ()
+
+
+def _hidden(name: str, state: Mapping[str, Value]) -> dict[str, Value]:
+    """Return the values that set version ``name`` to 0, keeping it aside."""
+    return {HIDDEN_VERSIONS[name]: state[name], name: NO_VERSION}
+
+
+def _version_hidden(
+    name: str,
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Version ``name`` reads 0 until its stage comes back."""
+    return Step(values=_hidden(name, state))
+
+
+def _version_shown(
+    name: str,
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Version ``name`` reads again; nothing if it never dropped out."""
+    kept = state.get(HIDDEN_VERSIONS[name])
+    if kept is None:
+        return Step()
+    return Step(values={name: kept}, unset=(HIDDEN_VERSIONS[name],))
+
+
+def _sub_mcu_tick(
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Once a minute: with both AC paths off, subMCUVersion reads 0 for ~1 s."""
+    tick = Timed(SUB_MCU_PERIOD, SUB_MCU_EVENT, _sub_mcu_tick)
+    if _energised(state):
+        return Step(then=(tick,))
+    back = partial(_version_shown, "sub_mcu_version")
+    return Step(
+        values=_hidden("sub_mcu_version", state),
+        then=(tick, Timed(SUB_MCU_DIP, "sub_mcu_back", back)),
+    )
+
+
 def _version_number(state: Mapping[str, Value], name: str) -> int:
     """Return ``f9`` version ``name`` as its digits' integer (v1.2.1.6 -> 1216)."""
     return int(VersionNumber.parse(_bytes_value(state, name)))
@@ -2541,7 +2703,9 @@ class CGen2Layout(TableLayout):
     """The C Gen 2 line's own command/telemetry code; satisfies ``LayoutProtocol``."""
 
     COMMANDS = MappingProxyType(LINE_COMMANDS)
-    SIDE_EFFECTS = MappingProxyType({0x05E: _backup_plan, 0x090: _tou_periods})
+    SIDE_EFFECTS = MappingProxyType(
+        {0x05E: _backup_plan, 0x090: _tou_periods, 0x104: _expansion_switch}
+    )
     READ_REPLIES = MappingProxyType({0x065: _log_size, 0x066: _log_chunk})
     FIELDS = _fields(SINGLE_FIELDS)
     GROUPS = MappingProxyType(
@@ -2611,10 +2775,11 @@ class CGen2Layout(TableLayout):
         return implied
 
     def started(self) -> tuple[Timed, ...]:
-        """Return the display board's free-running timers: the ``0490`` post."""
+        """Return the free-running timers: ``0490``, TOU usage, the subMCU dip."""
         return (
             Timed(C490_PERIOD, C490_POST, _c490_post),
             Timed(USAGE_PASS, USAGE_EVENT, _usage_pass),
+            Timed(SUB_MCU_PERIOD, SUB_MCU_EVENT, _sub_mcu_tick),
         )
 
     def timed(
@@ -2644,11 +2809,13 @@ class CGen2Layout(TableLayout):
         if "charge_discharge_status" in own and "work_status" not in own:
             events.append(FLOW_FOLLOW)
         events += _handovers(before, after, own)
+        events += _switch_events(before, after, own)
         if PACK_SOC in own:
             events += _top_offs(before, after, own)
             events += _floor_exits(before, after)
         events += _ota_prechecks(before, after, own)
         events += _backup_passes(own, self.EVENT_REPORTS)
+        events += _inv_version_events(before, after)
         return tuple(events)
 
     def _mains_lost(

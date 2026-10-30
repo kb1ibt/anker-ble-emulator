@@ -24,6 +24,7 @@ from anker_ble_emulator.devices.a2345 import (
     Screensaver,
     ScreensaverRead,
     Theme,
+    stored_bytes,
 )
 from anker_ble_emulator.devices.base import data_resource
 from anker_ble_emulator.devices.prime import OutputPort
@@ -42,13 +43,17 @@ from tests.fixtures.client import (
     settle,
 )
 from tests.fixtures.prime import (
+    HOLIDAY_URL,
     advance,
     arm,
     command,
     device_clock,
+    holiday_schedule,
+    local_datetime,
     prime_client,
     published,
     pushed_by,
+    screensaver,
     snapshot,
     theme_select,
     unit_change,
@@ -2614,44 +2619,187 @@ def test_a2345_theme_request_during_a_fetch_answers_0() -> None:
     assert device.negotiated_module.values["screen_saver_theme_id"] == RHYTHMIC_HUE
 
 
-def test_a2345_4212_stores_the_holiday_schedule_and_a2_0_clears_it() -> None:
-    """``4212``: id, ``a3``/``a4`` u32, ``a5``/``a6`` 7-byte datetimes, URL; no reply.
+def test_a2345_4212_fetches_the_holiday_image_with_wifi_up() -> None:
+    """``4212``: no reply, no ``0311``; the record lands with the ``420a`` country.
 
-    ``a2 = 0`` clears the schedule (doc ``4212`` row).
+    The fetch sends no message, so 8.6 s (the recorded network self-fetch) stands
+    in for when the image lands (doc ``4212`` row, "Theme upload").
     """
-    device = A2345(clock=ManualClock())
+    clock = ManualClock()
+    device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
-    url = b"https://example.invalid/holiday.jpg"
+    module = device.negotiated_module
+    command(device, client, 0x20A, [(0xA2, b"\x04us"), (0xA3, b"\x04" + ACCOUNT)])
+    device.set_wifi(True)
+    now = module.rtc
+    window = holiday_schedule(RHYTHMIC_HUE, now, now + 60)
 
-    scheduled = command(
-        device,
-        client,
-        0x212,
-        [
-            (0xA2, b"\x03" + ui(4).build(RHYTHMIC_HUE)),
-            (0xA3, b"\x03" + ui(4).build(7)),
-            (0xA4, b"\x03" + ui(4).build(8)),
-            (0xA5, b"\x04" + bytes(range(1, 8))),
-            (0xA6, b"\x04" + bytes(range(2, 9))),
-            (0xA7, b"\x04" + url),
-        ],
-    )
-    values = device.negotiated_module.values
-    stored = {name: values[name] for name in values if name.startswith("_holiday")}
-    cleared = command(device, client, 0x212, [(0xA2, b"\x03" + ui(4).build(0))])
-    partial_request = [(0xA2, b"\x03" + ui(4).build(RHYTHMIC_HUE))]
-    incomplete = command(device, client, 0x212, partial_request)
+    scheduled = command(device, client, 0x212, window)
+    early = advance(device, client, clock, 8.5), module.values.get("_holiday_id")
+    landed = advance(device, client, clock, 0.2)
 
-    assert scheduled == cleared == incomplete == []
-    assert stored == {
-        "_holiday_id": RHYTHMIC_HUE,
-        "_holiday_a3": 7,
-        "_holiday_a4": 8,
-        "_holiday_a5": bytes(range(1, 8)),
-        "_holiday_a6": bytes(range(2, 9)),
-        "_holiday_url": url,
+    record = {
+        name: module.values[name] for name in module.values if "_holiday_" in name
     }
-    assert device.negotiated_module.values["_holiday_id"] == 0
+    assert (scheduled, early, landed) == ([], ([], None), [])
+    assert published(device)[1:] == []
+    assert record == {
+        "_holiday_id": RHYTHMIC_HUE,
+        "_holiday_crc": 7,
+        "_holiday_a4": 8,
+        "_holiday_start": local_datetime(now),
+        "_holiday_end": local_datetime(now + 60),
+        "_holiday_url": HOLIDAY_URL,
+        "_holiday_country": b"US",
+        "_holiday_fetches": 1,
+    }
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param(None, id="WiFi down: dropped"),
+        pytest.param(
+            [(0xA2, b"\x03" + ui(4).build(RHYTHMIC_HUE))], id="a field missing"
+        ),
+        pytest.param([(0xA3, b"\x03" + ui(4).build(7))], id="no a2"),
+    ],
+)
+def test_a2345_4212_that_fetches_nothing(
+    fields: list[tuple[int, bytes]] | None,
+) -> None:
+    """With WiFi down, or a field missing, nothing is stored, now or later."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    if fields is not None:
+        device.set_wifi(True)
+
+    window = holiday_schedule(RHYTHMIC_HUE, module.rtc, module.rtc + 60)
+    replies = command(device, client, 0x212, window if fields is None else fields)
+    advance(device, client, clock, 20)
+
+    assert replies == []
+    assert [name for name in module.values if "_holiday_" in name] == []
+
+
+@pytest.mark.parametrize(
+    "value", [pytest.param(7, id="int"), pytest.param(True, id="bool")]
+)
+def test_a2345_stored_bytes_refuses_a_value_of_another_type(value: int) -> None:
+    """A hidden record value read as bytes that isn't raises, naming it."""
+    with pytest.raises(TypeError, match="_holiday_url is a bytes value"):
+        stored_bytes({"_holiday_url": value}, "_holiday_url")
+
+
+def test_a2345_4212_a2_0_erases_the_holiday_record() -> None:
+    """``a2 = 0`` erases the slot (``theme_slot_erase(0xff0000)``), WiFi up or down."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_wifi(True)
+    window = holiday_schedule(RHYTHMIC_HUE, module.rtc, module.rtc + 60)
+    command(device, client, 0x212, window)
+    advance(device, client, clock, 9)
+    device.set_wifi(False)
+
+    erased = command(device, client, 0x212, [(0xA2, b"\x03" + ui(4).build(0))])
+
+    assert erased == []
+    assert {
+        name: module.values[name]
+        for name in module.values
+        if "_holiday_" in name and name != "_holiday_fetches"
+    } == {
+        "_holiday_id": 0,
+        "_holiday_crc": 0,
+        "_holiday_a4": 0,
+        "_holiday_start": b"",
+        "_holiday_end": b"",
+        "_holiday_url": b"",
+        "_holiday_country": b"",
+    }
+
+
+def test_a2345_holiday_theme_shows_inside_its_window_on_the_local_rtc() -> None:
+    """``4a02``: ``a4`` the fetch URL and ``a5 01`` from start to end, inclusive.
+
+    Shown with the holiday switch on and the record's country the stored one
+    (doc "``4a02`` screensaver reply", ``holiday_window_active``).
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    command(device, client, 0x20A, [(0xA2, b"\x04us"), (0xA3, b"\x04" + ACCOUNT)])
+    device.set_wifi(True)
+    start = module.rtc + 10
+    command(device, client, 0x212, holiday_schedule(RHYTHMIC_HUE, start, start + 10))
+    shown = []
+
+    for seconds in (9, 1, 10, 1):
+        advance(device, client, clock, seconds)
+        fields = screensaver(device)
+        shown.append((fields["a4"]["value"], "a5" in fields))
+
+    recorded = b"1234567890123456"
+    assert shown == [
+        (recorded, False),
+        (HOLIDAY_URL, True),
+        (HOLIDAY_URL, True),
+        (recorded, False),
+    ]
+
+
+def test_a2345_holiday_theme_reply_carries_a5_after_a4() -> None:
+    """While shown: ``a2 c3 · a3 · a4 <url> · a5 01 · a6 · fe``, in that order."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    command(device, client, 0x20A, [(0xA2, b"\x04us"), (0xA3, b"\x04" + ACCOUNT)])
+    device.set_wifi(True)
+    window = holiday_schedule(1, module.rtc - 600, module.rtc + 600)
+    command(device, client, 0x212, window)
+    advance(device, client, clock, 9)
+
+    fields = screensaver(device)
+
+    assert list(fields)[1:] == ["a2", "a3", "a4", "a5", "a6", "fe"]
+    assert (fields["a2"]["value"].hex(), fields["a5"]["value"].hex()) == ("c3", "01")
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param("country", id="420a country changed"),
+        pytest.param("switch", id="holiday switch off"),
+        pytest.param("erase", id="4212 a2 0"),
+    ],
+)
+def test_a2345_holiday_theme_hides(change: str) -> None:
+    """A later ``420a`` country, the holiday switch off, or the erase hides it."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    command(device, client, 0x20A, [(0xA2, b"\x04us"), (0xA3, b"\x04" + ACCOUNT)])
+    device.set_wifi(True)
+    window = holiday_schedule(1, module.rtc - 600, module.rtc + 600)
+    command(device, client, 0x212, window)
+    advance(device, client, clock, 9)
+    before = "a5" in screensaver(device)
+
+    if change == "country":
+        command(device, client, 0x20A, [(0xA2, b"\x04gb"), (0xA3, b"\x04" + ACCOUNT)])
+    elif change == "switch":
+        device.set_values(holiday_screensaver_switch=False)
+    else:
+        command(device, client, 0x212, [(0xA2, b"\x03" + ui(4).build(0))])
+
+    assert (before, "a5" in screensaver(device)) == (True, False)
 
 
 def test_a2345_420a_stores_the_country_uppercased() -> None:

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import zlib
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from construct import Int32ul
@@ -124,6 +125,13 @@ def snapshot(device: EmulatedDevice) -> ParameterDict:
     return Parameters.parse(reply.payload)
 
 
+def screensaver(device: EmulatedDevice) -> ParameterDict:
+    """Return the ``4a02`` screensaver read's fields as the device would answer now."""
+    module = device.negotiated_module
+    reply = module.mcu.respond(0x202, values=module.values, rtc=module.rtc)[0]
+    return Parameters.parse(reply.payload)
+
+
 def arm(seconds: int) -> tuple[int, bytes]:
     """Return ``4209``'s ``a3`` field: the countdown armed for ``seconds``."""
     return 0xA3, b"\x04\x01" + ui(4).build(seconds)
@@ -177,6 +185,34 @@ def published(device: EmulatedDevice) -> list[tuple[int, str]]:
     return [
         (msgtype, decode(frame).payload.hex())
         for msgtype, frame in device.mqtt_published
+    ]
+
+
+#: The URL a holiday theme is fetched from in the tests.
+HOLIDAY_URL = b"https://example.invalid/holiday.jpg"
+
+
+def local_datetime(rtc: int) -> bytes:
+    """Return ``rtc`` (local seconds) as ``4212``'s 7-byte datetime.
+
+    ``[year - 2000, month, day, hour, min, sec, unused]`` (doc ``4212`` row).
+    """
+    when = datetime.fromtimestamp(rtc, tz=UTC)
+    fields = (when.year - 2000, when.month, when.day, when.hour, when.minute)
+    return bytes((*fields, when.second, 0))
+
+
+def holiday_schedule(
+    theme_id: int, start: int, end: int, *, crc: int = 7, a4: int = 8
+) -> list[tuple[int, bytes]]:
+    """Return ``4212``'s fields: id, CRC, ``a4``, the window on the local RTC, URL."""
+    return [
+        (0xA2, b"\x03" + ui(4).build(theme_id)),
+        (0xA3, b"\x03" + ui(4).build(crc)),
+        (0xA4, b"\x03" + ui(4).build(a4)),
+        (0xA5, b"\x04" + local_datetime(start)),
+        (0xA6, b"\x04" + local_datetime(end)),
+        (0xA7, b"\x04" + HOLIDAY_URL),
     ]
 
 

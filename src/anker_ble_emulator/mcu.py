@@ -126,7 +126,8 @@ class McuScript:
     def state(self, values: Mapping[str, Value]) -> dict[str, Value]:
         """Return every named value the recorded frames carry, ``values`` over them.
 
-        The recordings are the replies, the pushes and the cloud-only pushes.
+        The recordings are the recorded ``0490``'s named fields, then the
+        replies, the pushes and the cloud-only pushes over them.
         """
         return self._recorded | dict(values)
 
@@ -134,9 +135,9 @@ class McuScript:
     def _recorded(self) -> dict[str, Value]:
         """Return every named value the recorded frames carry, decoded once."""
         layout = self.layout
-        recorded: dict[str, Value] = {}
         if layout is None:
-            return recorded
+            return {}
+        recorded = dict(self._recorded_490_values)
         for frames in (
             *self.replies.values(),
             self.pushes.values(),
@@ -285,11 +286,16 @@ class McuScript:
 
     def _recorded_490(self, names: frozenset[str]) -> dict[str, Value]:
         """Return the recorded ``0490``'s values among ``names``: what a frame reads."""
-        recorded, push_490 = self.pushes.get(MSGTYPE_490), self.push_490
-        if push_490 is None or recorded is None or names.isdisjoint(push_490.fields):
-            return {}
-        values = push_490.read(recorded.payload)
+        values = self._recorded_490_values
         return {name: value for name, value in values.items() if name in names}
+
+    @cached_property
+    def _recorded_490_values(self) -> dict[str, Value]:
+        """Return the recorded ``0490``'s named values, decoded once; none unposted."""
+        recorded, push_490 = self.pushes.get(MSGTYPE_490), self.push_490
+        if push_490 is None or recorded is None:
+            return {}
+        return push_490.read(recorded.payload)
 
     def _mqtt_source(self, msgtype: int) -> Frame:
         """Return the recorded push or reply ``msgtype`` is built from.
