@@ -33,6 +33,7 @@ PROFILE = Profile(
     cloud_pushes=solix_c_gen2.CLOUD_PUSHES,
     mqtt_routes=solix_c_gen2.MQTT_ROUTES,
     rejects=False,
+    clock_keeps_blank=True,
     push_490=solix_c_gen2.PUSH_490_FIELDS,
     layout=solix_c_gen2.CGen2ExpansionLayout(),
     module_replies={

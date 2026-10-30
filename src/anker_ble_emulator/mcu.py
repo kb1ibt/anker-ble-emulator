@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from functools import partial
+from functools import cached_property, partial
 from typing import TYPE_CHECKING
 
 from construct import GreedyBytes, Int8ul, Struct
@@ -40,6 +40,14 @@ REPLY = Struct("status" / Int8ul, "fields" / GreedyBytes)
 ACK = Struct("status" / Int8ul, "route" / ROUTE_FIELD, "fields" / GreedyBytes)
 #: The state name a read reply finds the MCU's RTC under: local seconds.
 RTC = "rtc"
+#: The state name a timed event finds the UTC epoch under: a push's ``fe``.
+EPOCH = "epoch"
+#: The name the layout's ``timed`` hook finds a change's request msgtype under;
+#: absent for a change made on the unit (``set_values``) or a clock set.
+COMMAND = "command"
+#: The name the ``timed`` hook finds an on-unit event under (``unit_event``),
+#: as its name's bytes; absent otherwise.
+UNIT_EVENT = "unit_event"
 #: The state name a frame built for MQTT finds set: the unit is bound and on
 #: WiFi to the cloud, where it has no BLE link.
 CLOUD = "cloud"
@@ -91,6 +99,11 @@ class McuScript:
         cloud_pushes: Pushes the MCU sends only to the cloud, never to BLE.
         mqtt_routes: The ``a1`` value of each message the MCU publishes to
             MQTT on the cloud, by msgtype.
+        clock_floor: The earliest UTC the MCU's clock set takes; an earlier
+            one leaves its clock as it was.
+        clock_lead: Seconds the MCU's clock set puts its clock ahead of the UTC.
+        clock_keeps_blank: An offset of 0 or -1 leaves the MCU's previous one
+            in place (the C Gen 2 MainMcu); otherwise it is applied as sent.
 
     """
 
@@ -106,17 +119,33 @@ class McuScript:
     factory_reset: int | None = None
     cloud_pushes: Mapping[int, Frame] = field(default_factory=dict)
     mqtt_routes: Mapping[int, bytes] = field(default_factory=dict)
+    clock_floor: int = 0
+    clock_lead: int = 0
+    clock_keeps_blank: bool = False
 
     def state(self, values: Mapping[str, Value]) -> dict[str, Value]:
-        """Return every named value the recorded frames carry, ``values`` over them."""
+        """Return every named value the recorded frames carry, ``values`` over them.
+
+        The recordings are the recorded ``0490``'s named fields, then the
+        replies, the pushes and the cloud-only pushes over them.
+        """
+        return self._recorded | dict(values)
+
+    @cached_property
+    def _recorded(self) -> dict[str, Value]:
+        """Return every named value the recorded frames carry, decoded once."""
         layout = self.layout
         if layout is None:
-            return dict(values)
-        recorded: dict[str, Value] = {}
-        for frames in (*self.replies.values(), self.pushes.values()):
+            return {}
+        recorded = dict(self._recorded_490_values)
+        for frames in (
+            *self.replies.values(),
+            self.pushes.values(),
+            self.cloud_pushes.values(),
+        ):
             for frame in frames:
                 recorded |= layout.read(frame.cmd.msgtype, frame.payload)
-        return recorded | dict(values)
+        return recorded
 
     def respond(
         self,
@@ -157,15 +186,18 @@ class McuScript:
             else:
                 after = self.state(values or {})
                 prior = after if before is None else self.state(before)
-                echoed = layout.reply_fields(msgtype, request, {**after, RTC: rtc})
+                reply = layout.reply(msgtype, request, {**after, RTC: rtc})
+                pushes = [
+                    mcu_frame(push, payload, self.channel)
+                    for push, payload in layout.follow_ups(
+                        msgtype, request, prior, after
+                    )
+                ]
+                lead = layout.leading(msgtype)
                 frames = [
-                    *([] if echoed is None else [self._ack(msgtype, status, echoed)]),
-                    *(
-                        mcu_frame(push, payload, self.channel)
-                        for push, payload in layout.follow_ups(
-                            msgtype, request, prior, after
-                        )
-                    ),
+                    *(push for push in pushes if push.cmd.msgtype in lead),
+                    *([] if reply is None else [self._ack(msgtype, *reply)]),
+                    *(push for push in pushes if push.cmd.msgtype not in lead),
                 ]
         else:
             table_status = self._table_status(msgtype)
@@ -254,11 +286,16 @@ class McuScript:
 
     def _recorded_490(self, names: frozenset[str]) -> dict[str, Value]:
         """Return the recorded ``0490``'s values among ``names``: what a frame reads."""
-        recorded, push_490 = self.pushes.get(MSGTYPE_490), self.push_490
-        if push_490 is None or recorded is None or names.isdisjoint(push_490.fields):
-            return {}
-        values = push_490.read(recorded.payload)
+        values = self._recorded_490_values
         return {name: value for name, value in values.items() if name in names}
+
+    @cached_property
+    def _recorded_490_values(self) -> dict[str, Value]:
+        """Return the recorded ``0490``'s named values, decoded once; none unposted."""
+        recorded, push_490 = self.pushes.get(MSGTYPE_490), self.push_490
+        if push_490 is None or recorded is None:
+            return {}
+        return push_490.read(recorded.payload)
 
     def _mqtt_source(self, msgtype: int) -> Frame:
         """Return the recorded push or reply ``msgtype`` is built from.

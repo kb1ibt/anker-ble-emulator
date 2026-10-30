@@ -19,6 +19,8 @@ from construct import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
+    from .timed import Timed
+
 #: A layout value: an integer for numeric types, bytes for strings and blocks.
 Value = int | float | bytes
 
@@ -41,10 +43,13 @@ class LayoutProtocol(Protocol):
     ) -> dict[str, Value]:
         """Return the values an accepted command sets, given the device's state."""
 
-    def reply_fields(
+    def reply(
         self, msgtype: int, plaintext: bytes, state: Mapping[str, Value]
-    ) -> bytes | None:
-        """Return the fields an accepted reply carries; None for no reply."""
+    ) -> tuple[int, bytes] | None:
+        """Return an accepted request's reply status and fields; None for no reply."""
+
+    def leading(self, msgtype: int) -> frozenset[int]:
+        """Return the follow-up pushes a command sends before its reply."""
 
     def follow_ups(
         self,
@@ -67,6 +72,21 @@ class LayoutProtocol(Protocol):
     def implied(self, values: Mapping[str, Value]) -> dict[str, Value]:
         """Return the further values that setting ``values`` sets."""
 
+    def started(self) -> tuple[Timed, ...]:
+        """Return the timed events the MCU runs from its start (free-running timers)."""
+
+    def timed(
+        self, before: Mapping[str, Value], after: Mapping[str, Value]
+    ) -> tuple[Timed, ...]:
+        """Return the timed events a change from ``before`` to ``after`` starts.
+
+        Both are the device's whole state: the recorded values, set ones over them,
+        the RTC under ``mcu.RTC`` and the epoch under ``mcu.EPOCH``; a clock set is a
+        change of those alone. ``after`` carries a command's request msgtype under
+        ``mcu.COMMAND``, absent for a change made on the unit, and an on-unit
+        event's name under ``mcu.UNIT_EVENT`` (``EmulatedDevice.unit_event``).
+        """
+
     def build(self, msgtype: int, values: Mapping[str, Value] | None = None) -> bytes:
         """Return a telemetry payload of the message's typed fields, zero unless set."""
 
@@ -80,6 +100,11 @@ class LayoutProtocol(Protocol):
 
     def sends(self, msgtype: int, values: Mapping[str, Value]) -> bool:
         """Whether the MCU sends its push of ``msgtype`` now, given the set values."""
+
+    def mqtt_routed(
+        self, msgtype: int, payload: bytes, values: Mapping[str, Value]
+    ) -> tuple[tuple[int, bytes], ...]:
+        """Return the (msgtype, cleartext) MQTT copies of a push held off BLE."""
 
 
 #: Type bytes, every code the firmware writes (names from anker-solix-api's
