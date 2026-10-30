@@ -3614,23 +3614,24 @@ def test_the_expansion_under_its_line_hands_back_replays_2026_09_03() -> None:
     assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
 
 
-@pytest.mark.parametrize(
-    "values",
-    [
-        pytest.param({"sub_package_battery_level": 5}, id="whole-percent-only"),
-        pytest.param(
-            {"sub_package_pack_soc": 58, "sub_package_status": 2}, id="charging"
-        ),
-    ],
-)
-def test_the_expansion_keeps_the_bus_off_its_line(values: dict[str, Value]) -> None:
-    """``c0[25]`` isn't the compared value; a charging expansion (latch set) stays."""
+def test_the_expansion_keeps_the_bus_off_its_line() -> None:
+    """``c0[25]`` isn't the compared value: its whole percent at 5 moves nothing."""
     device = A1783(clock=ManualClock())
     device.set_values(**{**EXPANSION_DISCHARGING, "sub_package_pack_soc": 59})
 
-    device.set_values(**values)
+    device.set_values(sub_package_battery_level=5)
 
     assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
+
+
+def test_a_charging_expansion_under_its_line_hands_back_the_cap_latch_clear() -> None:
+    """:170 tests the charge-cap latch, not the flow: under its cap, it's clear."""
+    device = A1783(clock=ManualClock())
+    device.set_values(**{**EXPANSION_DISCHARGING, "sub_package_pack_soc": 59})
+
+    device.set_values(sub_package_pack_soc=58, sub_package_status=2)
+
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
 
 
 #: 2026-08-31 19:23: main 100 % (``max_soc`` 100), expansion 56 % on the bus, idle.
@@ -3894,7 +3895,7 @@ def test_the_charge_cap_latch_clears_the_discharge_latch() -> None:
     clock.advance(1)
     device.negotiated_module.check_pushes()
     charging = tuple(next_0490(device)[name] for name in SLOTS)
-    device.set_values(sub_package_status=0)
+    device.set_values(sub_package_status=1)
     clock.advance(4)
     device.negotiated_module.check_pushes()
     device.set_values(sub_package_pack_soc=60)
@@ -3923,7 +3924,10 @@ def test_the_expansion_path_hold_blocks_the_discharge_handover() -> None:
 
 
 def test_the_expansion_path_hold_blocks_the_charge_handover() -> None:
-    """The expansion's ``raw+0x95`` set holds :165 off; cleared, the charge moves."""
+    """``raw+0x95`` set holds :165 off, not the cap latch: cleared, the charge moves.
+
+    The latch set under the hold (:193), the move follows the clear at once.
+    """
     clock = ManualClock()
     device = A1783(clock=clock)
     device.set_values(**CHARGING_MAIN)
@@ -3934,11 +3938,82 @@ def test_the_expansion_path_hold_blocks_the_charge_handover() -> None:
     device.negotiated_module.check_pushes()
     held = tuple(next_0490(device)[name] for name in SLOTS)
     device.set_values(sub_package_path_hold=0)
-    clock.advance(1)
-    device.negotiated_module.check_pushes()
 
     assert held == (8, 9, 3, 3)
     assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        pytest.param({"charge_discharge_status": 1}, id="discharge"),
+        pytest.param(
+            {"ac_input_status": 0, "ac_input_power": 0}, id="charge-source-gone"
+        ),
+        pytest.param(
+            {"charge_discharge_status": 0, "pack_soc": 940},
+            id="discharge-latch-armed",
+        ),
+    ],
+)
+def test_the_cap_latch_clears(values: dict[str, Value]) -> None:
+    """:193 clears in discharge and with the source gone; :194 setting clears it too.
+
+    Set under the path hold, cleared: the hold's clear then moves nothing.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**CHARGING_MAIN, "discharge_limit_value": 5})
+    device.set_values(sub_package_path_hold=1)
+    device.set_values(battery_level=95, pack_soc=950)
+    clock.advance(2)
+    device.negotiated_module.check_pushes()
+
+    device.set_values(**values)
+    device.set_values(sub_package_path_hold=0)
+    clock.advance(2)
+    device.negotiated_module.check_pushes()
+
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
+
+
+def test_the_cap_latch_keeps_an_idle_expansion_under_its_line_on_the_bus() -> None:
+    """Handed the charge at 5.0 %, the expansion goes quiet with the source still in.
+
+    The charge-cap latch stays set (not discharging, a source), so :170 waits.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**CHARGING_MAIN, "discharge_limit_value": 5})
+    device.set_values(battery_level=95, pack_soc=950)
+    clock.advance(1)
+    device.negotiated_module.check_pushes()
+
+    device.set_values(sub_package_status=0)
+    clock.advance(4)
+    device.negotiated_module.check_pushes()
+
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
+
+
+def test_the_charge_source_going_hands_an_expansion_under_its_line_back() -> None:
+    """The source gone clears the cap latch at once; :170 then moves the bus.
+
+    The main, quiet at its 95 % cap, takes it at (3, 9).
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**CHARGING_MAIN, "discharge_limit_value": 5})
+    device.set_values(battery_level=95, pack_soc=950)
+    clock.advance(1)
+    device.negotiated_module.check_pushes()
+    device.set_values(sub_package_status=0)
+
+    device.set_values(ac_input_status=0, ac_input_power=0)
+    clock.advance(4)
+    device.negotiated_module.check_pushes()
+
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 9, 3, 3)
 
 
 def test_the_expansion_path_hold_is_0_or_1() -> None:
@@ -4069,6 +4144,27 @@ def test_pv_input_is_a_charge_source_for_the_switch() -> None:
     clock = ManualClock()
     device = A1783(clock=clock)
     device.set_values(**{**OFF_GRID_EXPANSION, "pv1_input_power": 120})
+    client = authorized_client(device, TOKEN)
+
+    command(device, client, 0x104, EXPANSION_OFF)
+    clock.advance(2)
+    device.negotiated_module.check_pushes()
+
+    assert next_0421(device)[0]["sub_package_switch_status"] == 1
+    assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
+
+
+def test_the_alternator_charging_is_a_charge_source_for_the_switch() -> None:
+    """``flag_00c7`` also reads the ALT record's mode 2: the off arms nothing.
+
+    mainbms-control-fsms.md "``flag_00c7``" (block A +3), here with no DC watts.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(
+        **OFF_GRID_EXPANSION,
+        external_device_mode=solix_c_gen2.ExternalDeviceMode.CHARGING,
+    )
     client = authorized_client(device, TOKEN)
 
     command(device, client, 0x104, EXPANSION_OFF)
