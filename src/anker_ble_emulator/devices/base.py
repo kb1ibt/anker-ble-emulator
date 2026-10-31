@@ -493,7 +493,8 @@ class EmulatedDevice:
 
         Raises:
             LayoutError: If no message the device sends has a field so named.
-            TypeError: If a value doesn't fit its field.
+            TypeError: If a value doesn't fit its field, or the device couldn't
+                carry the values; nothing is set then.
 
         """
         self._unit_values(values, pin=True)
@@ -506,7 +507,8 @@ class EmulatedDevice:
 
         Raises:
             LayoutError: If no message the device sends has a field so named.
-            TypeError: If a value doesn't fit its field.
+            TypeError: If a value doesn't fit its field, or the device couldn't
+                carry the values; nothing is set then.
 
         """
         layout, push_490 = self.layout, self.mcu.push_490
@@ -523,6 +525,8 @@ class EmulatedDevice:
                 msg = f"{self.pn} sends no typed field {name!r}"
                 raise LayoutError(msg)
         module = self.negotiated_module
+        if layout is not None:
+            values = layout.resolve(values, module.mcu.state(module.values))
         if pin:
             module.pinned.update(values)
         self._emit(module.check_pushes())

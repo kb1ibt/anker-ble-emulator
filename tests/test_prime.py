@@ -978,8 +978,8 @@ def test_a_prime_port_setter_ack_echoes_the_port(
 ) -> None:
     """The accepted ack carries the request's port (and slot) and clock.
 
-    The app's 4208 and its 0a08: launches/2026-09-09_232357.919__3.23.0.log
-    :1849, :1864; 4207/4209 as the captured 0a07/0a09 (docker collector.mqtt.log).
+    prime-a2345-a91b2.md's ``4207`` / ``4208`` / ``4209`` rows: the ``0a08`` frame
+    the ``4208`` row carries, ``4207``'s port and ``fe``; ``4209``'s the same.
     """
     request = bytes.fromhex("a10121" + request_fields)
 
@@ -989,9 +989,9 @@ def test_a_prime_port_setter_ack_echoes_the_port(
 
 
 def test_a2345_screensaver_read_reports_what_the_snapshot_reports() -> None:
-    """``4202`` -> ``4a02``: a2 switch/holiday/theme, a3 theme id (doc :407).
+    """``4202`` -> ``4a02``: a2 switch/holiday/theme, a3 theme id.
 
-    Recorded: docker-arm collector.mqtt-093026.log.gz:37057, unit ...2385.
+    prime-a2345-a91b2.md's ``4202`` row and the ``4a02`` fields below its table.
     """
     device = A2345()
     recorded = device.mcu.respond(0x202)[0].payload
@@ -1017,7 +1017,7 @@ def test_a2345_screensaver_read_reports_what_the_snapshot_reports() -> None:
 def test_an_a91b2_port_switch_is_followed_by_its_0302_push() -> None:
     """Every captured A91B2 0a07 is followed by a 0302 with the port and its state.
 
-    docker-arm collector.mqtt.log 2026-10-19 (:84908 0a07, :84910 0302).
+    prime-a2345-a91b2.md, the A91B2's "MCU pushes" ``0302`` row.
     """
     request = bytes.fromhex("a10121a2020102a3020101fe0503933cd66a")
 
@@ -1096,10 +1096,8 @@ async def test_a_prime_pushes_0307_when_a_countdown_arms_or_disarms(
 ) -> None:
     """Re-arming an armed countdown draws no 0307.
 
-    A2345: launches/2026-09-09_232357.919__3.23.0.log:1651, :1731. A91B2 AC:
-    docker-arm collector.mqtt.log :84461, :84881. A91B2 USB-C:
-    launches/2026-09-09_210425.106__3.23.0.log:5033, :5164; re-arm silent:
-    launches/2026-07-23_000219.535__3.21.1__truncated-end.log:18986.
+    prime-a2345-a91b2.md's "MCU pushes" ``0307`` rows, the A2345's and the
+    A91B2's: the push fires on the enable edge, a re-arm 1 -> 1 silent.
     """
     device = model()
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as ble:
@@ -1484,8 +1482,8 @@ async def test_a_prime_timed_task_collision_disables_the_other_half_and_pushes_0
 ) -> None:
     """An on-time at the unset off-time's 12:00 disables it and reports it.
 
-    The ``0308`` comes before the ack (doc ``4208`` row, MQTT 2026-09-09
-    23:24:32). launches/2026-09-09_210425.106__3.23.0.log:3392 -> :3407.
+    The ``0308`` comes before the ack (prime-a2345-a91b2.md's ``4208`` row and
+    "MCU pushes" ``0308``).
     """
     device = model()
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as ble:
@@ -1521,9 +1519,8 @@ def test_a2345_pushes_030f_at_once_and_030d_after_the_mode_settle() -> None:
     """430f carries the designated mask at once, 430d the mode about 3.3 s later.
 
     430d carries the mode, ``b8`` and the mask, after the fixed settle counter,
-    for 420c and 4206 alike. launches/2026-09-08_161516.236__3.23.0.log:12376
-    (430f), :12481 (430d); leaving Port Priority clears the designations:
-    :13935 (430d mode 1, a4 0); doc "MCU pushes" 030f.
+    for 420c and 4206 alike (prime-a2345-a91b2.md "MCU pushes" 030f); leaving
+    Port Priority clears the designations (the snapshot's ``[18]`` priority row).
     """
     clock = ManualClock()
     device = A2345(clock=clock)
@@ -1815,9 +1812,8 @@ def test_a2345_owner_change_on_a_fresh_custom_unit_restores_the_factory_mode() -
 def test_a2345_reports_a_screen_setting_changed_on_the_unit() -> None:
     """``030a`` brightness, ``0309`` timeout, ``0310`` knob, ``030b`` theme.
 
-    Each goes out when its setting changes on the unit (doc "Screen reports").
-    ``030b`` as recorded (collector.mqtt-102026-2.log.gz :13974 ``a2 c0``,
-    :14009 ``a2 00``, both ``a3 8eb81a0e``), on BLE's ``a1 31``.
+    Each goes out when its setting changes on the unit (prime-a2345-a91b2.md
+    "Screen reports"), ``030b`` with its ``a3`` theme id, on BLE's ``a1 31``.
     """
     clock = ManualClock()
     device = A2345(clock=clock)
@@ -1844,8 +1840,8 @@ def test_a2345_reports_a_screen_setting_changed_on_the_unit() -> None:
 def test_a2345_app_screen_settings_draw_no_report() -> None:
     """A ``42xx`` from the app sets the screen with only its ack.
 
-    collector.mqtt-102026-2.log.gz: the ``0a05`` acks at 18:50:56, 18:52:48,
-    18:53:31 and 18:56:52 draw no ``030b``.
+    An app ``4205``'s ``0a05`` ack draws no ``030b`` (prime-a2345-a91b2.md
+    "Screen reports").
     """
     clock = ManualClock()
     device = A2345(clock=clock)
@@ -2164,7 +2160,7 @@ PHOTO_2_4311 = "a10131a205043e1cbfeb"
 def test_a2345_unpadded_custom_photo_fails_its_first_draw() -> None:
     """The upload ends ``10`` and ``4311`` 1; then the draw erases it, screen 1.
 
-    doc "Theme upload" (:485), bench 2026-10-30 04:42-04:43: a 65-byte last
+    doc "Theme upload", bench 2026-10-30 04:42-04:43: a 65-byte last
     chunk leaves the chained CBC's last block cut short in flash, so the decrypt
     misses the CRC. The repeat ``4205`` gets ``4311`` 4; ``4222`` draws nothing.
     """
@@ -2233,7 +2229,10 @@ def test_a2345_padded_custom_photo_stays_and_time_display_redraws_it() -> None:
 
 
 def test_a2345_custom_photo_in_chunks_not_a_multiple_of_16_fails_its_draw() -> None:
-    """Every chunk but the last must be a 16-multiple for the chained CBC (:485)."""
+    """Every chunk but the last must be a 16-multiple for the chained CBC.
+
+    doc "Theme upload": one AES-CBC stream per ``4220``.
+    """
     clock = ManualClock()
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
@@ -2592,7 +2591,7 @@ def test_a_prime_wifi_coming_up_publishes_0301(
 ) -> None:
     """``0301``: the firmware version, published at ``64``; nothing on BLE.
 
-    As recorded: collector.mqtt-101626.log.gz :5298 ``a10164a203024408fe05...``.
+    As recorded: prime-a2345-a91b2.md "MCU pushes" ``0301`` row.
     """
     clock = ManualClock()
     device = model(clock=clock)

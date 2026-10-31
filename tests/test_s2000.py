@@ -4,8 +4,8 @@
 import pytest
 from bleak import BleakClient
 
-from anker_ble_emulator import AS220, EmulatedBleakBackend, Outer
-from anker_ble_emulator.devices.as220 import AcOutput, Charger, Power
+from anker_ble_emulator import AS220, EmulatedBleakBackend, ManualClock, Outer
+from anker_ble_emulator.devices.as220 import AcOutput, AS220Settings, Charger, Power
 from anker_ble_emulator.devices.base import data_resource
 from anker_ble_emulator.devices.solix_c_gen2 import (
     Battery,
@@ -20,12 +20,121 @@ from anker_ble_emulator.devices.solix_c_gen2 import (
 from anker_ble_emulator.layouts import LayoutError, ui
 from anker_ble_emulator.mcu import REPLY
 from anker_ble_emulator.parameters import Parameters, decode_field
+from tests.fixtures.cgen2 import next_0421
 from tests.fixtures.client import SESSION, AppClient, BleakLink, settle
+from tests.fixtures.prime import advance, command, prime_client
 
 
 TOKEN = b"a5220000-5011-4000-b000-000000000001"
 #: The subscribe SolixBLE's AS220 sends to start the stream.
 SUBSCRIBE = [(0xA1, b"\x21"), (0xA2, b"\x04\x01")]
+#: Each rating at its edge; AC in is the charge plus the AC out. The charge
+#: holds to 1600 W whatever the limit (1200 W recorded) and the UltraFast flag.
+AT_RATING = [
+    pytest.param({"ac_input_power": 1833, "ac_output_power": 1833}, id="bypass"),
+    pytest.param({"ac_input_power": 1600, "ac_output_power": 0}, id="charge"),
+    pytest.param(
+        {"ac_input_power": 1833, "ac_output_power": 233}, id="charge passing AC out"
+    ),
+    # Recorded 1-3 s after UltraFast was switched off (anker-solix-api#322).
+    pytest.param(
+        {"ac_recharge_power": 600, "ac_input_power": 1520, "ac_output_power": 0},
+        id="recorded charge over a 600 W limit",
+    ),
+    pytest.param({"pv1_input_power": 400}, id="solar"),
+    pytest.param({"ac_output_power": 3000}, id="AC out peak"),
+    pytest.param({"pd1_output_power": 118}, id="USB"),
+]
+#: One watt over each rating, with what the refusal names.
+OVER_RATING = [
+    pytest.param(
+        {"ac_input_power": 1834, "ac_output_power": 1834}, "AC in", id="bypass"
+    ),
+    pytest.param(
+        {"ac_input_power": 1601, "ac_output_power": 0}, "the AC charge", id="charge"
+    ),
+    pytest.param(
+        {"ac_input_power": 1833, "ac_output_power": 232},
+        "the AC charge",
+        id="charge passing AC out",
+    ),
+    pytest.param({"pv1_input_power": 401}, "solar", id="solar"),
+    pytest.param({"ac_output_power": 3001}, "AC out", id="AC out peak"),
+    pytest.param({"pd1_output_power": 119}, "USB", id="USB"),
+]
+#: Each ``4101``/``4103`` param as anker-solix-api#322 sent it, and what its
+#: next ``0421`` shows (PiField s2000-as220.md "Setters").
+SETTERS = [
+    pytest.param(
+        0x101,
+        [(0xA2, b"\x01\x00")],
+        {"ac_output_status": 0, "ac_pass_through_status": 0},
+        id="4101 a2 AC output",
+    ),
+    pytest.param(
+        0x101,
+        [(0xA4, b"\x02" + ui(2).build(1000))],
+        {"ac_recharge_power": 1000},
+        id="4101 a4 AC charge limit",
+    ),
+    pytest.param(
+        0x101, [(0xA7, b"\x01\x01")], {"super_fast_charge_status": 1}, id="4101 a7"
+    ),
+    pytest.param(
+        0x101,
+        [(0xAA, b"\x02" + ui(2).build(600))],
+        {"smart_ac_output_timeout": 600},
+        id="4101 aa Smart AC Output timeout",
+    ),
+    pytest.param(
+        0x103, [(0xA3, b"\x01\x03")], {"lcd_backlight_brightness": 3}, id="4103 a3"
+    ),
+    pytest.param(
+        0x103,
+        [(0xA4, b"\x02" + ui(2).build(300))],
+        {"screen_off_time": 300},
+        id="4103 a4",
+    ),
+    pytest.param(0x103, [(0xA5, b"\x01\x00")], {"temperature_unit": 0}, id="4103 a5"),
+    pytest.param(
+        0x103,
+        [(0xA6, b"\x02" + ui(2).build(1440))],
+        {"device_standby_time": 1440},
+        id="4103 a6",
+    ),
+    pytest.param(0x103, [(0xA8, b"\x01\x00")], {"memory_switch": 0}, id="4103 a8"),
+    pytest.param(
+        0x103,
+        [(0xAA, b"\x01\x5a"), (0xAB, b"\x01\x01")],
+        {"charging_limit_value": 90},
+        id="4103 aa max SoC",
+    ),
+    pytest.param(
+        0x103,
+        [(0xAA, b"\x01\x64"), (0xAB, b"\x01\x05")],
+        {"discharge_limit_value": 5},
+        id="4103 ab min SoC",
+    ),
+]
+#: Input totals no AC in and solar could sum to, with what the refusal names.
+UNCARRIED_INPUT_TOTALS = [
+    pytest.param({"total_input_power": 1700}, "solar reads at most 400 W", id="alone"),
+    pytest.param(
+        {"total_input_power": 1200, "ac_input_power": 1300},
+        "can't sum to 1200 W",
+        id="under its AC in",
+    ),
+    pytest.param(
+        {"total_input_power": 100, "pv1_input_power": 200},
+        "can't sum to 100 W",
+        id="under its solar",
+    ),
+    pytest.param(
+        {"total_input_power": 500, "ac_input_power": 300, "pv1_input_power": 100},
+        r"the input total is AC in \+ solar, 400 W, not 500 W",
+        id="off its inputs' sum",
+    ),
+]
 
 
 async def test_as220_grants_by_button_then_streams_on_subscribe() -> None:
@@ -82,7 +191,7 @@ def test_as220_shares_the_a1783_codecs_and_reads_f0_as_the_charger() -> None:
     versions = decode_field(fields, "f9", DeviceVersions)
     flags = decode_field(fields, "fa", Capabilities)
 
-    assert decode_field(fields, "f0", Charger).ac_input_status == 1
+    assert decode_field(fields, "f0", Charger).ac_pass_through_status == 1
     assert (
         tou.tou_reserve_power,
         tou.charging_limit_value,
@@ -113,8 +222,9 @@ def test_as220_named_values_reach_both_telemetry_frames() -> None:
     device = AS220()
     recorded = Parameters.parse(device.mcu.push(0x421).payload)
 
+    # 1129 W: PR #65's AC-in reading while charging, against the display.
     device.set_values(
-        total_input_power=1129,
+        ac_input_power=1129,
         ac_output_power=7,
         pd1_output_power=12,
         timestamp=0x01020304,
@@ -130,11 +240,12 @@ def test_as220_named_values_reach_both_telemetry_frames() -> None:
         ac = decode_field(fields, "a7", AcOutput)
         usb = decode_field(fields, "aa", OutputPort)
         charger = decode_field(fields, "f0", Charger)
-        assert power.total_input_power == 1129
+        assert (power.ac_input_power, ac.ac_input_power) == (1129, 1129)
+        assert (power.total_input_power, power.total_output_power) == (1129, 7 + 12)
         assert ac.ac_output_power == 7
         assert decode_field(fields, "a5", Battery).charge_discharge_status == 2
-        # One app name, every tag that carries it.
-        assert (charger.ac_input_status, ac.ac_input_status) == (0, 0)
+        # f0[0] is the pass-through (AC out on, 1129 W in), apart from a7[3].
+        assert (charger.ac_pass_through_status, ac.ac_input_status) == (1, 0)
         assert (
             charger["_reserved"] == decode_field(recorded, "f0", Charger)["_reserved"]
         )
@@ -147,6 +258,258 @@ def test_as220_named_values_reach_both_telemetry_frames() -> None:
         assert power["_reserved"] == decode_field(recorded, "a6", Power)["_reserved"]
         assert ac["_reserved"] == decode_field(recorded, "a7", AcOutput)["_reserved"]
     assert [frame.cmd.msgtype for frame in frames] == [0x900, 0x421]
+
+
+@pytest.mark.parametrize("values", AT_RATING)
+def test_as220_takes_each_rating_at_its_edge(values: dict[str, int]) -> None:
+    device = AS220()
+
+    device.set_values(**values)
+
+    module = device.negotiated_module
+    assert {name: module.values[name] for name in values} == values
+
+
+@pytest.mark.parametrize(("values", "what"), OVER_RATING)
+def test_as220_refuses_one_watt_over_a_rating_and_sets_nothing(
+    values: dict[str, int], what: str
+) -> None:
+    device = AS220()
+    module = device.negotiated_module
+    before, pinned = dict(module.values), set(module.pinned)
+
+    with pytest.raises(TypeError, match=f"^{what} reads at most"):
+        device.set_values(**values)
+
+    assert (module.values, module.pinned) == (before, pinned)
+
+
+def test_as220_usb_a_and_the_15_w_usb_c_share_18_w_of_the_usb_total() -> None:
+    """``aa`` is one total: 100 W USB-C, then 18 W, not the 15 + 12 W ports' 27 W."""
+    device = AS220()
+
+    device.set_values(pd1_output_power=100 + 18)
+    with pytest.raises(TypeError, match="USB reads at most 118 W"):
+        device.set_values(pd1_output_power=100 + 15 + 12)
+
+    assert device.negotiated_module.values["pd1_output_power"] == 118
+
+
+def test_as220_holds_the_charge_to_1600_w_whatever_the_flag_and_limit() -> None:
+    """UltraFast off or a lower limit leaves the charge; less AC out can't."""
+    device = AS220()
+    device.set_values(
+        super_fast_charge_status=1, ac_input_power=1800, ac_output_power=200
+    )
+    module = device.negotiated_module
+
+    device.set_values(super_fast_charge_status=0, ac_recharge_power=600)
+    before = dict(module.values)
+    with pytest.raises(TypeError, match="the AC charge reads at most 1600 W"):
+        device.set_values(ac_output_power=199)
+
+    assert module.values == before
+    assert (before["ac_input_power"], before["ac_output_power"]) == (1800, 200)
+
+
+def test_as220_a_lone_input_total_takes_ac_first_then_solar() -> None:
+    """AC in takes the charge the 1200 W limit requests (+10 W) plus the 55 W out."""
+    device = AS220()
+    module = device.negotiated_module
+
+    device.set_values(total_input_power=1129)
+    assert (module.values["ac_input_power"], module.values["pv1_input_power"]) == (
+        1129,
+        0,
+    )
+    device.set_values(total_input_power=1500)
+    assert (module.values["ac_input_power"], module.values["pv1_input_power"]) == (
+        1210 + 55,
+        235,
+    )
+
+
+@pytest.mark.parametrize(("values", "what"), UNCARRIED_INPUT_TOTALS)
+def test_as220_refuses_an_input_total_its_inputs_cant_carry(
+    values: dict[str, int], what: str
+) -> None:
+    device = AS220()
+    module = device.negotiated_module
+    before, pinned = dict(module.values), set(module.pinned)
+
+    with pytest.raises(TypeError, match=what):
+        device.set_values(**values)
+
+    assert (module.values, module.pinned) == (before, pinned)
+
+
+def test_as220_an_input_part_moves_the_total() -> None:
+    """Set with one input, the total gives the other; a part alone moves it."""
+    device = AS220()
+    module = device.negotiated_module
+
+    device.set_values(pv1_input_power=300)
+    assert module.values["total_input_power"] == 55 + 300
+    device.set_values(ac_input_power=1000)
+    assert module.values["total_input_power"] == 1000 + 300
+    device.set_values(total_input_power=1400, ac_input_power=1100)
+    assert module.values["pv1_input_power"] == 300
+    device.set_values(total_input_power=1400, pv1_input_power=200)
+    assert module.values["ac_input_power"] == 1200
+    device.set_values(total_input_power=500, ac_input_power=300, pv1_input_power=200)
+    assert module.values["total_input_power"] == 500
+
+
+def test_as220_the_output_total_follows_ac_out_and_usb() -> None:
+    """``a6[0:2]`` is AC out plus ``aa``; one set by name off that sum is refused."""
+    device = AS220()
+    module = device.negotiated_module
+
+    device.set_values(ac_output_power=7)
+    assert module.values["total_output_power"] == 7
+    device.set_values(pd1_output_power=12)
+    assert module.values["total_output_power"] == 7 + 12
+    device.set_values(total_output_power=19)
+    device.set_values(total_output_power=120, ac_output_power=100, pd1_output_power=20)
+    before = dict(module.values)
+    with pytest.raises(
+        TypeError, match=r"the output total is AC out \+ USB, 120 W, not 121 W"
+    ):
+        device.set_values(total_output_power=121)
+
+    assert module.values == before
+
+
+@pytest.mark.parametrize(("msgtype", "fields", "changes"), SETTERS)
+def test_as220_each_setter_param_shows_in_the_0421_after_its_ack(
+    msgtype: int, fields: list[tuple[int, bytes]], changes: dict[str, int]
+) -> None:
+    device = AS220()
+    client = prime_client(device, TOKEN)
+    layout = device.layout
+    assert layout is not None
+    before = next_0421(device)[0]
+
+    replies = command(device, client, msgtype, fields)
+
+    assert [cmd for cmd, _ in replies] == [f"4{msgtype | 0x800:03x}", "4421"]
+    assert replies[0][1] == "00a10131"
+    shown = layout.read(0x421, bytes.fromhex(replies[1][1]))
+    assert {name: shown[name] for name in changes} == changes
+    assert {name: before[name] for name in changes} != changes
+
+
+def test_as220_4103_a2_shows_in_the_0421_after_its_reply_s() -> None:
+    """The reply's ``0421`` still shows the old switch; its own ``0421`` follows."""
+    clock = ManualClock()
+    device = AS220(clock=clock)
+    client = prime_client(device, TOKEN)
+    layout = device.layout
+    assert layout is not None
+
+    replies = command(device, client, 0x103, [(0xA2, b"\x01\x01")])
+    early = advance(device, client, clock, 0.3)
+    command(device, client, 0x103, [(0xA2, b"\x01\x01")])
+    shown = advance(device, client, clock, 0.2)
+    off = command(device, client, 0x103, [(0xA2, b"\x01\x00")])
+    shown_off = advance(device, client, clock, 0.5)
+
+    assert layout.read(0x421, bytes.fromhex(replies[1][1]))["screen_switch"] == 0
+    assert early == []
+    assert [cmd for cmd, _ in shown] == ["4421"]
+    assert layout.read(0x421, bytes.fromhex(shown[0][1]))["screen_switch"] == 1
+    assert layout.read(0x421, bytes.fromhex(off[1][1]))["screen_switch"] == 1
+    assert layout.read(0x421, bytes.fromhex(shown_off[0][1]))["screen_switch"] == 0
+    assert "screen_switch_request" not in device.negotiated_module.values
+
+
+def test_as220_ac_pass_through_follows_the_ac_output_and_ac_in() -> None:
+    """``f0[0]`` is 1 with the AC output on and AC in over 0 W, apart from ``a7[3]``."""
+    device = AS220()
+
+    def passing() -> object:
+        return next_0421(device)[0]["ac_pass_through_status"]
+
+    recorded = passing()
+    device.set_values(ac_input_power=0)
+    no_input = passing()
+    device.set_values(ac_input_power=300)
+    charging = passing()
+    device.set_values(ac_output_status=0)
+    output_off = passing()
+    device.set_values(ac_input_status=0)
+    no_mains_flag = passing()
+    before = dict(device.negotiated_module.values)
+    with pytest.raises(TypeError, match="ac_pass_through_status follows"):
+        device.set_values(ac_pass_through_status=1)
+    after_refusal = dict(device.negotiated_module.values)
+    device.set_values(ac_pass_through_status=1, ac_output_status=1)
+
+    assert (recorded, no_input, charging, output_off, no_mains_flag) == (
+        1,
+        0,
+        1,
+        0,
+        0,
+    )
+    assert after_refusal == before
+    assert passing() == 1
+
+
+def test_as220_ac_output_off_reads_no_ac_out_and_moves_the_total() -> None:
+    """``a7[1:3]`` reads 0 W unless AC output is on; switched back on, it stays 0."""
+    device = AS220()
+    client = prime_client(device, TOKEN)
+    layout = device.layout
+    assert layout is not None
+    device.set_values(ac_output_power=200, pd1_output_power=10)
+
+    device.set_values(ac_output_status=0)
+    set_off = next_0421(device)[0]
+    command(device, client, 0x101, [(0xA2, b"\x01\x01")])
+    back_on = next_0421(device)[0]
+    device.set_values(ac_output_power=150)
+    replies = command(device, client, 0x101, [(0xA2, b"\x01\x00")])
+    switched_off = layout.read(0x421, bytes.fromhex(replies[1][1]))
+
+    names = (
+        "ac_output_status",
+        "ac_output_power",
+        "total_output_power",
+        "ac_pass_through_status",
+    )
+    assert tuple(set_off[name] for name in names) == (0, 0, 10, 0)
+    assert tuple(back_on[name] for name in names) == (1, 0, 10, 1)
+    assert tuple(switched_off[name] for name in names) == (0, 0, 10, 0)
+
+
+def test_as220_refuses_ac_out_with_the_ac_output_off() -> None:
+    device = AS220()
+    module = device.negotiated_module
+    device.set_values(ac_output_status=0)
+    before = dict(module.values)
+
+    with pytest.raises(TypeError, match="AC out reads 0 W with the AC output off"):
+        device.set_values(ac_output_power=50)
+    after_refusal = dict(module.values)
+    device.set_values(ac_output_power=0)
+    with pytest.raises(TypeError, match="AC out reads 0 W with the AC output off"):
+        AS220().set_values(ac_output_status=0, ac_output_power=50)
+
+    assert after_refusal == before
+    assert module.values["ac_output_power"] == 0
+
+
+def test_as220_a4_carries_the_smart_ac_output_timeout_beside_the_country_code() -> None:
+    """``a4[26:28]`` is the app's ``countryCode``; ``a4[28:30]`` the timeout (min)."""
+    recorded = Parameters.parse(bytes.fromhex(data_resource("as220.json")["421"]))
+    settings = decode_field(recorded, "a4", AS220Settings)
+    short = AS220Settings.parse(bytes(26))
+
+    assert settings.smart_ac_output_timeout == 240
+    assert settings.tail.reserved[:2] == b"US"
+    assert (short.smart_ac_output_timeout, short.tail) == (0, None)
+    assert AS220Settings.build(short) == bytes(26)
 
 
 def test_as220_refuses_names_it_doesnt_carry() -> None:

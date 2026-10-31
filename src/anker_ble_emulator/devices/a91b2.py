@@ -131,8 +131,8 @@ PORT_BY_SELECT = {
     5: "pd4",
 }
 PORT_SELECT = OptionsValidator(ui(1), *PORT_BY_SELECT)
-#: The USB-C ports: a disarm zeroes their remaining time (every recorded
-#: snapshot; launches/2026-09-09_210425.106__3.23.0.log:5164).
+#: The USB-C ports: a disarm zeroes their remaining time (prime-a2345-a91b2.md,
+#: the A91B2's "MCU pushes" ``0307`` row).
 USB_C = frozenset({"pd1", "pd2", "pd3", "pd4"})
 #: ``4205 a2``'s highest theme index (themes 0-2).
 LAST_THEME = 2

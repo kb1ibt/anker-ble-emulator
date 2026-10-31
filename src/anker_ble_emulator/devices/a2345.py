@@ -294,6 +294,8 @@ IMAGE_THEMES = frozenset({3, CUSTOM_THEME})
 THEME_BY_KIND = {0: 3, 2: CUSTOM_THEME}
 #: A network or custom ``4205`` needs a URL at least this long.
 MIN_URL = 16
+#: The fields a ``4220`` needs; one missing answers ``04``.
+PREPARE_TAGS = ("a2", "a3", "a4", "a5", "a6", "a7", "a8")
 #: ``4311 a3``: the image stored and shown, or wanted from the app (WiFi down);
 #: with WiFi up the device fetches it itself (2, then 3 at its first chunk);
 #: 0 answers a ``4205`` while a fetch is busy (doc "``4311`` image state").
@@ -331,7 +333,7 @@ UPLOAD_IMAGE = "_upload_image"
 UPLOAD_IV = "_upload_iv"
 #: Kind 2, a custom photo, is AES-128-CBC encrypted on the device: one stream
 #: per ``4220``, each chunk over its length rounded up to 16 (zeros past it),
-#: flash keeping only the received length (doc "Theme upload", :483-485).
+#: flash keeping only the received length (doc "Theme upload").
 CUSTOM_KIND = 2
 CUSTOM_KEY = bytes.fromhex("789b783678ec78e278a37834781878aa")
 CUSTOM_IV = bytes.fromhex("e16ee1d8e1b3e18be18ee1d0e160e1aa")
@@ -561,10 +563,11 @@ PERIODICS = (
 def _prepare_upload(request: ParameterDict) -> dict[str, Value] | None:
     """Open a ``4220`` upload: its kind, size, CRC, window, chunk and count.
 
-    ``a3`` must be present but isn't stored; a kind other than 0 or 2 changes
-    nothing and gets no reply. The expected index and the CRC start at 0.
+    ``a2``-``a8`` must all be present (``a3`` isn't stored); a kind other than
+    0 or 2 changes nothing and gets no reply. The expected index and the CRC
+    start at 0.
     """
-    if "a3" not in request:
+    if any(tag not in request for tag in PREPARE_TAGS):
         return None
     kind = decode_field(request, "a2", ui(1))
     if kind not in THEME_BY_KIND:
@@ -662,7 +665,8 @@ def _encrypted_chunk(chunk: bytes, chain: bytes) -> tuple[bytes, bytes]:
     """Return a custom chunk as flash keeps it, and the cipher block it chains on.
 
     It's encrypted over its length rounded up to 16 (zeros past it), from the
-    cipher block before it; flash keeps only the received length (:485).
+    cipher block before it; flash keeps only the received length (doc "Theme
+    upload").
     """
     padded = chunk + bytes(-len(chunk) % AES_BLOCK)
     encryptor = AesCipher(algorithms.AES(CUSTOM_KEY), modes.CBC(chain)).encryptor()
@@ -1125,7 +1129,7 @@ def _screen_reports(
     """Return a report of each screen setting changed on the unit.
 
     A change from an app command reports nothing (doc "Screen reports": "sent
-    when a setting changes on the unit"; collector.mqtt-102026-2.log.gz).
+    when a setting changes on the unit").
     """
     if COMMAND in after:
         return ()

@@ -72,6 +72,16 @@ class LayoutProtocol(Protocol):
     def implied(self, values: Mapping[str, Value]) -> dict[str, Value]:
         """Return the further values that setting ``values`` sets."""
 
+    def resolve(
+        self, values: Mapping[str, Value], state: Mapping[str, Value]
+    ) -> dict[str, Value]:
+        """Return what setting ``values`` on ``state`` sets; raise if no unit could.
+
+        Raises:
+            TypeError: If the device couldn't carry the values on ``state``.
+
+        """
+
     def started(self) -> tuple[Timed, ...]:
         """Return the timed events the MCU runs from its start (free-running timers)."""
 

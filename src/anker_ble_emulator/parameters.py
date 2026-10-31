@@ -438,6 +438,14 @@ class TableLayout(StructFieldLayout, CommandDispatchLayout):
         """Return the further values that setting ``values`` sets: none."""
         return {}
 
+    def resolve(
+        self,
+        values: Mapping[str, Value],
+        state: Mapping[str, Value],  # noqa: ARG002  # every value sets as given here
+    ) -> dict[str, Value]:
+        """Return what setting ``values`` sets: the values as given."""
+        return dict(values)
+
     def started(self) -> tuple[Timed, ...]:  # no free-running timer here
         """Return the timed events the MCU runs from its start: none."""
         return ()
@@ -578,6 +586,14 @@ class ScalarFieldLayout:
     ) -> dict[str, Value]:
         """Return the further values that setting ``values`` sets: none."""
         return {}
+
+    def resolve(
+        self,
+        values: Mapping[str, Value],
+        state: Mapping[str, Value],  # noqa: ARG002  # every value sets as given here
+    ) -> dict[str, Value]:
+        """Return what setting ``values`` sets: the values as given."""
+        return dict(values)
 
     def started(self) -> tuple[Timed, ...]:  # no free-running timer here
         """Return the timed events the MCU runs from its start: none."""

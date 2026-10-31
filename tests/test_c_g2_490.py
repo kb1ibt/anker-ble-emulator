@@ -34,7 +34,7 @@ def test_named_values_reach_the_push() -> None:
     assert push_490 is not None
 
     device.set_values(
-        pack_soc=555, pack_current=-3, cell_voltage=b"\x01\x02", total_output_power=86
+        pack_soc=555, pack_current=-3, cell_voltage=b"\x01\x02", pd2_output_power=86
     )
 
     post = push_490.read(

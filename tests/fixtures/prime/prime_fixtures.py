@@ -228,14 +228,15 @@ def theme_select(
 def upload_chunk(
     image: bytes, index: int, chunk: int, *, pad: bool = False
 ) -> list[tuple[int, bytes]]:
-    """Return ``4221``'s fields: the index, then one ignored byte and the chunk.
+    """Return ``4221``'s fields: the index, then the ignored type byte and the chunk.
 
-    With ``pad`` a short last chunk is filled to ``chunk`` bytes with zeros.
+    The type byte is ``04``, as SolixBLE #87 and the bench (2026-10-30) send
+    it. With ``pad`` a short last chunk is filled to ``chunk`` bytes with zeros.
     """
     data = image[index * chunk : (index + 1) * chunk]
     if pad:
         data = data.ljust(chunk, b"\x00")
-    return [(0xA2, b"\x02" + ui(2).build(index)), (0xA3, b"\x00" + data)]
+    return [(0xA2, b"\x02" + ui(2).build(index)), (0xA3, b"\x04" + data)]
 
 
 def upload_theme(  # noqa: PLR0913  # the upload's own knobs

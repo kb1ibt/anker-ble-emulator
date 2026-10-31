@@ -100,11 +100,6 @@ strict = true
 python_version = "3.11"
 files = ["src", "tests", "tools"]
 
-# tools/solixble_theme_check.py runs from a SolixBLE checkout, not this venv.
-[[tool.mypy.overrides]]
-module = ["SolixBLE", "SolixBLE.*"]
-ignore_missing_imports = true
-
 [tool.pytest.ini_options]
 addopts = [
     "--strict-markers",
@@ -137,8 +132,6 @@ omit = [
     "conftest.py",
     "*/__pycache__/*",
     "*/site-packages/*",
-    # A manual check run from a SolixBLE checkout: SolixBLE isn't in this venv.
-    "tools/solixble_theme_check.py",
 ]
 command_line = "-m pytest discover -s tests/"
 parallel = true
