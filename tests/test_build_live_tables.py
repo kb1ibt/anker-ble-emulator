@@ -10,12 +10,20 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from anker_ble_emulator import A1783
 from anker_ble_emulator.devices import PROFILES
-from anker_ble_emulator.live import LiveTable
+from anker_ble_emulator.devices.solix_c_gen2 import DC_INPUT_SOURCE, DcInputSource
+from anker_ble_emulator.live import ANY, LiveTable
 from anker_ble_emulator.parameters import TableLayout
 from anker_ble_emulator.products import Product
 from tests.fixtures.live import SURVEY
-from tools.build_live_tables import SurveyError, identifies, main, table
+from tools.build_live_tables import (
+    EMITTED_SCHEMA,
+    SurveyError,
+    identifies,
+    main,
+    table,
+)
 
 
 if TYPE_CHECKING:
@@ -147,6 +155,169 @@ def test_short_a4_samples_merge_with_long_ones_they_equal() -> None:
     (section,) = table(survey)["sections"]
 
     assert section["groups"][0]["samples"] == [[[1, 100, 0], 10]]
+
+
+def test_a_short_a4_sample_keeps_the_match_keys_it_carries() -> None:
+    """A 26 B ``a4`` lacks only byte 31: the limit it carries stays as recorded."""
+    survey = copy.deepcopy(SURVEY)
+    ac = survey["sections"][0]["groups"][0]
+    ac["match"] = ["ac_input_disable_switch", "ac_recharge_power"]
+    ac["samples"] = [[[1, 100, 1, 1200], 7]]
+    ac["samples_short_a4"] = [[[1, 100, 1000], 3], [[1, 100, 1200], 1]]
+    ac["match_short_a4"] = ["ac_recharge_power"]
+    ac["short_a4"] = {"a4_len": [[26, 4]], "frames": 4, "other_missing": 0}
+
+    (section,) = table(survey)["sections"]
+
+    assert section["groups"][0]["samples"] == [
+        [[1, 100, 1, 1200], 7],
+        [[1, 100, 0, 1000], 3],
+        [[1, 100, 0, 1200], 1],
+    ]
+
+
+def test_a_sample_with_no_ac_input_matches_any_charge_limit() -> None:
+    """The charge limits govern AC input, so an AC-input-0 sample takes ``ANY``."""
+    survey = copy.deepcopy(SURVEY)
+    ac = survey["sections"][0]["groups"][0]
+    ac["fields"] = ["ac_output_power", "ac_input_power"]
+    ac["live"] = ["ac_output_power", "ac_input_power"]
+    ac["idle"] = [0, 0]
+    ac["match"] = ["ac_recharge_power", "ac_input_status"]
+    ac["samples"] = [
+        [[100, 0, 1200, 1], 3],
+        [[100, 0, 1000, 1], 2],
+        [[0, 1210, 1200, 1], 4],
+    ]
+
+    (section,) = table(survey)["sections"]
+
+    assert section["groups"][0]["samples"] == [
+        [[100, 0, ANY, 1], 5],
+        [[0, 1210, 1200, 1], 4],
+    ]
+
+
+def test_pv1_samples_take_the_dc_source_of_the_era_their_days_fall_in() -> None:
+    """Car socket from 2026-08-08; no input (status 0) matches either source.
+
+    Each frame stands for 2 s, and pv1 draws on its own, out of the active sets.
+    """
+    survey = copy.deepcopy(SURVEY)
+    part = survey["sections"][0]
+    part["groups"].append(
+        {
+            "name": "pv1",
+            "fields": ["pv1_charge_status", "pv1_input_power"],
+            "live": ["pv1_input_power"],
+            "idle": [0],
+            "samples": [[[0, 0], 90], [[1, 125], 7], [[1, 0], 2]],
+            "dropped": 1,
+        }
+    )
+    part["active_sets"].append([["usbc", "pv1"], 2])
+    part["a8_by_day"] = [
+        ["2026-07-21", 0, 0, 40],
+        ["2026-08-13", 0, 0, 50],
+        ["2026-08-13", 1, 125, 7],
+        ["2026-08-14", 1, 0, 2],
+        ["2026-08-14", 1, 16, 1],
+    ]
+
+    (section,) = table(survey)["sections"]
+
+    pv1 = section["groups"][-1]
+    assert (pv1["match"], pv1["independent"]) == ([DC_INPUT_SOURCE], True)
+    assert pv1["samples"] == [
+        [[0, 0, ANY], 180],
+        [[1, 125, DcInputSource.CAR_SOCKET], 14],
+        [[1, 0, DcInputSource.CAR_SOCKET], 4],
+    ]
+    assert section["active_sets"] == [[[], 4], [["ac_out"], 4], [["usbc"], 5]]
+
+
+@pytest.mark.parametrize(
+    ("by_day", "error"),
+    [
+        pytest.param(None, "pv1: samples with no days", id="no-days"),
+        pytest.param(
+            [["2026-08-01", 1, 125, 3], ["2026-08-13", 1, 125, 4]],
+            r"pv1: \[1, 125\] was recorded either side of the era boundary, 2026-08-08",
+            id="both-eras",
+        ),
+        pytest.param(
+            [["2026-08-13", 1, 126, 7]],
+            r"pv1: \[1, 125\] has no recorded day",
+            id="undated",
+        ),
+    ],
+)
+def test_pv1_samples_the_builder_cant_date_are_refused(
+    by_day: list[list[object]] | None, error: str
+) -> None:
+    survey = copy.deepcopy(SURVEY)
+    part = survey["sections"][0]
+    part["groups"].append(
+        {
+            "name": "pv1",
+            "fields": ["pv1_charge_status", "pv1_input_power"],
+            "live": ["pv1_input_power"],
+            "idle": [0],
+            "samples": [[[1, 125], 7]],
+        }
+    )
+    if by_day is not None:
+        part["a8_by_day"] = by_day
+
+    with pytest.raises(SurveyError, match=error):
+        table(survey)
+
+
+def test_a_named_section_is_skipped_with_a_note(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``ac_charge`` is a joint table over the AC limits, not a live source."""
+    survey = copy.deepcopy(SURVEY)
+    survey["sections"].append(
+        {
+            "msgtype": "421/900",
+            "section": "ac_charge",
+            "columns": ["ac_recharge_power", "ac_input_power"],
+            "frames": 3,
+            "joint": [[[1200, 1100], 3]],
+        }
+    )
+
+    assert table(survey) == table(SURVEY)
+    assert capsys.readouterr().err == "A1783: skipped the sections ['ac_charge']\n"
+
+
+def test_a_0490_section_of_a_schema_the_emulator_doesnt_send_is_skipped(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    survey = copy.deepcopy(SURVEY)
+    slow = survey["sections"][0]["slow"]
+    survey["sections"] += [
+        {"msgtype": "490", "schema": EMITTED_SCHEMA, "frames": 2, "slow": slow},
+        {
+            "msgtype": "490",
+            "schema": "_0005",
+            "frames": 2,
+            "slow": [{**slow[0], "field": "dc_input_power"}],
+        },
+    ]
+
+    built = table(survey)
+
+    assert [part["msgtype"] for part in built["sections"]] == [0x421, 0x490]
+    assert [block["field"] for block in built["sections"][1]["slow"]] == ["pack_soc"]
+    assert capsys.readouterr().err == "A1783: skipped the sections ['490 _0005']\n"
+
+
+def test_the_0490_schema_kept_is_the_one_the_emulator_sends() -> None:
+    push = A1783().mcu.push(0x490).payload
+
+    assert push.endswith(f"charging_pps_series_c{EMITTED_SCHEMA}\x00".encode())
 
 
 @pytest.mark.parametrize(

@@ -1268,7 +1268,7 @@ async def test_the_bench_peak_holds_grid_charging_until_the_period_ends() -> Non
     15:44:27 (the app's cloud ``0101``, set here as a value), Peak goes active
     and holds AC input at 0 W; at 16:00 the period ends, and by 16:00:13 the
     charge the switch-off started has ramped in: the expansion, below its
-    cap, at 1208 W.
+    cap, at the 1200 W limit's 1210 W.
     """
     clock = ManualClock()
     device = A1783(clock=clock)
@@ -1309,7 +1309,7 @@ async def test_the_bench_peak_holds_grid_charging_until_the_period_ends() -> Non
                 decode_field(fields, "a1", GreedyBytes).hex(),
             )
         )
-    assert states == [(0, 0, "34"), (1, 0, "34"), (0, 1208, "34")]
+    assert states == [(0, 0, "34"), (1, 0, "34"), (0, 1210, "34")]
 
 
 #: ``0022`` at 15:44:00 EDT, and ``4090`` Time-of-Use with a 50 % reserve over
@@ -1945,7 +1945,7 @@ def test_kasa_toggle_replays_bench() -> None:
         ("02", 1, 1, "0000", "0000", 0, 0, []),
         ("02", 1, 1, "7600", "7600", 0, 2, []),  # 15:29:01, 118 W, a5[1] 2
         ("02", 1, 1, "7600", "7600", 2, 2, []),  # 15:29:02, a3[0] 2
-        ("02", 1, 1, "b804", "b804", 2, 2, []),  # 15:29:05
+        ("02", 1, 1, "ba04", "ba04", 2, 2, []),  # 15:29:05, 1208 W on the wire
     ]
 
 
@@ -2111,16 +2111,16 @@ def test_a_jump_settles_the_sequence_but_sends_no_alert() -> None:
 
     assert pushed(client, [lost, back]) == []
     assert decode_field(fields, "a4", GreedyBytes)[31] == 0x02
-    assert (values["ac_input_power"], values["work_status"]) == (1208, 2)
+    assert (values["ac_input_power"], values["work_status"]) == (1210, 2)
 
 
 @pytest.mark.parametrize(
     ("values", "expected"),
     [
-        pytest.param({"battery_level": 18}, (1208, 2, 2, 0), id="main-below-cap"),
+        pytest.param({"battery_level": 18}, (1210, 2, 2, 0), id="main-below-cap"),
         pytest.param(
             {"battery_level": 95, "sub_package_battery_level": 37},
-            (1208, 0, 0, 2),
+            (1210, 0, 0, 2),
             id="main-at-cap-expansion-below",
         ),
         pytest.param(
@@ -2258,7 +2258,7 @@ def test_battery_only_on_and_off_replays_the_2026_10_06_frames() -> None:
         ("02", 1, "0000", "0000"),  # 19:40:42
         ("02", 1, "0000", "0000"),
         ("02", 1, "7600", "7600"),
-        ("02", 1, "b804", "b804"),
+        ("02", 1, "ba04", "ba04"),
     ]
 
 
@@ -4462,7 +4462,7 @@ def test_an_ac_top_off_burst_replays_2026_10_20() -> None:
     device.negotiated_module.check_pushes()
     ended = next_0421(device)[0]
 
-    assert (started["ac_input_power"], started["charge_discharge_status"]) == (1208, 2)
+    assert (started["ac_input_power"], started["charge_discharge_status"]) == (1210, 2)
     assert charging == 2
     assert (ended["ac_input_power"], ended["charge_discharge_status"]) == (0, 1)
     assert device.negotiated_module.values["pack_soc"] == 957
@@ -4488,7 +4488,7 @@ def test_the_top_off_reopens_below_the_clear_threshold(cap: int, clear: int) -> 
     device.set_values(pack_soc=clear - 1)
 
     assert at_threshold == 0
-    assert next_0421(device)[0]["ac_input_power"] == 1208
+    assert next_0421(device)[0]["ac_input_power"] == 1210
 
 
 @pytest.mark.parametrize(
@@ -5182,7 +5182,163 @@ def test_the_charge_enables_after_the_one_shot_and_ramps() -> None:
         module.check_pushes()
         powers.append(next_0421(device)[0]["ac_input_power"])
 
-    assert powers == [0, 118, 118, 1208]
+    assert powers == [0, 118, 118, 1210]
+
+
+@pytest.mark.parametrize(
+    ("limit", "out", "power"),
+    [
+        pytest.param(800, 0, 810, id="800"),
+        pytest.param(1000, 0, 1010, id="1000"),
+        pytest.param(1200, 0, 1210, id="1200"),
+        pytest.param(1200, 56, 1266, id="1200-out-56"),
+        pytest.param(1200, 900, 1810, id="1200-out-900-ceiling"),
+    ],
+)
+def test_the_ac_charge_runs_10_w_over_its_request(
+    limit: int, out: int, power: int
+) -> None:
+    """a1783-telemetry.md "AC charge request": min(1800 - AC out, ``a4[4:6]``).
+
+    AC in is that + 10 W (survey: 808 / 1013 / 1210 modes) + the AC out it
+    passes through (survey: limit + out + 24 at 54-59 W out).
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(
+        **{
+            **KASA_UNIT,
+            "outage_alert_switch": False,
+            "ac_recharge_power": limit,
+            "ac_output_power": out,
+        }
+    )
+    module = device.negotiated_module
+    device.set_values(ac_input_status=0)
+    clock.advance(1)
+    module.check_pushes()
+    device.set_values(ac_input_status=1)
+    clock.advance(16)
+    module.check_pushes()
+
+    assert next_0421(device)[0]["ac_input_power"] == power
+
+
+@pytest.mark.parametrize(
+    ("charging", "change", "moved"),
+    [
+        pytest.param(1210, {"ac_recharge_power": 1000}, 1010, id="limit"),
+        pytest.param(1210, {"ac_output_power": 100}, 1310, id="ac-out"),
+        pytest.param(1210, {"ac_output_power": 700}, 1810, id="ac-out-ceiling"),
+        pytest.param(600, {"ac_recharge_power": 1000}, 600, id="set-by-name"),
+    ],
+)
+def test_a_request_change_moves_a_full_charge(
+    charging: int, change: dict[str, Value], moved: int
+) -> None:
+    """``chg_src1_ac_limit_calc`` re-runs each pass: a full charge follows the request.
+
+    At 1200 W: the limit to 1000 W, or AC out to 100 W or 700 W. An AC input
+    set by name off the full charge stays.
+    """
+    device = A1783(clock=ManualClock())
+    device.set_values(
+        **{
+            **KASA_UNIT,
+            "ac_input_disable_switch": 0,
+            "ac_input_status": 1,
+            "ac_recharge_power": 1200,
+            "ac_input_power": charging,
+        }
+    )
+
+    device.set_values(**change)
+
+    assert next_0421(device)[0]["ac_input_power"] == moved
+
+
+@pytest.mark.parametrize(
+    ("limit", "out", "power"),
+    [
+        pytest.param(1000, 0, 1643, id="1000"),
+        pytest.param(1200, 56, 1699, id="1200-out-56"),
+        pytest.param(1200, 300, 1800, id="1200-out-300-ceiling"),
+    ],
+)
+def test_ultrafast_skips_the_limit_for_the_recorded_band(
+    limit: int, out: int, power: int
+) -> None:
+    """a1783-telemetry.md "AC charge request": with Ultrafast on, the limit is skipped.
+
+    The request is 1800 - AC out; its charge holds to the recorded band, 1643 W
+    (the plan windows of 2026-09-18 and 2026-10-06), and AC in adds the AC out.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(
+        **{
+            **KASA_UNIT,
+            "outage_alert_switch": False,
+            "ac_recharge_power": limit,
+            "ac_output_power": out,
+            "super_fast_charge_status": 1,
+        }
+    )
+    module = device.negotiated_module
+    device.set_values(ac_input_status=0)
+    clock.advance(1)
+    module.check_pushes()
+    device.set_values(ac_input_status=1)
+    clock.advance(16)
+    module.check_pushes()
+
+    assert next_0421(device)[0]["ac_input_power"] == power
+
+
+def test_ultrafast_on_and_off_moves_a_full_charge() -> None:
+    """At the 1000 W limit: 1010 W, Ultrafast on 1643 W, off again 1010 W."""
+    device = A1783(clock=ManualClock())
+    device.set_values(
+        **{
+            **KASA_UNIT,
+            "ac_input_disable_switch": 0,
+            "ac_input_status": 1,
+            "ac_recharge_power": 1000,
+            "ac_input_power": 1010,
+        }
+    )
+
+    device.set_values(super_fast_charge_status=1)
+    on = next_0421(device)[0]["ac_input_power"]
+    device.set_values(super_fast_charge_status=0)
+
+    assert on == 1643
+    assert next_0421(device)[0]["ac_input_power"] == 1010
+
+
+def test_a_plan_window_moves_a_full_charge_to_the_band_and_back() -> None:
+    """The 21-22 EDT plan: 1210 W at the limit, 1643 W in the window, 1210 W after."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(
+        **{**TOU_UNIT, "ac_input_power": 1210},
+        battery_level=96,
+        sub_package_battery_level=22,
+    )
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    clock_set = [(0xA1, EPOCH_20_59_54.to_bytes(4, "little")), (0xA3, EDT)]
+    exchange(module, client, 0x022, clock_set)
+    command(device, client, 0x05E, backup_plan(0, 1, (PLAN_21_22,)))
+
+    clock.advance(6.1)
+    module.check_pushes()
+    in_window = next_0421(device)[0]["ac_input_power"]
+    clock.advance(3600)
+    module.check_pushes()
+
+    assert in_window == 1643
+    assert next_0421(device)[0]["ac_input_power"] == 1210
 
 
 @pytest.mark.parametrize(

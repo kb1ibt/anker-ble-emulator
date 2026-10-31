@@ -30,6 +30,9 @@ REMAINING_TIME = "remaining_time"
 SPLIT_BY = "total_output_power"
 #: Periods a clock's float sum may fall short of a mark by and still reach it.
 GRID_SLACK = 1e-9
+#: A match cell that holds for any state value: the builder writes it where a
+#: key doesn't bind the sample (an AC sample with no AC input, any charge limit).
+ANY = "*"
 
 
 @dataclass(frozen=True)
@@ -56,9 +59,12 @@ class Group:
         fields: Its fields, in sample order.
         live: The fields a draw sets; the rest are match keys.
         idle: The live fields' idle values, in ``live`` order.
-        samples: The recorded samples, in ``fields`` then ``match`` order.
+        samples: The recorded samples, in ``fields`` then ``match`` order; a
+            match cell may be ``ANY``.
         match: Further match keys from outside the group's own field (an AC
             input's switch and status).
+        independent: Its activity is its samples' given its match keys (an
+            input plugged in or not), not the section's active sets.
 
     """
 
@@ -66,25 +72,44 @@ class Group:
     fields: tuple[str, ...]
     live: tuple[str, ...]
     idle: tuple[Value, ...]
-    samples: Weighted[tuple[Value, ...]]
+    samples: Weighted[tuple[Value | str, ...]]
     match: tuple[str, ...] = ()
+    independent: bool = False
 
-    def drawable(self, state: Mapping[str, Value]) -> Weighted[tuple[Value, ...]]:
-        """Return the active samples whose match keys hold ``state``'s values.
+    def matching(self, state: Mapping[str, Value]) -> Weighted[tuple[Value, ...]]:
+        """Return the samples whose match keys hold ``state``'s values, idle included.
 
-        Each is in ``live`` order; one at the idle values isn't active. A key
-        the state doesn't hold matches nothing.
+        Each is in ``live`` order. A key the state doesn't hold matches nothing,
+        unless the cell is ``ANY``.
         """
         columns = (*self.fields, *self.match)
         keys = [(i, name) for i, name in enumerate(columns) if name not in self.live]
         where = [columns.index(name) for name in self.live]
-        drawable = []
+        matching = []
         for sample, count in self.samples:
-            values = tuple(sample[i] for i in where)
-            matched = all(k in state and sample[i] == state[k] for i, k in keys)
-            if values != self.idle and matched:
-                drawable.append((values, count))
-        return tuple(drawable)
+            values = tuple(self._live(columns[i], sample[i]) for i in where)
+            if all(
+                sample[i] == ANY or (k in state and sample[i] == state[k])
+                for i, k in keys
+            ):
+                matching.append((values, count))
+        return tuple(matching)
+
+    def drawable(self, state: Mapping[str, Value]) -> Weighted[tuple[Value, ...]]:
+        """Return the matching samples that are active: off the idle values."""
+        return tuple(item for item in self.matching(state) if item[0] != self.idle)
+
+    def _live(self, field: str, cell: Value | str) -> Value:
+        """Return a live field's sample value.
+
+        Raises:
+            TypeError: If the cell is a wildcard.
+
+        """
+        if isinstance(cell, str):
+            msg = f"{self.name}: a wildcard in live field {field!r}"
+            raise TypeError(msg)
+        return cell
 
 
 @dataclass(frozen=True)
@@ -196,6 +221,7 @@ def _section(data: Mapping[str, Any]) -> Section:
             idle=tuple(group["idle"]),
             samples=_weighted([(tuple(s), c) for s, c in group["samples"]]),
             match=tuple(group.get("match", ())),
+            independent=bool(group.get("independent", False)),
         )
         for group in data["groups"]
     )
@@ -328,6 +354,38 @@ class LiveValues:
         self._slow_marks[slow.field] = mark + steps * slow.interval
         return steps
 
+    def _groups(
+        self,
+        section: Section,
+        current: Mapping[str, Value],
+        pinned: frozenset[str],
+        held: frozenset[str],
+    ) -> dict[str, Value]:
+        """Return the groups' draw: an active set's, each independent group its own."""
+        rng = self._rng
+        groups = [
+            g
+            for g in section.groups
+            if not set(g.live) & pinned and not set(g.live) <= held
+        ]
+        drawable = {g.name: g.drawable(current) for g in groups if not g.independent}
+        possible = {name for name, samples in drawable.items() if samples}
+        sets = tuple((names & possible, count) for names, count in section.active_sets)
+        active = _pick(rng, sets) if sets else frozenset()
+        out: dict[str, Value] = {}
+        for group in groups:
+            if group.independent:
+                matching = group.matching(current)
+                values = _pick(rng, matching) if matching else group.idle
+            elif group.name in active:
+                values = _pick(rng, drawable[group.name])
+            else:
+                values = group.idle
+            out |= {
+                n: v for n, v in zip(group.live, values, strict=True) if n not in held
+            }
+        return out
+
     def _section(
         self,
         section: Section,
@@ -338,23 +396,7 @@ class LiveValues:
     ) -> dict[str, Value]:
         """Return a section's draw; ``held`` (pinned or drawn already) stays."""
         rng = self._rng
-        out: dict[str, Value] = {}
-        groups = [
-            g
-            for g in section.groups
-            if not set(g.live) & pinned and not set(g.live) <= held
-        ]
-        drawable = {g.name: g.drawable(current) for g in groups}
-        possible = {name for name, samples in drawable.items() if samples}
-        sets = tuple((names & possible, count) for names, count in section.active_sets)
-        active = _pick(rng, sets) if sets else frozenset()
-        for group in groups:
-            values = (
-                _pick(rng, drawable[group.name]) if group.name in active else group.idle
-            )
-            out |= {
-                n: v for n, v in zip(group.live, values, strict=True) if n not in held
-            }
+        out = self._groups(section, current, pinned, held)
         current |= out
         for field, parts in section.totals:
             if field not in held:

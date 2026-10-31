@@ -957,6 +957,18 @@ TouRecord = Struct("type" / ui(1), "start_hour" / ui(1), "end_hour" / ui(1))
 #: name for it. Unset, it reads on. a1783-telemetry.md "When the display board
 #: posts c490".
 DEVICE_POINT_SWITCH = "device_point_switch"
+#: What feeds the XT-60i DC input (``a8``): no field carries it, and the app
+#: has no name for it. The live table's DC samples match on it.
+DC_INPUT_SOURCE = "dc_input_source"
+
+
+class DcInputSource(IntEnum):
+    """What feeds the XT-60i DC input."""
+
+    SOLAR = 0
+    CAR_SOCKET = 1
+
+
 #: ``4057 a2``: 0 stops the realtime stream, 1 starts it.
 REALTIME_STOP = 0
 #: The data-read replies and telemetry pushes that ride ``param_info``:
@@ -1184,8 +1196,43 @@ CHARGE_RAMP_EVENT = "ac_charge_ramp"
 #: AC charging after Battery-Only Power goes off with mains in: the median of
 #: 6 s (2026-10-06 19:40:42) and 9 s (2026-10-26 16:34:10).
 BATTERY_ONLY_CHARGE_DELAY = 7.5
-#: The AC charge power: 1208 W (1208-1225 W).
-AC_CHARGE_POWER = 1208
+#: The AC charge runs this far over the limit ``a4[4:6]``: the 1200 W limit's
+#: steady band (survey mode 1210 W); the modes at 800 / 1000 / 1100 / 1200 W are
+#: +8 / +13 / +22 / +10, and a second band at about +20 is unattributed.
+CHARGE_OVER_LIMIT = 10
+AC_LIMIT = "ac_recharge_power"
+#: ``a3[4:6]`` ``maxInputPower``: ``max_input_power_get``, the AC input ceiling
+#: the charge request starts from (a1783-telemetry.md:147, "AC charge request").
+MAX_INPUT = "max_input_power"
+AC_OUT = "ac_output_power"
+#: ``a4[20]``: Ultrafast Charge, which skips the limit.
+ULTRAFAST = "super_fast_charge_status"
+#: The recorded AC input with the limit skipped (AC out 0): the mode of the
+#: 1 808 frames at 1 553-1 673 W (p5-p95 1 624-1 648 W) in the Fast Charging
+#: Plan windows of 2026-09-18 and 2026-10-06. A recorded band, not a firmware
+#: value: the firmware requests ``maxInputPower`` less AC out.
+PLAN_CHARGE_CAP = 1643
+#: What the charge request reads: a change of one moves a full charge. The
+#: backup window's type (``tou_setting_system_status``) is set by the window pass.
+CHARGE_REQUEST_INPUTS = frozenset({AC_LIMIT, MAX_INPUT, AC_OUT, ULTRAFAST})
+CHARGE_REQUEST_EVENT = "ac_charge_request"
+
+
+def _ac_charge_power(state: Mapping[str, Value]) -> int:
+    """Return the AC input at the full charge: the request's charge plus AC out.
+
+    a1783-telemetry.md "AC charge request" (``chg_src1_ac_limit_calc``): the
+    ceiling less the AC-out draw, capped at the limit + 10 W; with Ultrafast on
+    or a backup window running, the limit is skipped and the charge holds to
+    ``PLAN_CHARGE_CAP``. The draw counts while the inverter runs
+    (``0x200001e4`` bits 5:4), the only time AC out reads any. AC in carries
+    the AC out it passes through (survey: limit + out + 24 at 54-59 W out).
+    """
+    out = int(state[AC_OUT])
+    ceiling = int(state[MAX_INPUT]) - out
+    if int(state[ULTRAFAST]) or int(state[WINDOW_TYPE]) != WINDOW_NONE:
+        return min(ceiling, PLAN_CHARGE_CAP) + out
+    return min(ceiling, int(state[AC_LIMIT])) + CHARGE_OVER_LIMIT + out
 
 
 def _without(changes: dict[str, Value], own: frozenset[str]) -> dict[str, Value]:
@@ -1268,7 +1315,28 @@ def _ac_charge_ramp(_values: Mapping[str, Value], state: Mapping[str, Value]) ->
     """Bring the charge to its full power, the ramp's first step still in."""
     if int(state["ac_input_power"]) != CHARGE_FIRST_STEP:
         return Step()
-    return _flow_step({"ac_input_power": AC_CHARGE_POWER}, state)
+    return _flow_step({"ac_input_power": _ac_charge_power(state)}, state)
+
+
+def _request_changed(before: Mapping[str, Value], own: frozenset[str]) -> list[Timed]:
+    """Return a full AC charge's move to a changed request, at once.
+
+    ``chg_src1_ac_limit_calc`` re-runs each pass (a1783-control.md "TOU
+    (4090)": "the previous pass committed"); its period isn't documented.
+    An AC input set by name, or off the full charge, stays.
+    """
+    if not own & CHARGE_REQUEST_INPUTS or "ac_input_power" in own:
+        return []
+    if int(before["ac_input_power"]) != _ac_charge_power(before):
+        return []
+    return [Timed(0.0, CHARGE_REQUEST_EVENT, _ac_charge_to_request)]
+
+
+def _ac_charge_to_request(
+    _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Set the AC charge to the full charge of the request now set."""
+    return _flow_step({"ac_input_power": _ac_charge_power(state)}, state)
 
 
 def _mains_edge(own: frozenset[str], *, back: bool, reports: bool) -> list[Timed]:
@@ -1963,7 +2031,7 @@ def _top_off(
 ) -> Step:
     """Start the top-off burst: AC in, ``a5[1]`` the port flow, ``a3[0]`` following."""
     end = Timed(TOP_OFF_BURST, "top_off_end", _top_off_end)
-    changes = _without({"ac_input_power": AC_CHARGE_POWER}, own)
+    changes = _without({"ac_input_power": _ac_charge_power(state)}, own)
     return _flow_step(changes, state, (end,), own=own)
 
 
@@ -2587,6 +2655,7 @@ def _backup_window(
     charge to a main pack below 100 %; an end posts ``0x0b`` / ``0x08``; a
     hand-over between types changes the type with no ``0425``. No window runs
     before the RTC reads 2025 (a1783-control.md ``d9`` type row, "``0425``").
+    A full AC charge follows the request the window's type leaves.
     """
     now = int(state[EPOCH])
     manual = [int(state[MANUAL_START]), int(state[MANUAL_END])]
@@ -2621,6 +2690,8 @@ def _backup_window(
     elif running and target == WINDOW_NONE:
         changes |= _window_event(WINDOW_EVENTS[running][1], 0, 0)
         pushes = (MSGTYPE_425,)
+    if int(state["ac_input_power"]) == _ac_charge_power(state):
+        changes["ac_input_power"] = _ac_charge_power({**state, **changes})
     edges = [
         t for t in (*manual, *(t for e in _auto_plans(state) for t in e)) if t > now
     ]
@@ -3167,6 +3238,8 @@ class CGen2Layout(TableLayout):
             INPUT_TOTAL,
         }
     )
+    #: The DC input reads the car socket while unset: the latest recorded era.
+    defaults = MappingProxyType({DC_INPUT_SOURCE: DcInputSource.CAR_SOCKET})
 
     def names(self, msgtype: int) -> frozenset[str]:
         """Return the names ``set_values()`` can reach.
@@ -3174,9 +3247,12 @@ class CGen2Layout(TableLayout):
         ``0425`` adds its SoC byte, a message carrying ``d9`` the stored plan
         and the main pack's c490 SoC its charge hold reads, with the pack
         selection's hidden inputs, one carrying the output ports each USB-C
-        port's device, and ``0490`` the device-point switch.
+        port's device, one carrying the DC input its source, and ``0490`` the
+        device-point switch.
         """
         names = set(super().names(msgtype))
+        if "pv1_input_power" in names:
+            names.add(DC_INPUT_SOURCE)
         if msgtype == MSGTYPE_425:
             names.add(EVENT_SOC)
         if "d9" in self.FIELDS.get(msgtype, {}):
@@ -3270,6 +3346,7 @@ class CGen2Layout(TableLayout):
             events += _mains_edge(own, back=back, reports=self.EVENT_REPORTS)
         if DISABLE in own and mains != AC_INPUT_NONE:
             events += _battery_only_switched(before, after, own)
+        events += _request_changed(before, own)
         if CAR_SOCKET in own:
             events += _socket_edge(after, own)
         events += _timers_started(own, after)
@@ -3312,8 +3389,8 @@ class CGen2Layout(TableLayout):
         Raises:
             ConstructError: If a value doesn't fit its field.
             TypeError: If the stored plan isn't its count and record buffer, or
-                the device-point switch, the expansion's path hold or a USB-C
-                device's plug isn't 0 or 1.
+                the device-point switch, the expansion's path hold, the DC
+                input's source or a USB-C device's plug isn't 0 or 1.
 
         """
         given = values or {}
@@ -3333,7 +3410,7 @@ class CGen2Layout(TableLayout):
         ):
             msg = f"{AUTO_PLANS} is {len(AUTO_PLANS_EMPTY)} bytes: 3 x (start, end)"
             raise TypeError(msg)
-        for name in given.keys() & {DEVICE_POINT_SWITCH, PATH_HOLD}:
+        for name in given.keys() & {DEVICE_POINT_SWITCH, PATH_HOLD, DC_INPUT_SOURCE}:
             _check_switch(name, given[name])
         for name in given.keys() & USB_C_DEVICES.keys():
             if name.endswith(DEVICE_PLUGGED):

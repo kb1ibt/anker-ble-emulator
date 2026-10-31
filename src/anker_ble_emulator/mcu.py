@@ -141,9 +141,11 @@ class McuScript:
         """Return every named value the recorded frames carry, ``values`` over them.
 
         The recordings are the recorded ``0490``'s named fields, then the
-        replies, the pushes and the cloud-only pushes over them.
+        replies, the pushes and the cloud-only pushes over them, all over the
+        layout's hidden-input defaults.
         """
-        return self._recorded | dict(values)
+        defaults = {} if self.layout is None else self.layout.defaults
+        return {**defaults, **self._recorded, **values}
 
     @cached_property
     def _recorded(self) -> dict[str, Value]:

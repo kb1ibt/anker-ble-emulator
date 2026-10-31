@@ -7,7 +7,12 @@ import pytest
 
 from anker_ble_emulator import A1763, A1765, A1783, A1785, ManualClock
 from anker_ble_emulator.c_g2_490 import MSGTYPE_490
-from anker_ble_emulator.devices.solix_c_gen2 import MSGTYPE_421, MSGTYPE_900
+from anker_ble_emulator.devices.solix_c_gen2 import (
+    DC_INPUT_SOURCE,
+    MSGTYPE_421,
+    MSGTYPE_900,
+    DcInputSource,
+)
 from anker_ble_emulator.layouts import LayoutError
 from tests.fixtures.cgen2 import (
     A1783_TABLE,
@@ -50,6 +55,11 @@ SEVEN_PORTS = (
     "usb1_output_power",
 )
 PAIRED = ("pack_current", "mcu_input_power", "mcu_output_power")
+#: AC out on, mains in, Battery-Only Power off.
+AC_ON = {"ac_output_status": 1, "ac_input_status": 1, "ac_input_disable_switch": 0}
+#: Long enough for the charge a mains change starts to reach its full power.
+SETTLE = (60.0,)
+AC_POWERS = ("ac_output_power", "ac_input_power")
 
 
 def test_every_drawn_a1783_value_is_one_the_table_records() -> None:
@@ -308,6 +318,74 @@ def test_the_a1783_draws_only_what_its_recordings_hold() -> None:
             if post == (msgtype == MSGTYPE_490):
                 assert low <= values[name] <= high, name
     assert any(len(values) > 1 for values in seen.values())
+
+
+@pytest.mark.parametrize(
+    ("limit", "drawn"),
+    [
+        pytest.param(1200, set(AC_POWERS), id="recorded"),
+        pytest.param(1500, {"ac_output_power"}, id="never-recorded"),
+    ],
+)
+def test_the_ac_charge_limit_binds_only_the_ac_input(
+    limit: int, drawn: set[str]
+) -> None:
+    """A limit never recorded still draws AC output; only a recorded one draws AC in."""
+    device, clock, client = a1783_real(16, **AC_ON, ac_recharge_power=limit)
+
+    frames = run(device, client, clock, SETTLE + MIXED)
+
+    start = frames[0][0]
+    seen = {
+        name
+        for t, msgtype, clear in frames
+        if t > start and msgtype == MSGTYPE_421
+        for name in AC_POWERS
+        if named(device, msgtype, clear)[name]
+    }
+    assert seen == drawn
+
+
+def test_the_a1783_default_state_draws_no_ac() -> None:
+    """Battery-Only on with mains in and AC out off: recorded with no AC flow."""
+    device, clock, client = a1783_real(17)
+
+    frames = run(device, client, clock, MIXED)
+
+    assert {
+        tuple(named(device, msgtype, clear)[name] for name in AC_POWERS)
+        for _, msgtype, clear in frames
+        if msgtype == MSGTYPE_421
+    } == {(0, 0)}
+
+
+def test_the_dc_input_source_reads_the_car_socket_until_set() -> None:
+    assert A1783().mcu.state({})[DC_INPUT_SOURCE] == DcInputSource.CAR_SOCKET
+    with pytest.raises(TypeError, match=f"{DC_INPUT_SOURCE} is 0 or 1"):
+        A1783().set_values(dc_input_source=2)
+
+
+@pytest.mark.parametrize(
+    ("status", "low", "high"),
+    [
+        pytest.param(0, 0.0, 0.0, id="no-input"),
+        pytest.param(1, 0.9, 1.0, id="car-socket"),
+    ],
+)
+def test_pv1_draws_as_often_as_its_status_recorded_it(
+    status: int, low: float, high: float
+) -> None:
+    """Status 1 drew power in 2 253 of 2 299 recorded frames, whatever else ran."""
+    device, clock, client = a1783_real(18, pv1_charge_status=status)
+
+    frames = run(device, client, clock, MIXED)
+
+    powers = [
+        named(device, msgtype, clear)["pv1_input_power"]
+        for _, msgtype, clear in frames
+        if msgtype == MSGTYPE_421
+    ]
+    assert low <= sum(1 for power in powers if power) / len(powers) <= high
 
 
 def test_a_shared_name_agrees_between_the_0421_and_the_0490_on_the_a1783_table() -> (

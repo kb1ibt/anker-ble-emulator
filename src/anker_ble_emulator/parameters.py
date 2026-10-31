@@ -404,6 +404,8 @@ class TableLayout(StructFieldLayout, CommandDispatchLayout):
     GROUPS: ClassVar[Mapping[int, tuple[FieldGroup, ...]]] = MappingProxyType({})
     #: The fields it works out from others: none here.
     derived: frozenset[str] = frozenset()
+    #: The values hidden inputs read while unset: none here.
+    defaults: Mapping[str, Value] = MappingProxyType({})
 
     def names(self, msgtype: int) -> frozenset[str]:
         """Return the names ``set_values()`` can reach in ``msgtype``."""
@@ -552,6 +554,8 @@ class ScalarFieldLayout:
     TELEMETRY: ClassVar[Mapping[int, tuple[ScalarField, ...]]] = MappingProxyType({})
     #: The fields it works out from others: none here.
     derived: frozenset[str] = frozenset()
+    #: The values hidden inputs read while unset: none here.
+    defaults: Mapping[str, Value] = MappingProxyType({})
 
     def names(self, msgtype: int) -> frozenset[str]:
         """Return the named fields of ``msgtype``; none if it has none."""

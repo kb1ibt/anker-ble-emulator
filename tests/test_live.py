@@ -13,7 +13,7 @@ from anker_ble_emulator import A91B2, A1722, A1780, A1783, A2345, ManualClock
 from anker_ble_emulator.devices.base import Profile
 from anker_ble_emulator.devices.prime import MSGTYPE_303
 from anker_ble_emulator.layouts import LayoutError
-from anker_ble_emulator.live import LiveSource, LiveTable
+from anker_ble_emulator.live import ANY, Group, LiveSource, LiveTable
 from anker_ble_emulator.mcu import GIVEN, McuScript
 from anker_ble_emulator.parameters import ScalarFieldLayout, TableLayout
 from anker_ble_emulator.timed import Step, Timed
@@ -98,6 +98,37 @@ def test_a_group_matches_on_its_match_fields_too() -> None:
     assert live.draw(FLOW_STATE, (), 1) == {"ac_input_power": 0}
 
 
+def test_a_wildcard_match_cell_holds_for_any_state_value() -> None:
+    """An AC sample with no AC input draws whatever the charge limit."""
+    group = Group(
+        name="ac",
+        fields=("ac_output_power", "ac_input_power"),
+        live=("ac_output_power", "ac_input_power"),
+        idle=(0, 0),
+        samples=(((100, 0, ANY), 3), ((0, 1210, 1200), 4)),
+        match=("ac_recharge_power",),
+    )
+
+    assert group.drawable({"ac_recharge_power": 1500}) == (((100, 0), 3),)
+    assert group.drawable({"ac_recharge_power": 1200}) == (
+        ((100, 0), 3),
+        ((0, 1210), 4),
+    )
+
+
+def test_a_wildcard_in_a_live_field_is_refused() -> None:
+    group = Group(
+        name="ac",
+        fields=("ac_input_power",),
+        live=("ac_input_power",),
+        idle=(0,),
+        samples=(((ANY,), 1),),
+    )
+
+    with pytest.raises(TypeError, match="ac: a wildcard in live field"):
+        group.drawable({})
+
+
 def test_a_later_section_reads_what_the_layout_derives_from_an_earlier_draw() -> None:
     group = {
         "name": "a",
@@ -135,6 +166,38 @@ def test_the_base_layouts_derive_nothing(
     layout: TableLayout | ScalarFieldLayout,
 ) -> None:
     assert (layout.derive(FLOW_STATE), layout.derived) == ({}, frozenset())
+
+
+@pytest.mark.parametrize("layout", [TableLayout(), ScalarFieldLayout()])
+def test_the_base_layouts_default_no_hidden_value(
+    layout: TableLayout | ScalarFieldLayout,
+) -> None:
+    assert layout.defaults == {}
+
+
+def test_an_independent_group_draws_from_its_own_match_state() -> None:
+    """Its activity is its samples' given its match keys, not the active sets'."""
+    group = {
+        "name": "pv1",
+        "fields": ["pv1_charge_status", "pv1_input_power"],
+        "live": ["pv1_input_power"],
+        "idle": [0],
+        "samples": [[[1, 120], 3], [[1, 0], 1], [[0, 0], 50]],
+        "independent": True,
+    }
+    table = {"sections": [{"msgtype": 0, "groups": [group], "active_sets": [[[], 1]]}]}
+    live = live_values(table, 18)
+    plugged: dict[str, Value] = {"pv1_charge_status": 1, "pv1_input_power": 0}
+
+    drawn = [live.draw(plugged, (), 1)["pv1_input_power"] for _ in range(400)]
+    unplugged = {
+        live.draw({**plugged, "pv1_charge_status": 0}, (), 1)["pv1_input_power"]
+        for _ in range(100)
+    }
+
+    assert set(drawn) == {0, 120}
+    assert 0.65 < drawn.count(120) / len(drawn) < 0.85
+    assert unplugged == {0}
 
 
 def test_a_later_section_leaves_a_field_an_earlier_one_drew() -> None:
