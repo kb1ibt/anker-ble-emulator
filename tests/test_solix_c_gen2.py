@@ -2036,8 +2036,14 @@ def test_a_value_the_call_sets_wins_over_what_it_implies() -> None:
     assert [held.hex(), released.hex(), no_mains.hex()] == ["0000", "8403", "f401"]
 
 
-def test_a_mains_loss_without_battery_only_moves_only_the_input() -> None:
-    """With Battery-Only off and the alert off: ``a7[3]`` 0 and AC in 0 W, no alert."""
+def test_a_short_outage_with_battery_only_off_replays_2026_10_31() -> None:
+    """a1783-control.md "``a4[31]`` witnesses", 2026-10-31 15:03 (Battery-Only off).
+
+    ``ac_input_autooff_eval`` returns 2 while the flag reads 0, whatever
+    Battery-Only Power's state: the drop reads ``a4[31]`` ``02`` -> ``0a``, AC in
+    0 W and the screen woken; mains back 3 s on, the accept reads ``02``, and AC
+    in returns 8 s after it.
+    """
     clock = ManualClock()
     device = A1783(clock=clock)
     device.set_values(
@@ -2045,21 +2051,30 @@ def test_a_mains_loss_without_battery_only_moves_only_the_input() -> None:
             **KASA_UNIT,
             "ac_input_disable_switch": 0,
             "ac_input_status": 1,
-            "outage_alert_switch": False,
-            "ac_input_power": 1208,
+            "ac_input_power": 1113,
         }
     )
-    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
 
     device.set_values(ac_input_status=0)
-    _, fields = next_0421(device)
-    clock.advance(10)
-    out = device.negotiated_module.check_pushes()
+    dropped = next_0421(device)[1]
+    clock.advance(0.1)
+    module.check_pushes()
+    settled = next_0421(device)[1]
+    clock.advance(2.9)
+    module.check_pushes()
+    device.set_values(ac_input_status=1)
+    clock.advance(3.0)
+    module.check_pushes()
+    accepted = next_0421(device)[1]
+    clock.advance(8)
+    module.check_pushes()
 
-    a4 = decode_field(fields, "a4", GreedyBytes)
-    assert (a4[31], a4[21]) == (0x00, 0)
-    assert decode_field(fields, "a7", GreedyBytes)[3:6] == bytes(3)
-    assert pushed(client, [out]) == []
+    assert decode_field(dropped, "a7", GreedyBytes)[3:6] == bytes(3)
+    a4 = decode_field(settled, "a4", GreedyBytes)
+    assert (a4[31], a4[21]) == (0x0A, 1)
+    assert decode_field(accepted, "a4", GreedyBytes)[31] == 0x02
+    assert module.values["ac_input_power"] == solix_c_gen2.CHARGE_FIRST_STEP
 
 
 def test_mains_lost_again_before_the_clear_keeps_the_auto_off() -> None:
@@ -5187,6 +5202,127 @@ def test_a_flag_back_before_the_alert_commits_cancels_it(
     assert [push for push in out if push[0] == "4425"] == alerts
 
 
+#: The 2026-10-31 15:03-15:04 bench unit: Battery-Only off, mains in, charging,
+#: the outage alert on (``a4[31]`` ``02``).
+CHARGING_UNIT = {
+    **KASA_UNIT,
+    "ac_input_disable_switch": 0,
+    "ac_input_status": 1,
+    "ac_input_power": 1113,
+}
+#: 15:03 by ``fe``: ``a7[3]`` down at :33, ``a4[31]`` ``0a`` from :34 (the loss
+#: report ~1 s), ``a7[3]`` back by :36, the accept at :39 (the return report,
+#: 2.9 s + the debounce); no ``4425`` only at the late edge of the tick phase.
+OUTAGE_15_03 = {"power_stage_loss_report": 1.0, "alert_tick_phase": 1.0}
+
+
+@pytest.mark.parametrize(
+    ("unit", "down", "alerts"),
+    [
+        pytest.param(
+            {"power_stage_return_report": 1.9}, 2.0, [], id="15-04-report-2-s"
+        ),
+        pytest.param(OUTAGE_15_03, 3.0, [], id="15-03-a7-timeline"),
+        pytest.param(
+            {**OUTAGE_15_03, "alert_tick_phase": 0.8},
+            3.0,
+            [GRID_LOSS_4425],
+            id="15-03-earlier-phase-alerts",
+        ),
+        pytest.param({}, 1.5, [GRID_LOSS_4425], id="phase-0-flag-held-4.4-s"),
+        pytest.param(
+            {"alert_tick_phase": 0.5}, 1.5, [], id="phase-0.5-flag-held-4.4-s"
+        ),
+    ],
+)
+def test_the_alert_commits_at_its_tick_phase_plus_4_s(
+    unit: dict[str, Value], down: float, alerts: list[tuple[str, str]]
+) -> None:
+    """a1783-control.md "Alert": 5 differing 1 s ticks, the first 0-1 s after the drop.
+
+    The tick phase (hidden ``alert_tick_phase``) and the return report (hidden
+    ``power_stage_return_report``) are set per run. 15:04: ``a7[3]`` back 2 s
+    on, the accept 2 s after, so the flag is down 3.9 s: no ``4425``. 15:03, on
+    its own ``a7[3]`` timeline: the flag down 1.1 → 6.0 s, the 5th tick at 6.1
+    s with the phase at 1 s, so no ``4425``; at 0.8 s it commits at 5.9 s.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**CHARGING_UNIT, **unit})
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+
+    device.set_values(ac_input_status=0)
+    clock.advance(down)
+    out = [module.check_pushes()]
+    device.set_values(ac_input_status=1)
+    clock.advance(10)
+    out.append(module.check_pushes())
+
+    assert [push for push in pushed(client, out) if push[0] == "4425"] == alerts
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        pytest.param("alert_tick_phase", 1.5, id="phase-over-1-s"),
+        pytest.param("alert_tick_phase", b"\x00", id="phase-not-a-number"),
+        pytest.param("power_stage_loss_report", 1.5, id="loss-over-1-s"),
+        pytest.param("power_stage_loss_report", -0.1, id="loss-negative"),
+        pytest.param("power_stage_return_report", -1.0, id="report-negative"),
+        pytest.param("power_stage_return_report", b"\x00", id="report-not-a-number"),
+    ],
+)
+def test_the_alert_timing_inputs_hold_to_their_ranges(name: str, value: Value) -> None:
+    """The tick phase and loss report are 0-1 s, the return report 0 s or more."""
+    with pytest.raises(TypeError, match=name):
+        A1783().set_values(**{name: value})
+
+
+def test_the_loss_report_delays_the_auto_off() -> None:
+    """``power_stage_loss_report`` 1 s: the flag and ``0a`` 1.1 s after ``a7[3]``."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**CHARGING_UNIT, "power_stage_loss_report": 1.0})
+    module = device.negotiated_module
+
+    device.set_values(ac_input_status=0)
+    clock.advance(1.0)
+    module.check_pushes()
+    early = decode_field(next_0421(device)[1], "a4", GreedyBytes)[31]
+    clock.advance(0.1)
+    module.check_pushes()
+
+    assert early == 0x02
+    assert decode_field(next_0421(device)[1], "a4", GreedyBytes)[31] == 0x0A
+
+
+def test_the_14_54_alert_lands_4_to_5_s_after_the_drop() -> None:
+    """a1783-control.md "``a4[31]`` witnesses", 2026-10-31 14:54 (Battery-Only on).
+
+    The ``4425`` carries no ``fe``; received 14:54:46.842 less the link's 1.7-2.7
+    s puts its commit 4.1-5.1 s after the drop at ``fe`` :40, SoC 59 %.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**KASA_UNIT, "battery_level": 59})
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    landed = []
+
+    device.set_values(ac_input_status=0)
+    for tenth in range(1, 61):
+        clock.advance(0.1)
+        if "4425" in {cmd for cmd, _ in pushed(client, [module.check_pushes()])}:
+            landed.append(round(tenth / 10, 1))
+
+    assert len(landed) == 1
+    assert 4.0 <= landed[0] <= 5.0
+    assert module.mcu.push(0x425, values=module.values).payload == bytes.fromhex(
+        "a10131a2020159a302043b"
+    )
+
+
 def test_the_charge_enables_after_the_one_shot_and_ramps() -> None:
     """a1783-control.md "``a4[31]`` witnesses": the enable after the 7 s one-shot.
 
@@ -6156,6 +6292,37 @@ def test_the_decoded_build_reports_its_max_input_powers_on_any_model(
         device.set_values(max_input_power=2000)
 
 
+def test_an_1800_w_limit_charges_at_the_recorded_band_replays_2026_10_31() -> None:
+    """a1783-telemetry.md "AC charge request", the 1800 W limit row (15:14).
+
+    The limit + 10 W holds to the recorded band, as the plan window's does; this
+    run's band (the hidden ``full_charge_band_power``) is set from its frames,
+    1 595-1 610 W. DC in from the car socket (123 W) adds on top with AC in
+    unchanged.
+    """
+    device = A1783(clock=ManualClock())
+    device.set_values(
+        **{**FULL_CHARGE_1200, "pack_on_bus": 1, "full_charge_band_power": 1600}
+    )
+
+    device.set_values(ac_recharge_power=1800)
+    charged = int(next_0421(device)[0]["ac_input_power"])
+    device.set_values(pv1_input_power=123)
+    status, post = next_0421(device)[0], next_0490(device)
+
+    assert 1595 <= charged <= 1610
+    assert (status["ac_input_power"], status["pv1_input_power"]) == (charged, 123)
+    assert post["total_input_power"] == charged + 123
+
+
+def test_the_full_charge_band_is_a_hidden_u16() -> None:
+    """``full_charge_band_power``, carried in no field: a value past u16 is refused."""
+    device = A1783()
+
+    with pytest.raises(ConstructError):
+        device.set_values(full_charge_band_power=70000)
+
+
 @pytest.mark.parametrize(
     ("charging", "change", "moved"),
     [
@@ -6330,7 +6497,9 @@ MAIN_ON_SOLAR = {"pack_on_bus": 1, "dc_input_source": SOLAR}
     ("volts", "change", "ac_in", "current"),
     [
         pytest.param(535, ULTRAFAST_ON, 1643, 4566, id="under-the-caps"),
-        pytest.param(550, {"ac_recharge_power": 1800}, 1653, 4460, id="2457.6-w"),
+        pytest.param(
+            584, {"ac_recharge_power": 1800}, 1643, 4183, id="power-cap-clear-at-58.4-v"
+        ),
         pytest.param(410, ULTRAFAST_ON, 1578, 5800, id="58-a"),
     ],
 )
@@ -6339,9 +6508,10 @@ def test_the_ac_charge_holds_the_pack_to_its_charge_current_cap(
 ) -> None:
     """``charge_current_limit_calc``: 58.0 A, at most 245 760 / the pack voltage.
 
-    With 800 W of solar the AC charge gives way: at 55.0 V the 44.6 A power cap
-    (2 453 W) leaves 1 653 W of the 1 810 W charge, at 41.0 V the 58.0 A cap
-    1 578 W of UltraFast's 1 643 W. At 53.5 V the 45.7 A is under both.
+    With 800 W of solar the AC charge gives way: at 41.0 V the 58.0 A cap leaves
+    1 578 W of UltraFast's 1 643 W. At 53.5 V the 45.7 A is under both caps.
+    The 2 457.6 W power cap can't bind below 58 A: at the 16S top, 58.4 V, it is
+    2 452 W, over the band's 1 643 W plus the XT-60i's 800 W.
     """
     device = A1783(clock=ManualClock())
     device.set_values(**{**FULL_CHARGE_1200, **MAIN_ON_SOLAR, "battery_voltage": volts})

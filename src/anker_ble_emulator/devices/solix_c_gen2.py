@@ -1119,6 +1119,24 @@ def _check_switch(name: str, value: Value) -> None:
         raise TypeError(msg)
 
 
+def _check_timing(given: Mapping[str, Value]) -> None:
+    """Check the hidden alert tick phase and loss report are 0-1 s, the return 0 s on.
+
+    Raises:
+        TypeError: If any is set outside its range, or not a number.
+
+    """
+    for name in (ALERT_PHASE, LOSS_REPORT):
+        value = given.get(name)
+        if value is not None and (isinstance(value, bytes) or not 0 <= value <= 1):
+            msg = f"{name} is 0 to 1 s"
+            raise TypeError(msg)
+    report = given.get(RETURN_REPORT)
+    if report is not None and (isinstance(report, bytes) or report < 0):
+        msg = f"{RETURN_REPORT} is 0 s or more"
+        raise TypeError(msg)
+
+
 def _tou_inputs(params: ParameterDict, values: Mapping[str, Value]) -> dict[str, Value]:
     """Return what the TOU conditions read, by name: a frame's fields on ``values``."""
     tou = decode_field(params, "d9", Tou)
@@ -1292,27 +1310,36 @@ AC_FLAG_EVENT = "ac_input_flag"
 #: The input monitor's debounce on the flag: 10 ticks of 10 ms.
 AC_FLAG_DEBOUNCE = 0.1
 #: The power stage's own report time of a mains change, before the debounce; not
-#: in MainMcu, measured on the 2026-10-23 / 10-26 bench runs: a loss 0 s (the
-#: auto-off 0-1 s after ``a7[3]``), a return 2.9 s (the accept 2-3 s after it).
+#: in MainMcu, from the bench runs (a1783-control.md "``a4[31]`` witnesses"): a
+#: loss recorded at 0-1 s (the auto-off after ``a7[3]``); a return at 2-3 s.
+#: Both are hidden, settable per run; unset, 0 s and 2.9 s.
 POWER_STAGE_LOSS_REPORT = 0.0
 POWER_STAGE_RETURN_REPORT = 2.9
-#: The off-grid alert (``offgrid_alert_poll_tick``, 1 s): it commits a flag
-#: change on the 5th consecutive tick that differs from the committed value,
-#: hidden ``ac_input_flag_committed``. The tick's phase isn't modeled: the first
-#: counted tick is taken at the change, so it commits 4 s on, 4.1 s after
-#: ``a7[3]`` (the bench runs: 4-5 s).
+LOSS_REPORT = "power_stage_loss_report"
+RETURN_REPORT = "power_stage_return_report"
+#: The off-grid alert (``offgrid_alert_poll_tick``, a1783-control.md "Alert"):
+#: it commits a flag change on the 5th consecutive tick that differs from the
+#: committed value (hidden ``ac_input_flag_committed``); a tick reading the
+#: committed value resets the count. The 1 s timer runs free from boot, so the
+#: first counted tick lands 0-1 s after the change: hidden, settable per run;
+#: unset, 0 (at the change, the commit 4 s on). A flag change due at the 5th
+#: tick's own instant counts first.
 AC_FLAG_COMMITTED = "ac_input_flag_committed"
 ALERT_COMMIT = "grid_loss_alert"
+ALERT_COMMIT_READ = "grid_loss_alert_read"
 ALERT_TICKS = 5
 ALERT_TICK = 1.0
+ALERT_PHASE = "alert_tick_phase"
 #: The AC charge enable (``ac_inverter_ctrl``, 1 s tick): on the tick after its
 #: 7 s one-shot expires, the firmware's upper bound. The one-shot counts from the
 #: branch's first tick, taken at the accept (the tick's phase isn't modeled); the
 #: power stage's ready bit, which can enable it sooner, isn't modeled.
 CHARGE_ENABLE_TIMEOUT = 7.0
 INVERTER_TICK = 1.0
-#: The power stage's charge ramp after the enable, measured on both bench runs
-#: (2026-10-23, 2026-10-26), not firmware: 118 W first, the full charge ~5 s on.
+#: The power stage's charge ramp after the enable, from the bench runs, not
+#: firmware: the first step recorded at 38-155 W (118, 118, 155, 129, 38), the
+#: full charge ~5 s on (a1783-control.md "``a4[31]`` witnesses"). 118 W, the
+#: first two runs', is the emulator's deterministic default.
 CHARGE_FIRST_STEP = 118
 CHARGE_RAMP = 5.0
 CHARGE_RAMP_EVENT = "ac_charge_ramp"
@@ -1332,12 +1359,13 @@ MAX_INPUT = "max_input_power"
 AC_OUT = "ac_output_power"
 #: ``a4[20]``: Ultrafast Charge, which skips the limit.
 ULTRAFAST = "super_fast_charge_status"
-#: The recorded AC input with the limit skipped: the mode of the 1 808 frames
-#: at 1 553-1 673 W in the Fast Charging Plan windows (a1783-telemetry.md "AC
-#: charge request"), from the frame survey's ac_charge section (2026-09-18 and
-#: 2026-10-06, AC out 0; 1 450 BLE, 358 MQTT; p5-p95 1 624-1 648 W). A recorded
-#: band, not a firmware value: the firmware requests ``maxInputPower`` less AC out.
-PLAN_CHARGE_CAP = 1643
+#: The recorded full-charge band, which a full AC charge holds to whenever its
+#: request reaches it (a1783-telemetry.md "AC charge request", the text and
+#: the recorded table: 1 553-1 673 W across the plan windows, 1 595-1 610 W at
+#: an 1800 W limit). A recorded band, not a firmware value. Hidden, settable
+#: per run: unset, the plan windows' mode.
+FULL_CHARGE_BAND = "full_charge_band_power"
+FULL_CHARGE_CAP = 1643
 #: What the charge request reads: a change of one moves a full charge. The
 #: backup window's type (``tou_setting_system_status``) is set by the window
 #: pass, the TOU bit by its own; the DC input and the pack voltages move the
@@ -1351,6 +1379,7 @@ CHARGE_REQUEST_INPUTS = frozenset(
         "pv1_input_power",
         "battery_voltage",
         "sub_package_battery_voltage",
+        FULL_CHARGE_BAND,
     }
 )
 CHARGE_REQUEST_EVENT = "ac_charge_request"
@@ -1360,9 +1389,9 @@ def _ac_charge_power(state: Mapping[str, Value]) -> int:
     """Return the AC input at the full charge: the request's charge plus AC out.
 
     a1783-telemetry.md "AC charge request" (``chg_src1_ac_limit_calc``): the
-    ceiling less the AC-out draw, capped at the limit + 10 W; with Ultrafast on
-    or a backup window running, the limit is skipped and the charge holds to
-    ``PLAN_CHARGE_CAP``. The draw counts while the inverter runs
+    ceiling less the AC-out draw, capped at the limit + 10 W, the limit skipped
+    with Ultrafast on or a backup window running; either way the charge holds to
+    the recorded band, ``FULL_CHARGE_CAP``. The draw counts while the inverter runs
     (``0x200001e4`` bits 5:4), the only time AC out reads any. The request
     never goes negative: with charge source 2 able to charge it is 0 once AC
     out reaches the ceiling, otherwise it holds to the floor (MainMcu
@@ -1379,10 +1408,12 @@ def _ac_charge_power(state: Mapping[str, Value]) -> int:
     if not request:
         charge = 0
     elif _limit_skipped(state):
-        fastest = int(state.get(ULTRAFAST_POWER, PLAN_CHARGE_CAP))
-        charge = min(request, PLAN_CHARGE_CAP, fastest)
+        band = int(state.get(FULL_CHARGE_BAND, FULL_CHARGE_CAP))
+        fastest = int(state.get(ULTRAFAST_POWER, band))
+        charge = min(request, band, fastest)
     else:
-        charge = min(request, int(state[AC_LIMIT])) + CHARGE_OVER_LIMIT
+        limited = min(request, int(state[AC_LIMIT])) + CHARGE_OVER_LIMIT
+        charge = min(limited, int(state.get(FULL_CHARGE_BAND, FULL_CHARGE_CAP)))
     headroom = _charge_headroom(state)
     if headroom is not None:
         charge = max(0, min(charge, headroom))
@@ -1584,13 +1615,15 @@ def _ac_flag_settles(
 ) -> Step:
     """Settle the flag on ``a7[3]``: the auto-off or the accept, and the alert count.
 
-    ``ac_input_autooff_eval`` turns Battery-Only Power off (state 2, the screen
-    woken) while the flag reads 0 and stops once it reads 1 (state 2 -> 0).
+    ``ac_input_autooff_eval`` reads state 2 (the screen woken) while the flag
+    reads 0, whatever Battery-Only Power's state, clearing it if it was on, and
+    state 0 once the flag reads 1 (a1783-control.md "``a4[31]`` witnesses").
     """
     flag = int(state["ac_input_status"] != AC_INPUT_NONE)
     changes: dict[str, Value] = {AC_FLAG: flag}
     then: list[Timed] = []
-    if not flag and state[DISABLE] == BATTERY_ONLY_ON and DISABLE not in own:
+    dropped = not flag and state[DISABLE] != BATTERY_ONLY_AUTO_OFF
+    if dropped and DISABLE not in own:
         changes[DISABLE] = BATTERY_ONLY_AUTO_OFF
         then.append(Timed(0.0, SCREEN_WAKE, partial(_screen_wake, own)))
     elif flag and state[DISABLE] == BATTERY_ONLY_AUTO_OFF:
@@ -1598,9 +1631,19 @@ def _ac_flag_settles(
     if flag and "ac_input_power" not in own:
         enable = CHARGE_ENABLE_TIMEOUT + INVERTER_TICK
         then.append(Timed(enable, "ac_charge", partial(_ac_charge, own)))
-    delay = (ALERT_TICKS - 1) * ALERT_TICK
-    then.append(Timed(delay, ALERT_COMMIT, partial(_alert_commit, reports)))
+    phase = float(state.get(ALERT_PHASE, 0.0))
+    delay = phase + (ALERT_TICKS - 1) * ALERT_TICK
+    then.append(Timed(delay, ALERT_COMMIT, partial(_alert_tick, reports)))
     return Step(values=changes, then=tuple(then))
+
+
+def _alert_tick(
+    reports: bool,  # noqa: FBT001  # the model's flag
+    _values: Mapping[str, Value],
+    _state: Mapping[str, Value],
+) -> Step:
+    """Run the 5th tick's read after any flag change due at the same instant."""
+    return Step(then=(Timed(0.0, ALERT_COMMIT_READ, partial(_alert_commit, reports)),))
 
 
 def _alert_commit(
@@ -1611,7 +1654,7 @@ def _alert_commit(
     """Commit the flag on the alert's 5th tick; a committed drop pushes the 0x59.
 
     Only with the outage alert on, the SoC its ``a3``; a return posts nothing. A
-    flag back before the 5th tick re-queues this, committing the unchanged 1.
+    flag back before the 5th tick re-queues the tick, committing the unchanged 1.
     """
     flag = int(state[AC_FLAG])
     changes: dict[str, Value] = {AC_FLAG_COMMITTED: flag}
@@ -1675,12 +1718,17 @@ def _ac_charge_to_request(
     return _flow_step({"ac_input_power": _ac_charge_power(state)}, state)
 
 
-def _mains_edge(own: frozenset[str], *, back: bool, reports: bool) -> list[Timed]:
+def _mains_edge(
+    own: frozenset[str], after: Mapping[str, Value], *, back: bool, reports: bool
+) -> list[Timed]:
     """Return the flag's settling a mains change draws.
 
     The flag settles after the power stage's report and the debounce.
     """
-    report = POWER_STAGE_RETURN_REPORT if back else POWER_STAGE_LOSS_REPORT
+    if back:
+        report = float(after.get(RETURN_REPORT, POWER_STAGE_RETURN_REPORT))
+    else:
+        report = float(after.get(LOSS_REPORT, POWER_STAGE_LOSS_REPORT))
     settles = partial(_ac_flag_settles, own, reports)
     return [Timed(report + AC_FLAG_DEBOUNCE, AC_FLAG_EVENT, settles)]
 
@@ -3706,13 +3754,15 @@ class CGen2Layout(TableLayout):
         and the main pack's c490 SoC its charge hold reads, with the pack
         selection's hidden inputs, one carrying the output ports each USB-C
         port's device, one carrying the DC input its source, one carrying AC
-        input charge source 2's enable, and ``0490`` the device-point switch.
+        input charge source 2's enable and the full-charge band, and ``0490``
+        the device-point switch.
         """
         names = set(super().names(msgtype))
         if "pv1_input_power" in names:
             names.add(DC_INPUT_SOURCE)
         if "ac_input_power" in names:
-            names.add(CHARGE_SOURCE_2)
+            names |= {CHARGE_SOURCE_2, FULL_CHARGE_BAND, ALERT_PHASE}
+            names |= {LOSS_REPORT, RETURN_REPORT}
         if msgtype == MSGTYPE_425:
             names.add(EVENT_SOC)
         if "d9" in self.FIELDS.get(msgtype, {}):
@@ -3853,7 +3903,7 @@ class CGen2Layout(TableLayout):
         mains_before, mains = before["ac_input_status"], after["ac_input_status"]
         if (mains_before == AC_INPUT_NONE) != (mains == AC_INPUT_NONE):
             back = mains != AC_INPUT_NONE
-            events += _mains_edge(own, back=back, reports=self.EVENT_REPORTS)
+            events += _mains_edge(own, after, back=back, reports=self.EVENT_REPORTS)
         if DISABLE in own and mains != AC_INPUT_NONE:
             events += _battery_only_switched(before, after, own)
         events += _request_changed(before, own)
@@ -3925,6 +3975,9 @@ class CGen2Layout(TableLayout):
         switches = {DEVICE_POINT_SWITCH, PATH_HOLD, DC_INPUT_SOURCE, CHARGE_SOURCE_2}
         for name in given.keys() & switches:
             _check_switch(name, given[name])
+        if FULL_CHARGE_BAND in given:
+            ui(2).build(given[FULL_CHARGE_BAND])
+        _check_timing(given)
         for name in given.keys() & USB_C_DEVICES.keys():
             if name.endswith(DEVICE_PLUGGED):
                 _check_switch(name, given[name])
