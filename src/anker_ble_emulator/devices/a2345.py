@@ -294,6 +294,8 @@ IMAGE_THEMES = frozenset({3, CUSTOM_THEME})
 THEME_BY_KIND = {0: 3, 2: CUSTOM_THEME}
 #: A network or custom ``4205`` needs a URL at least this long.
 MIN_URL = 16
+#: The fields a ``4220`` needs; one missing answers ``04``.
+PREPARE_TAGS = ("a2", "a3", "a4", "a5", "a6", "a7", "a8")
 #: ``4311 a3``: the image stored and shown, or wanted from the app (WiFi down);
 #: with WiFi up the device fetches it itself (2, then 3 at its first chunk);
 #: 0 answers a ``4205`` while a fetch is busy (doc "``4311`` image state").
@@ -561,10 +563,11 @@ PERIODICS = (
 def _prepare_upload(request: ParameterDict) -> dict[str, Value] | None:
     """Open a ``4220`` upload: its kind, size, CRC, window, chunk and count.
 
-    ``a3`` must be present but isn't stored; a kind other than 0 or 2 changes
-    nothing and gets no reply. The expected index and the CRC start at 0.
+    ``a2``-``a8`` must all be present (``a3`` isn't stored); a kind other than
+    0 or 2 changes nothing and gets no reply. The expected index and the CRC
+    start at 0.
     """
-    if "a3" not in request:
+    if any(tag not in request for tag in PREPARE_TAGS):
         return None
     kind = decode_field(request, "a2", ui(1))
     if kind not in THEME_BY_KIND:

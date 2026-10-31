@@ -173,6 +173,62 @@ def test_chunks_after_a_finished_upload_need_a_new_prepare() -> None:
     assert again[-1] == [("4a21", f"12a10131a20302{COUNT:02x}00")]
 
 
+@pytest.mark.parametrize("missing", [0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8])
+def test_a_prepare_missing_a_field_answers_04(missing: int) -> None:
+    """``cmd_ack_param_err``: a ``4220`` without one of ``a2``-``a8`` answers ``04``."""
+    device = A2345(clock=ManualClock())
+    client = prime_client(device, TOKEN)
+
+    replies = command(
+        device, client, 0x220, [f for f in CUSTOM_PREPARE if f[0] != missing]
+    )
+
+    assert replies == [("4a20", "04a10131")]
+
+
+@pytest.mark.parametrize(
+    ("select", "shown_id"),
+    [
+        pytest.param(True, PHOTO_ID, id="the-staged-id"),
+        pytest.param(False, 0, id="none-staged"),
+    ],
+)
+def test_the_stored_record_takes_the_last_staged_id(
+    select: bool,  # noqa: FBT001  # the parameter under test
+    shown_id: int,
+) -> None:
+    """The record takes the last ``4205``'s staged id, not ``4220 a3``; 0 from boot."""
+    device = A2345(clock=ManualClock())
+    client = prime_client(device, TOKEN)
+    if select:
+        command(device, client, 0x205, CUSTOM_SELECT)
+    other = [
+        (tag, b"\x03" + (PHOTO_ID ^ 1).to_bytes(4, "little") if tag == 0xA3 else field)
+        for tag, field in CUSTOM_PREPARE
+    ]
+    command(device, client, 0x220, other)
+
+    replies = [
+        command(device, client, 0x221, upload_chunk(CUSTOM_PHOTO, i, CHUNK, pad=True))
+        for i in range(COUNT)
+    ]
+    af = decode_field(snapshot(device), "af", Theme)
+
+    assert replies[-1][1] == ("4a21", f"10a10131a20302{COUNT:02x}00")
+    assert (af.screen_saver_theme, af.screen_saver_theme_id) == (5, shown_id)
+
+
+@pytest.mark.parametrize("index", [0, 1, 9])
+def test_a_chunk_with_no_prepare_since_boot_gets_no_reply(index: int) -> None:
+    """The window is 0 then: no window end, no last chunk, so no ``4a21`` at all."""
+    device = A2345(clock=ManualClock())
+    client = prime_client(device, TOKEN)
+
+    replies = command(device, client, 0x221, upload_chunk(CUSTOM_PHOTO, index, CHUNK))
+
+    assert replies == []
+
+
 def test_a_prepare_crc_off_the_photo_ends_11_and_the_repeat_uploads_again() -> None:
     """The last chunk answers ``11`` + the count with no ``4311``; nothing is stored.
 
