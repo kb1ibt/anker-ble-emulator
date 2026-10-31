@@ -109,11 +109,12 @@ OUTPUT_PORTS = FieldGroup(OutputPort, leaf_zeros(*OUTPUT_FIELDS), {"pd1": "aa"})
 
 #: Anker's spec-sheet ratings in W (PiField s2000-as220.md "Ratings"). AC in
 #: is the charge plus the AC out it passes through, as on the A1783. The
-#: 1150 W charging figure is the nameplate: the recorded unit is set to charge
-#: at 1200 W, so the charge holds to its own limit plus the A1783's +10 W, and
-#: AC in to the bypass rating plus the C Gen 2's +33 W overshoot band.
-ULTRAFAST_CHARGE_RATING = 1600
-AC_BYPASS_RATING = 1800
+#: 1150 W charging figure is the nameplate: the charge holds to the charger's
+#: 1600 W UltraFast rating whatever the limit and the flag (1520 W recorded at
+#: a 600 W limit, 1-3 s after a switch), and AC in to the bypass rating plus
+#: the C Gen 2's +33 W overshoot band.
+CHARGE_RATING = 1600
+AC_IN_TOP = 1800 + AC_OVER_CEILING
 SOLAR_RATING = 400
 AC_OUTPUT_PEAK = 3000
 #: ``aa`` totals USB-C 100 W, USB-C 15 W and USB-A 12 W; the last two share 18 W.
@@ -121,6 +122,63 @@ USB_RATING = 100 + 18
 AC_IN, PV_IN, USB_OUT = "ac_input_power", "pv1_input_power", "pd1_output_power"
 AC_LIMIT = "ac_recharge_power"
 INPUT_TOTAL, OUTPUT_TOTAL = "total_input_power", "total_output_power"
+
+
+def _split_input(
+    values: Mapping[str, Value], merged: Mapping[str, Value]
+) -> dict[str, Value]:
+    """Return the AC in and solar an input total set with at most one of them leaves.
+
+    Alone, AC in takes the charge the limit requests (+10 W; 1600 W with
+    UltraFast) plus the AC out, at most the total and 1833 W, and solar the rest; with
+    one input, the other is the rest. With both, none.
+    """
+    total = int(values[INPUT_TOTAL])
+    if PV_IN in values:
+        if AC_IN in values:
+            return {}
+        return {AC_IN: total - int(values[PV_IN])}
+    if AC_IN in values:
+        ac = int(values[AC_IN])
+    else:
+        limit = int(merged[AC_LIMIT]) + CHARGE_OVER_LIMIT
+        request = CHARGE_RATING if merged[ULTRAFAST] else limit
+        ac = min(total, request + int(merged[AC_OUT]), AC_IN_TOP)
+    return {AC_IN: ac, PV_IN: total - ac}
+
+
+def _tied_totals(
+    values: Mapping[str, Value], state: Mapping[str, Value]
+) -> dict[str, Value]:
+    """Return ``values`` with ``a6``'s totals tied to their parts on ``state``.
+
+    The input total is AC in + solar and the output total AC out + USB, as in
+    every recorded frame: a part change moves its total.
+
+    Raises:
+        TypeError: If a total set by name can't be its parts' sum.
+
+    """
+    resolved, merged = dict(values), {**state, **values}
+    if INPUT_TOTAL in values:
+        resolved |= _split_input(values, merged)
+    elif values.keys() & {AC_IN, PV_IN}:
+        resolved[INPUT_TOTAL] = int(merged[AC_IN]) + int(merged[PV_IN])
+    after = {**state, **resolved}
+    ac, pv, total = int(after[AC_IN]), int(after[PV_IN]), int(after[INPUT_TOTAL])
+    if INPUT_TOTAL in values and min(ac, pv) < 0:
+        msg = f"AC in and solar can't sum to {total} W"
+        raise TypeError(msg)
+    if INPUT_TOTAL in values and ac + pv != total:
+        msg = f"the input total is AC in + solar, {ac + pv} W, not {total} W"
+        raise TypeError(msg)
+    outputs, shown = int(after[AC_OUT]) + int(after[USB_OUT]), int(after[OUTPUT_TOTAL])
+    if OUTPUT_TOTAL in values and shown != outputs:
+        msg = f"the output total is AC out + USB, {outputs} W, not {shown} W"
+        raise TypeError(msg)
+    if OUTPUT_TOTAL not in values and values.keys() & {AC_OUT, USB_OUT}:
+        resolved[OUTPUT_TOTAL] = outputs
+    return resolved
 
 
 class AS220Layout(TableLayout):
@@ -136,46 +194,30 @@ class AS220Layout(TableLayout):
     def resolve(
         self, values: Mapping[str, Value], state: Mapping[str, Value]
     ) -> dict[str, Value]:
-        """Return what ``values`` set on ``state``: the values, within the ratings.
+        """Return what ``values`` set on ``state``: the totals follow their parts.
 
-        A rating is checked when ``values`` names a power it reads.
+        A rating is checked when the change sets a power it reads.
 
         Raises:
-            TypeError: If a power would pass its rating; nothing is set then.
+            TypeError: If a total can't be its parts' sum, or a power would pass
+                its rating; nothing is set then.
 
         """
-        after = {**state, **values}
+        resolved = _tied_totals(values, state)
+        after = {**state, **resolved}
         ac_in, ac_out = int(after[AC_IN]), int(after[AC_OUT])
-        charge = (
-            ULTRAFAST_CHARGE_RATING
-            if after[ULTRAFAST]
-            else int(after[AC_LIMIT]) + CHARGE_OVER_LIMIT
-        )
-        charge_inputs = {AC_IN, AC_OUT, ULTRAFAST, AC_LIMIT}
         limits = (
-            ({AC_IN}, "AC in", ac_in, AC_BYPASS_RATING + AC_OVER_CEILING),
-            (charge_inputs, "the AC charge", ac_in - ac_out, charge),
+            ({AC_IN}, "AC in", ac_in, AC_IN_TOP),
+            ({AC_IN, AC_OUT}, "the AC charge", ac_in - ac_out, CHARGE_RATING),
             ({PV_IN}, "solar", int(after[PV_IN]), SOLAR_RATING),
             ({AC_OUT}, "AC out", ac_out, AC_OUTPUT_PEAK),
             ({USB_OUT}, "USB", int(after[USB_OUT]), USB_RATING),
-            (
-                {INPUT_TOTAL},
-                "the input total",
-                int(after[INPUT_TOTAL]),
-                AC_BYPASS_RATING + AC_OVER_CEILING + SOLAR_RATING,
-            ),
-            (
-                {OUTPUT_TOTAL},
-                "the output total",
-                int(after[OUTPUT_TOTAL]),
-                AC_OUTPUT_PEAK + USB_RATING,
-            ),
         )
         for names, what, power, rating in limits:
-            if names & values.keys() and power > rating:
+            if names & resolved.keys() and power > rating:
                 msg = f"{what} reads at most {rating} W on the S2000, not {power} W"
                 raise TypeError(msg)
-        return dict(values)
+        return resolved
 
 
 PROFILE = Profile(
