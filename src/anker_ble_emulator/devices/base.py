@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import random
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from importlib import resources
@@ -18,6 +19,7 @@ from anker_ble_emulator.clock import MonotonicClock
 from anker_ble_emulator.frame import CHANNEL_SESSION, RESPONSE, encode
 from anker_ble_emulator.layouts import LayoutError, LayoutProtocol
 from anker_ble_emulator.legacy import LegacyModule, LegacyProfile
+from anker_ble_emulator.live import LiveSource, LiveTable, LiveValues
 from anker_ble_emulator.mcu import Burst, McuScript, mcu_frame
 from anker_ble_emulator.module import (
     PUSH_PERIOD,
@@ -176,6 +178,8 @@ class Profile:
         clock_floor: The earliest UTC the MCU's clock set takes.
         clock_lead: Seconds the MCU's clock set puts its clock ahead of the UTC.
         clock_keeps_blank: An offset of 0 or -1 leaves the MCU's previous one.
+        live: The recorded live values ``vary_live_values`` draws; None where
+            the device has none.
 
     """
 
@@ -209,6 +213,7 @@ class Profile:
     clock_floor: int = 0
     clock_lead: int = 0
     clock_keeps_blank: bool = False
+    live: LiveSource | None = None
 
     def frames(self) -> dict[int, bytes]:
         """Return the recorded cleartext payloads by msgtype."""
@@ -484,6 +489,20 @@ class EmulatedDevice:
 
         Names are the Anker app's, in snake_case, plus the ``0490`` push's. The
         timed events the change starts run once due; those due at once run here.
+        A value set here stays as set while live values vary.
+
+        Raises:
+            LayoutError: If no message the device sends has a field so named.
+            TypeError: If a value doesn't fit its field.
+
+        """
+        self._unit_values(values, pin=True)
+
+    def _unit_values(self, values: Mapping[str, Value], *, pin: bool) -> None:
+        """Set telemetry values as ``set_values`` does; pinned only with ``pin``.
+
+        A device's own unit actions (a plug, an unplug) set values a live draw
+        may still change.
 
         Raises:
             LayoutError: If no message the device sends has a field so named.
@@ -504,13 +523,49 @@ class EmulatedDevice:
                 msg = f"{self.pn} sends no typed field {name!r}"
                 raise LayoutError(msg)
         module = self.negotiated_module
+        if pin:
+            module.pinned.update(values)
         self._emit(module.check_pushes())
-        before = dict(module.values)
-        module.values.update(values)
+        module.apply_values(values, layout)
         if layout is not None:
-            module.values.update(layout.implied(values))
-            module.start_timed(before)
             self._emit(module.check_pushes())
+
+    def _sends(self, name: str) -> bool:
+        """Whether a message the device sends has a typed field ``name``."""
+        layout, push_490 = self.layout, self.mcu.push_490
+        in_layout = layout is not None and bool(layout.locate(name))
+        return in_layout or (push_490 is not None and name in push_490.fields)
+
+    def vary_live_values(self, seed: int | None) -> None:
+        """Vary the live values from the recorded frequencies, or stop (None).
+
+        It draws at once, and the periods count from here: a frame built once
+        one has passed carries a fresh draw, so the same seed and clock steps
+        give the same frames. Values set with ``set_values`` stay as set.
+
+        Raises:
+            LayoutError: If the device has no recorded live values, or its
+                table names a field the device sends in no message.
+
+        """
+        if seed is None:
+            if isinstance(self.module, Module):
+                self.module.live = None
+            return
+        source = self.profile.live if isinstance(self.profile, Profile) else None
+        if source is None:
+            msg = f"{self.pn} has no recorded live values"
+            raise LayoutError(msg)
+        table = LiveTable.from_json(data_resource(source.table))
+        unknown = sorted(name for name in table.names if not self._sends(name))
+        if unknown:
+            msg = f"{self.pn} sends no typed field {unknown}"
+            raise LayoutError(msg)
+        rng = random.Random(seed)  # noqa: S311  # a replay of recordings, not a secret
+        module = self.negotiated_module
+        module.live = LiveValues(table, source.period, rng)
+        module.refresh_live()
+        self._emit(module.check_pushes())
 
     @property
     def mcu(self) -> McuScript:
@@ -616,7 +671,7 @@ class EmulatedDevice:
         self._emit(module.check_pushes())
         before = dict(module.values)
         module.values.update(values)
-        module.start_timed(before, unit_event=name)
+        module.start_timed(before, unit_event=name, names=values)
         self._emit(module.check_pushes())
 
     def push(self, msgtype: int) -> None:
@@ -660,6 +715,8 @@ class EmulatedDevice:
             msg = f"{self.pn} publishes to MQTT only on the cloud (set_cloud)"
             raise RuntimeError(msg)
         module = self.negotiated_module
+        if module.refresh_live():
+            self._emit(module.check_pushes())
         return encode(module.mcu.mqtt(msgtype, values=module.values, rtc=module.rtc))
 
     def _emit(self, output: Output) -> None:

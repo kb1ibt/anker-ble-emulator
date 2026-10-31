@@ -12,16 +12,38 @@ from .cgen2_fixtures import (
     socket_and_ports,
     tou_on_the_cloud,
 )
+from .cgen2_live import (
+    A1783_TABLE,
+    INPUT_POWERS,
+    OUTPUT_POWERS,
+    a1783_live,
+    a1783_real,
+    counters,
+    named,
+    poll,
+    real_table,
+    run,
+)
 
 
 __all__ = [
+    "A1783_TABLE",
+    "INPUT_POWERS",
+    "OUTPUT_POWERS",
+    "a1783_live",
+    "a1783_real",
     "authorized_client",
     "backup_plan",
     "backup_tail",
     "command",
+    "counters",
+    "named",
     "next_0421",
     "next_0490",
+    "poll",
     "pushed",
+    "real_table",
+    "run",
     "socket_and_ports",
     "tou_on_the_cloud",
 ]

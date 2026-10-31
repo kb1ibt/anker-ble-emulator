@@ -3202,3 +3202,13 @@ async def test_an_unnamed_device_reports_its_address_as_its_name() -> None:
     backend = EmulatedBleakBackend(A110B().ble_device, timeout=10)
 
     assert backend.name == "AA-12-DE-AD-BE-EF"
+
+
+@pytest.mark.parametrize("device", [A2345, A91B2])
+def test_the_snapshot_carries_the_port_fault_bitmap_at_0(
+    device: type[A2345 | A91B2],
+) -> None:
+    """``a3``: the u16 port-fault bitmap, 0 in every recorded snapshot."""
+    fields = snapshot(device())
+
+    assert (fields["a3"]["type"], fields["a3"]["value"]) == (0x02, b"\x00\x00")

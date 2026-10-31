@@ -294,6 +294,38 @@ async def test_disconnect_before_connect_is_harmless() -> None:
     assert not device.module.connected
 
 
+async def test_a_post_due_before_a_disconnect_goes_out_before_the_drop() -> None:
+    """A ``0490`` due at 540 s and never checked posts as the link drops.
+
+    The firmware sent it on time on the live link, so the reconnect posts no
+    held-over copy, nor its 9 s retry.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.push_period = 3600.0
+    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
+        link = BleakLink(client, AppClient())
+        await link.start()
+        await link.negotiate(TOKEN)
+        device.press_button()
+        await settle()
+        clock.advance(540)
+        before = [reply.frame.cmd.msgtype for reply in link.replies]
+    dropped = [reply.frame.cmd.msgtype for reply in link.replies]
+    device.push_period = 0.01
+    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
+        again = BleakLink(client, AppClient())
+        await again.start()
+        await again.negotiate(TOKEN)
+        clock.advance(9)
+        await asyncio.sleep(0.05)
+        reconnected = [reply.frame.cmd.msgtype for reply in again.replies]
+
+    assert 0x490 not in before
+    assert dropped.count(0x490) == 1
+    assert 0x490 not in reconnected
+
+
 def test_backend_needs_an_emulated_device() -> None:
     with pytest.raises(BleakError, match="EmulatedDevice"):
         EmulatedBleakBackend(BLEDevice("AA:12:DE:AD:BE:EF", None, None), timeout=10)

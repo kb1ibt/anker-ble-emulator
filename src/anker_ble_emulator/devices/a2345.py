@@ -33,6 +33,7 @@ from anker_ble_emulator.layouts import (
     TYPE_VAR,
     ui,
 )
+from anker_ble_emulator.live import LiveSource
 from anker_ble_emulator.mcu import COMMAND, RTC, UNIT_EVENT
 from anker_ble_emulator.module import AuthMode
 from anker_ble_emulator.parameters import (
@@ -1955,6 +1956,7 @@ PROFILE = Profile(
     version_names=("A2345", "A2345_mcu", "A2345_esp32"),
     layout=A2345Layout(),
     burst=REALTIME_BURST,
+    live=LiveSource("a2345_live.json", REALTIME_BURST.period),
     known_commands=COMMAND_TABLE,
     past_table_status=STATUS_ACCEPTED,
     factory_reset=0x201,
@@ -1997,9 +1999,11 @@ class A2345(ProductDevice):
                 _plugged(name, "ext"): NONE if ext is None else ext,
             },
         )
-        self.set_values(**{f"{name}_output_status": 1})
+        self._unit_values({f"{name}_output_status": 1}, pin=False)
 
     def unplug(self, port: int) -> None:
         """Unplug USB-C ``port`` (1-4): its attach flag clears and it draws nothing."""
         name = f"pd{port}"
-        self.set_values(**{f"{name}_output_status": 0, f"{name}_output_power": 0})
+        self._unit_values(
+            {f"{name}_output_status": 0, f"{name}_output_power": 0}, pin=False
+        )

@@ -230,6 +230,10 @@ class EmulatedBleakBackend(BaseBleakClient):
             if task is not None:
                 task.cancel()
         self._timer = self._pusher = None
+        # What fell due on the live link goes out on it, before the drop.
+        if self._connected and self._notify is not None:
+            for frame in self.device.module.check_pushes().frames:
+                self._notify(bytearray(frame))
         self._connected = False
         self._notify = None
         self.device.listen(None)

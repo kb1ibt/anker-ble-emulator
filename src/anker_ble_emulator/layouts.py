@@ -106,6 +106,17 @@ class LayoutProtocol(Protocol):
     ) -> tuple[tuple[int, bytes], ...]:
         """Return the (msgtype, cleartext) MQTT copies of a push held off BLE."""
 
+    def derive(self, state: Mapping[str, Value]) -> dict[str, Value]:
+        """Return the values that are pure functions of ``state``."""
+
+    @property
+    def derived(self) -> frozenset[str]:
+        """The fields the layout works out from others: a live table draws none."""
+
+    @property
+    def defaults(self) -> Mapping[str, Value]:
+        """The values hidden inputs read while unset; the state holds them."""
+
 
 #: Type bytes, every code the firmware writes (names from anker-solix-api's
 #: ``DeviceHexDataTypes``): string, u8, u16, 4 bytes, a raw block, and a

@@ -42,7 +42,7 @@ from .frame import (
     make_frame,
     reply_frame,
 )
-from .mcu import CLOUD, COMMAND, EPOCH, RTC, UNIT_EVENT, mcu_frame
+from .mcu import CLOUD, COMMAND, EPOCH, GIVEN, LINK, RTC, UNIT_EVENT, given, mcu_frame
 from .messages import (
     AUTH_PENDING_REPLY,
     BIND_REPLY,
@@ -72,7 +72,8 @@ if TYPE_CHECKING:
     from .clock import Clock
     from .crypto import Cipher
     from .frame import Frame
-    from .layouts import Value
+    from .layouts import LayoutProtocol, Value
+    from .live import LiveValues
     from .mcu import Burst, McuScript
     from .messages import Fields
 
@@ -359,6 +360,10 @@ class Module:
         self.enrolled: set[bytes] = set()
         #: The device's telemetry values by name, set in every frame that carries them.
         self.values: dict[str, Value] = {}
+        #: Draws the live values once a period while set (``vary_live_values``).
+        self.live: LiveValues | None = None
+        #: Values set on the unit (``set_values``): a draw leaves them.
+        self.pinned: set[str] = set()
         self._key_pair_factory = key_pair_factory
         self._link: _Link | None = None
         #: Bound and on WiFi to the cloud (``EmulatedDevice.set_cloud``).
@@ -421,7 +426,13 @@ class Module:
         self._link = _Link(connected_at=self.clock.now())
 
     def disconnect(self) -> None:
-        """Drop the link and the events that end with it."""
+        """Drop the link and the events that end with it, after what fell due on it.
+
+        Those due events run with the link still up, so their values are right
+        and their MQTT copies publish; their BLE frames go only to a caller that
+        sends them first (``check_pushes``, as the bleak backend does).
+        """
+        self._run_due()
         self._link = None
         self._queue = [queued for queued in self._queue if not queued.event.link]
         heapq.heapify(self._queue)
@@ -449,13 +460,15 @@ class Module:
         if layout is not None:
             self.schedule(*layout.started())
 
-    def start_timed(
+    def start_timed(  # noqa: PLR0913  # the change, its clock and its cause
         self,
         before: Mapping[str, Value],
         clock: tuple[int, int] | None = None,
         *,
         command: int | None = None,
         unit_event: str | None = None,
+        at: float | None = None,
+        names: Iterable[str] = (),
     ) -> None:
         """Queue the timed events the layout starts for a change of state.
 
@@ -465,22 +478,74 @@ class Module:
             command: The request msgtype that made the change; None for one
                 made on the unit or a clock set.
             unit_event: The on-unit event that made it, by name; None for none.
+            at: The device-clock instant of the change; now if None.
+            names: The names the change set directly, under ``GIVEN``.
 
         """
         layout = self.mcu.layout
         if layout is None:
             return
-        rtc, epoch = (self.rtc, self.epoch) if clock is None else clock
+        now = self.clock.now() if at is None else at
+        rtc, epoch = (
+            (self._rtc_at(now), self._epoch_at(now)) if clock is None else clock
+        )
         prior = {**self.mcu.state(before), RTC: rtc, EPOCH: epoch}
-        after = self._state()
+        after = self._state(now)
         if command is not None:
             after[COMMAND] = command
         if unit_event is not None:
             after[UNIT_EVENT] = unit_event.encode()
-        self.schedule(*layout.timed(prior, after))
+        if set_names := given(names):
+            after[GIVEN] = set_names
+        self.schedule(*layout.timed(prior, after), start=now)
+
+    def apply_values(
+        self,
+        values: Mapping[str, Value],
+        layout: LayoutProtocol | None,
+        at: float | None = None,
+    ) -> None:
+        """Set ``values`` and what ``layout`` says they imply; queue what they start.
+
+        Args:
+            values: The values, by field name.
+            layout: The layout whose implied values follow; None for none, which
+                starts nothing either.
+            at: The device-clock instant of the change; now if None.
+
+        """
+        before = dict(self.values)
+        self.values.update(values)
+        if layout is not None:
+            self.values.update(layout.implied(values))
+            self.start_timed(before, at=at, names=values)
+
+    def refresh_live(self, at: float | None = None) -> bool:
+        """Draw the live values if a period has passed since the last draw.
+
+        What the draw starts is queued from ``at``, ahead of what was due then.
+
+        Args:
+            at: The device-clock instant of the frame about to be built; now if None.
+
+        Returns:
+            Whether it drew.
+
+        """
+        live = self.live
+        if live is None:
+            return False
+        now = self.clock.now() if at is None else at
+        if live.due(now) is None:
+            return False
+        layout = self.mcu.layout
+        derive = None if layout is None else layout.derive
+        drawn = live.draw(self._state(now), self.pinned, now, derive)
+        self.apply_values(drawn, layout, at=now)
+        return True
 
     def _state(self, at: float | None = None) -> dict[str, Value]:
-        """Return the device's whole state: values, set ones, the clock, the cloud.
+        """Return the device's whole state: values, set ones, the clock, the links.
 
         Args:
             at: The device-clock instant the clock is read at; now if None.
@@ -492,6 +557,7 @@ class Module:
             RTC: self._rtc_at(now),
             EPOCH: self._epoch_at(now),
             CLOUD: int(self.cloud),
+            LINK: int(self.authorized),
         }
 
     def write(self, data: bytes) -> Output:
@@ -555,13 +621,15 @@ class Module:
             msgtype: The push's 12-bit message type.
 
         """
+        ahead, disconnect = self._run_due() if self.refresh_live() else ([], False)
         frames = self._route_pushes(
             [self.mcu.push(msgtype, values=self.values, rtc=self.rtc)]
         )
         link = self._link
         if link is None or not link.authorized:
             return Output()
-        return self._relay(link, frames)
+        out = self._relay(link, [*ahead, *frames])
+        return Output(out.frames, disconnect=disconnect)
 
     def _route_pushes(self, frames: list[Frame]) -> list[Frame]:
         """Return the frames that go out on BLE; publish the held pushes' MQTT copies.
@@ -608,8 +676,13 @@ class Module:
         link = self._link
         while self._queue and self._queue[0].due <= self.clock.now():
             queued = heapq.heappop(self._queue)
+            if self.refresh_live(queued.due):
+                self._requeue(queued)
+                continue
             step = queued.event.action(dict(self.values), self._state(queued.due))
             self.values.update(step.values)
+            if self.mcu.layout is not None:
+                self.values.update(self.mcu.layout.implied(step.values))
             for name in step.unset:
                 self.values.pop(name, None)
             self.schedule(*step.then, start=queued.due)
@@ -634,6 +707,13 @@ class Module:
             disconnect = disconnect or step.disconnect
             frames.extend(ble)
         return frames, disconnect
+
+    def _requeue(self, queued: _Queued) -> None:
+        """Queue ``queued`` again behind what a draw started, unless it was replaced."""
+        if all(other.event.key != queued.event.key for other in self._queue):
+            heapq.heappush(
+                self._queue, _Queued(queued.due, next(self._order), queued.event)
+            )
 
     def check_timers(self) -> Output:
         """Run the authorize timer once: drop an unauthorized link past its limit."""
@@ -1026,9 +1106,12 @@ class Module:
         if (route.destination, route.source) != (ROUTE_MCU, ROUTE_BLE):
             return Output()
         overdue, dropped = self._run_due()
+        if self.refresh_live():
+            drawn, drew_drop = self._run_due()
+            overdue, dropped = [*overdue, *drawn], dropped or drew_drop
         before = dict(self.values)
-        self._apply(frame.cmd.msgtype, plaintext)
-        self.start_timed(before, command=frame.cmd.msgtype)
+        changes = self._apply(frame.cmd.msgtype, plaintext)
+        self.start_timed(before, command=frame.cmd.msgtype, names=changes)
         timed, disconnect = self._run_due()
         timed = [*overdue, *timed]
         disconnect = disconnect or dropped
@@ -1053,16 +1136,22 @@ class Module:
         out = self._relay(link, [*frames, *timed])
         return Output(out.frames, disconnect=disconnect)
 
-    def _apply(self, msgtype: int, plaintext: bytes) -> None:
+    def _apply(self, msgtype: int, plaintext: bytes) -> dict[str, Value]:
         """Show an accepted command's settings in the telemetry that carries them.
 
         Its side effects see the whole state a timed action does: the clock and
         the cloud flag too.
+
+        Returns:
+            The values it set.
+
         """
         layout = self.mcu.layout
-        if layout is not None:
-            state = self._state()
-            self.values.update(layout.state_changes(msgtype, plaintext, state))
+        if layout is None:
+            return {}
+        changes = layout.state_changes(msgtype, plaintext, self._state())
+        self.values.update(changes)
+        return changes
 
     def _relay(self, link: _Link, frames: list[Frame]) -> Output:
         """Encrypt the MCU's cleartext frames for the session and send them."""
