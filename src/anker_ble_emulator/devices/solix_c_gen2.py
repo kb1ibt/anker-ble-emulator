@@ -1157,11 +1157,11 @@ def _tou_records(state: Mapping[str, Value]) -> list[Container[Any]]:
     return list(GreedyRange(TouRecord).parse(records))
 
 
-#: AC input after a holding period ends, as (seconds after the hour, W at the
-#: 1290 W the charge came to): the one recorded end, the cloud ``0421`` of
-#: 2026-10-21 16:00:07-16:00:13.
-#: Before the first sample it reads 0 W; from the last, the full charge.
-TOU_RAMP = ((7, 86), (8, 57), (9, 178), (11, 770), (13, 1290))
+#: AC input after a holding period ends, as (seconds after the hour on the
+#: device clock, W at the 1290 W the charge came to): the one recorded end
+#: (a1783-control.md "TOU (4090)"). Before the first sample it reads 0 W;
+#: from the last, the full charge.
+TOU_RAMP = ((6, 86), (7, 57), (8, 178), (10, 770), (13, 1290))
 TOU_RAMP_FULL = 1290
 
 

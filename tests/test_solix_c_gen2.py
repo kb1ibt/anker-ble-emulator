@@ -1352,10 +1352,11 @@ TO_16_00 = 960
 
 
 def test_the_peak_end_ramps_ac_input_back_replays_2026_10_21() -> None:
-    """Cloud ``0421`` 2026-10-21 15:59:59-16:00:13 (a1783-control.md "TOU" effects).
+    """Cloud ``0421`` 2026-10-21 15:59:59-16:00:13 (a1783-control.md "TOU (4090)").
 
-    ``d9[0]`` 1 -> 0 at 16:00:00; AC input (``a7[4:6]``) stays 0 W to 16:00:05
-    and reads 86 / 57 / 178 / 770 W at :07 / :08 / :09 / :11, 1290 W at :13.
+    ``d9[0]`` 1 -> 0 at 16:00:00; by the device clock (``fe``) AC input
+    (``a7[4:6]``) reads 0 W at 16:00:04, then 86 / 57 / 178 / 770 W at :06 /
+    :07 / :08 / :10, 1290 W at :13.
     """
     clock = ManualClock()
     device = A1783(clock=clock)
@@ -1363,7 +1364,7 @@ def test_the_peak_end_ramps_ac_input_back_replays_2026_10_21() -> None:
     tou_on_the_cloud(device, TOKEN, CLOCK_15_44_00, PEAK_15_16)
     readings = []
 
-    for at in (-1, 1, 5, 7, 8, 9, 11, 13):
+    for at in (-1, 1, 5, 6, 7, 8, 10, 13):
         clock.advance(TO_16_00 + at - clock.now())
         fields = Parameters.parse(decode(device.mqtt_frame(0x421)).payload)
         readings.append(
