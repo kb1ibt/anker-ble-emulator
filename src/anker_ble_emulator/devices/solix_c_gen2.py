@@ -1353,8 +1353,8 @@ def _pack_charge_limit(state: Mapping[str, Value]) -> int | None:
     """Return the on-bus pack's allowed charge current (0.1 A); None if uncapped.
 
     The lowest of 58.0 A, 245 760 / the pack voltage (0.1 V) and, with the TOU
-    bit set, 40.0 A, on a decoded build of the C2000 chassis. Assumed: the
-    division truncates, and a pack reading 0 V has no power cap.
+    bit set, 40.0 A, on a decoded build of the C2000 chassis. The division
+    truncates, and a pack reading 0 V has no power cap (MainBMS_0901).
     """
     base = state.get(PACK_CHARGE_LIMIT)
     if base is None or not _decoded_build(state):
