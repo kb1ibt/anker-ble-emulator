@@ -1317,7 +1317,7 @@ CHARGE_FIRST_STEP = 118
 CHARGE_RAMP = 5.0
 CHARGE_RAMP_EVENT = "ac_charge_ramp"
 #: AC charging after Battery-Only Power goes off with mains in: the median of
-#: 6 s (2026-10-06 19:40:42) and 9 s (2026-10-26 16:34:10).
+#: the 6 s and 9 s restarts in a1783-control.md "``a4[31]`` witnesses".
 BATTERY_ONLY_CHARGE_DELAY = 7.5
 #: The AC charge runs this far over the limit ``a4[4:6]``: the 1200 W limit's
 #: mode, 1210 W (a1783-telemetry.md "AC charge request"). The frame survey's
@@ -1691,7 +1691,7 @@ def _battery_only_switched(
 
     On, ``a7[3]`` reads 2 and AC input stops (19:39:18), ``a5[1]`` / ``c0[24]``
     showing the port flow left at once, ``a3[0]`` following; off, it reads 1
-    and AC charging restarts (19:40:42, 6-9 s later).
+    and AC charging restarts 6-9 s later (a1783-control.md "``a4[31]`` witnesses").
     """
     switched_on = after[DISABLE] == BATTERY_ONLY_ON
     changes: dict[str, Value] = {
