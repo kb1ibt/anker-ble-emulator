@@ -27,12 +27,13 @@ from construct import (
     HexDump,
     If,
     Int8ul,
+    Int32ul,
     Optional,
     Rebuild,
     Struct,
 )
 
-from .layouts import STATUS_ACCEPTED, STATUS_REJECTED
+from .layouts import EPOCH, STATUS_ACCEPTED, STATUS_REJECTED, TYPE_VAR
 from .messages import BLE_REPLY_ROUTE
 
 
@@ -251,6 +252,23 @@ def container(tag: str, type_byte: int, value: bytes) -> ParameterContainer:
     return ParameterContainer(key=bytes.fromhex(tag), type=type_byte, value=value)
 
 
+def clock_field(state: Mapping[str, Value]) -> dict[str, ParameterContainer]:
+    """Return the unit's clock as an ``fe`` field: its UTC epoch, u32 LE."""
+    return {"fe": container("fe", TYPE_VAR, Int32ul.build(int(state[EPOCH])))}
+
+
+def stamp_clock(payload: bytes, epoch: int) -> bytes:
+    """Return ``payload`` with a recorded ``fe`` set to ``epoch``, its type kept."""
+    params = Parameters.parse(payload)
+    recorded = params.get("fe")
+    if recorded is None:
+        return payload
+    params["fe"] = ParameterContainer(
+        key=b"\xfe", type=recorded["type"], value=Int32ul.build(epoch)
+    )
+    return Parameters.build(params)
+
+
 def echo(*tags: str) -> PushBuilder:
     """Return a push builder that carries the request's ``tags``, unconditionally."""
 
@@ -278,6 +296,8 @@ class CommandDispatchLayout:
     ] = MappingProxyType({})
     #: The request tags a command's accepted reply carries back after its ``a1``.
     ECHOES: ClassVar[Mapping[int, tuple[str, ...]]] = MappingProxyType({})
+    #: The commands whose accepted reply ends with the unit's clock (``fe``).
+    CLOCKED: ClassVar[frozenset[int]] = frozenset()
     #: The commands whose handler answers an accepted request with nothing.
     SILENT: ClassVar[frozenset[int]] = frozenset()
     #: The builders of a read's reply fields after its ``a1``, where its handler
@@ -310,8 +330,8 @@ class CommandDispatchLayout:
         """Return an accepted request's reply: its status and fields after ``a1``.
 
         A read's own data from the device's state, its status its fields'
-        ``prefix`` where set, else the request's echoed fields under ``00``;
-        None where the handler sends no reply.
+        ``prefix`` where set, else the request's echoed fields under ``00``, then
+        the unit's clock where ``CLOCKED``; None where the handler sends no reply.
         """
         if msgtype in self.SILENT:
             return None
@@ -323,12 +343,12 @@ class CommandDispatchLayout:
             status = STATUS_ACCEPTED if fields.prefix is None else fields.prefix[0]
             return status, Parameters.build(ParameterDict(fields))
         tags = self.ECHOES.get(msgtype, ())
-        if not tags:
+        clock = clock_field(state) if msgtype in self.CLOCKED else {}
+        if not tags and not clock:
             return STATUS_ACCEPTED, b""
         request = Parameters.parse(plaintext)
-        return STATUS_ACCEPTED, Parameters.build(
-            ParameterDict({tag: request[tag] for tag in tags if tag in request})
-        )
+        echoed = {tag: request[tag] for tag in tags if tag in request}
+        return STATUS_ACCEPTED, Parameters.build(ParameterDict(echoed | clock))
 
     def follow_ups(
         self,
@@ -340,7 +360,7 @@ class CommandDispatchLayout:
         """Return the (msgtype, payload) pushes an accepted command's change draws.
 
         Each push is its route, the fields its builder returns, then the
-        request's clock unless it is ``UNCLOCKED``; a builder returning None
+        unit's clock unless it is ``UNCLOCKED``; a builder returning None
         sends nothing.
         """
         pushes = self.FOLLOW_UPS.get(msgtype, ())
@@ -350,7 +370,7 @@ class CommandDispatchLayout:
         route = ParameterContainer(
             key=b"\xa1", type=None, value=Int8ul.build(BLE_REPLY_ROUTE)
         )
-        clock = {"fe": request["fe"]} if "fe" in request else {}
+        clock = clock_field(after)
         frames = []
         for push, build in pushes:
             fields = build(request, before, after)
@@ -418,6 +438,13 @@ class TableLayout(StructFieldLayout, CommandDispatchLayout):
         for group in self.GROUPS.get(msgtype, ()):
             leaves |= group.names()
         return frozenset(leaves)
+
+    def stamps_clock(self, msgtype: int) -> bool:
+        """Whether a replayed ``msgtype``'s ``fe`` takes the unit's clock: unnamed."""
+        groups = self.GROUPS.get(msgtype, ())
+        return "fe" not in self.FIELDS.get(msgtype, {}) and all(
+            "fe" not in group.tags.values() for group in groups
+        )
 
     def locate(self, name: str) -> tuple[int, ...]:
         """Return the messages with a named field matching ``name``."""
@@ -568,6 +595,10 @@ class ScalarFieldLayout:
     def names(self, msgtype: int) -> frozenset[str]:
         """Return the named fields of ``msgtype``; none if it has none."""
         return frozenset(field.name for field in self.TELEMETRY.get(msgtype, ()))
+
+    def stamps_clock(self, msgtype: int) -> bool:
+        """Whether a replayed ``msgtype``'s ``fe`` takes the unit's clock: unnamed."""
+        return all(field.tag != "fe" for field in self.TELEMETRY.get(msgtype, ()))
 
     def locate(self, name: str) -> tuple[int, ...]:
         """Return the messages with a field called ``name``."""

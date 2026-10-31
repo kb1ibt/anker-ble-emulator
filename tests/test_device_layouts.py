@@ -9,8 +9,23 @@ from typing import TYPE_CHECKING
 import pytest
 from bleak import BleakClient
 from bleak.exc import BleakError
+from construct import Int32ul
 
-from anker_ble_emulator import A1783, A2345, EmulatedBleakBackend, ManualClock
+from anker_ble_emulator import (
+    A17C0,
+    A91B2,
+    A1763,
+    A1765,
+    A1783,
+    A1785,
+    A2345,
+    A2687,
+    AS200,
+    AS220,
+    EmulatedBleakBackend,
+    ManualClock,
+)
+from anker_ble_emulator.c_g2_490 import MSGTYPE_490
 from anker_ble_emulator.devices import EmulatedDevice
 from anker_ble_emulator.devices.solix_c_gen2 import AcOutput, Battery, Settings
 from anker_ble_emulator.layouts import LayoutError
@@ -21,10 +36,14 @@ from anker_ble_emulator.parameters import (
     ScalarFieldLayout,
     TableLayout,
     decode_field,
+    stamp_clock,
 )
 from anker_ble_emulator.products import Product
 from anker_ble_emulator.timed import Step, Timed
+from tests.fixtures.cgen2 import authorized_client
+from tests.fixtures.cgen2 import command as cgen2_command
 from tests.fixtures.client import SESSION, AppClient, BleakLink, cmd_hex, settle
+from tests.fixtures.prime import command, device_clock, prime_client
 
 
 if TYPE_CHECKING:
@@ -102,7 +121,7 @@ def test_a_read_reply_sets_its_status_or_stays_silent_and_leads_its_pushes() -> 
 
     prime-a2345-a91b2.md "Theme upload" (``4221``: ``10``/``11``/``12``, most
     chunks unanswered, ``4311`` before the last ``4a21``) and ``4208`` (``0308``
-    before ``0a08``).
+    before ``0a08``); a clocked push carries the unit's clock, not the request's.
     """
 
     def read(
@@ -130,13 +149,13 @@ def test_a_read_reply_sets_its_status_or_stays_silent_and_leads_its_pushes() -> 
     script = McuScript(layout=layout)
 
     answered = script.respond(
-        0x221, request=bytes.fromhex("a10121a2020105fe0503010e5f6a")
+        0x221, request=bytes.fromhex("a10121a2020105fe0503010e5f6a"), epoch=0x6A5F0E00
     )
     silent = script.respond(0x221, request=bytes.fromhex("a10121"))
 
     assert [frame.cmd.msgtype for frame in answered] == [0x311, 0xA21, 0x312]
     assert answered[1].payload == bytes.fromhex("10a10131a2020105")
-    assert answered[0].payload == bytes.fromhex("a10131fe0503010e5f6a")
+    assert answered[0].payload == bytes.fromhex("a10131fe0503000e5f6a")
     assert answered[2].payload == bytes.fromhex("a10131")
     assert [frame.cmd.msgtype for frame in silent] == [0x311, 0x312]
     assert layout.reply(0x221, bytes.fromhex("a10121"), {}) is None
@@ -240,7 +259,7 @@ def test_a_device_without_a_layout_or_push_490_takes_no_values() -> None:
 
 
 async def test_a_mapped_command_without_a_recording_gets_a_checked_ack() -> None:
-    device = A2345()
+    device = A2345(clock=ManualClock())
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
         link = BleakLink(client, AppClient())
         await link.start()
@@ -253,7 +272,7 @@ async def test_a_mapped_command_without_a_recording_gets_a_checked_ack() -> None
         unmapped = await link.send(0x215, [(0xA1, b"\x21")], SESSION)
 
     assert [cmd_hex(reply.frame) for reply in off] == ["4a07", "4302"]
-    assert off[0].plaintext == bytes.fromhex("00a10131a2020100")
+    assert off[0].plaintext.hex() == "00a10131a2020100" + device_clock(0)
     assert bad[0].plaintext == bytes.fromhex("04a10131")
     assert unmapped == []
 
@@ -354,3 +373,128 @@ async def test_going_on_the_cloud_drops_the_link_and_refuses_connects() -> None:
     await client.connect()
     assert client.is_connected
     await client.disconnect()
+
+
+@pytest.mark.parametrize("model", [A2345, A91B2])
+def test_a_prime_replays_its_recorded_frames_on_its_own_clock(
+    model: type[A2345 | A91B2],
+) -> None:
+    """``0303``, ``4a00`` (and the A2345's ``4a02``) carry the unit's clock.
+
+    prime-a2345-a91b2.md "Commands", "Reply ``a1``": a reply's or push's ``fe``
+    is the unit's RTC when sent; it ticks with the clock, not the recording.
+    """
+    clock = ManualClock()
+    device = model(clock=clock)
+    client = prime_client(device, TOKEN)
+    reads = [0x200, 0x202] if model is A2345 else [0x200]
+
+    clock.advance(7)
+    early = [frame for read in reads for frame in command(device, client, read, [])]
+    clock.advance(5)
+    later = [frame for read in reads for frame in command(device, client, read, [])]
+    stream = command(device, client, 0x20B, [])
+
+    stamps = [
+        (cmd, "fe0503" + Parameters.parse(bytes.fromhex(body))["fe"]["value"].hex())
+        for cmd, body in [*early, *later, *stream]
+        if cmd != "4a0b"
+    ]
+    replies = [f"4a{read & 0xFF:02x}" for read in reads]
+    assert stamps == [
+        *((cmd, device_clock(7)) for cmd in replies),
+        *((cmd, device_clock(12)) for cmd in replies),
+        ("4303", device_clock(12)),
+    ]
+
+
+def test_a_c_gen_2_replays_its_recorded_frames_on_its_own_clock() -> None:
+    """``0900`` and ``0421`` carry the unit's clock, ticking with it.
+
+    a1783-telemetry.md: ``fe`` is ``msg_timestamp``, the device clock every
+    recorded frame is read by.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+
+    status = cgen2_command(device, client, 0x100, [])
+    first = module.epoch
+    clock.advance(9)
+    again = cgen2_command(device, client, 0x100, [])
+
+    stamps = [
+        (reply.frame.cmd.msgtype, Parameters.parse(reply.plaintext)["fe"]["value"])
+        for reply in [*status, *again]
+    ]
+    assert first != 0
+    assert stamps == [
+        (0x900, Int32ul.build(first)),
+        (0x421, Int32ul.build(first)),
+        (0x900, Int32ul.build(first + 9)),
+        (0x421, Int32ul.build(first + 9)),
+    ]
+
+
+@pytest.mark.parametrize(
+    "model", [AS200, AS220, A17C0], ids=["AS200", "AS220", "A17C0"]
+)
+def test_a_layout_that_names_fe_replays_it_as_it_names_it(
+    model: type[AS200 | AS220 | A17C0],
+) -> None:
+    """The clock stamp leaves a frame whose layout names ``fe`` byte-identical."""
+    mcu = model().negotiated_module.mcu
+
+    for msgtype in mcu.pushes:
+        assert mcu.push(msgtype, epoch=0x6A000000) == mcu.push(msgtype)
+    for request in mcu.replies:
+        assert mcu.respond(request, epoch=0x6A000000) == mcu.respond(request)
+
+
+@pytest.mark.parametrize("request_msgtype", [0x20A, 0x20B], ids=["4a0a", "4a0b"])
+def test_a_replayed_frame_without_fe_gains_none(request_msgtype: int) -> None:
+    """Only a recorded ``fe`` is stamped: an A2345 reply recorded without one."""
+    mcu = A2345().negotiated_module.mcu
+
+    frames = mcu.respond(request_msgtype, epoch=0x6A000000)
+
+    assert all("fe" not in Parameters.parse(frame.payload) for frame in frames)
+    assert frames == mcu.respond(request_msgtype)
+
+
+def test_a_device_without_a_layout_replays_its_fe_as_recorded() -> None:
+    """No layout, no stamp: the A2687's recorded ``0300`` keeps its ``fe``."""
+    mcu = A2687().negotiated_module.mcu
+
+    assert mcu.push(0x300, epoch=0x6A000000) == mcu.push(0x300)
+
+
+@pytest.mark.parametrize(
+    "model",
+    [A2345, A91B2, A1763, A1765, A1783, A1785],
+    ids=["A2345", "A91B2", "A1763", "A1765", "A1783", "A1785"],
+)
+def test_the_clock_stamp_moves_only_the_fe_value_bytes(
+    model: type[A2345 | A91B2 | A1763 | A1765 | A1783 | A1785],
+) -> None:
+    """Every recorded ``fe`` frame the stamp reaches changes in its ``fe`` u32 only."""
+    mcu = model().negotiated_module.mcu
+    recorded = [
+        frame.payload
+        for frame in [
+            *mcu.pushes.values(),
+            *(frame for frames in mcu.replies.values() for frame in frames),
+        ]
+        if frame.cmd.msgtype != MSGTYPE_490 and "fe" in Parameters.parse(frame.payload)
+    ]
+    epoch = Int32ul.build(0x01020304)
+
+    stamped = [stamp_clock(payload, 0x01020304) for payload in recorded]
+
+    at = [payload.rindex(b"\xfe\x05\x03") + 3 for payload in recorded]
+    assert recorded
+    assert stamped == [
+        payload[:start] + epoch + payload[start + 4 :]
+        for payload, start in zip(recorded, at, strict=True)
+    ]

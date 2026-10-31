@@ -23,6 +23,11 @@ if TYPE_CHECKING:
 
 #: A layout value: an integer for numeric types, bytes for strings and blocks.
 Value = int | float | bytes
+#: The state name a read reply finds the MCU's RTC under: local seconds.
+RTC = "rtc"
+#: The state name a reply, a push or a timed event finds the UTC epoch under:
+#: the unit's clock, its ``fe``.
+EPOCH = "epoch"
 
 
 class LayoutProtocol(Protocol):
@@ -62,6 +67,12 @@ class LayoutProtocol(Protocol):
 
     def names(self, msgtype: int) -> frozenset[str]:
         """Return the names of a message's typed fields and parts; none if unmapped."""
+
+    def stamps_clock(self, msgtype: int) -> bool:
+        """Whether a replayed message's recorded ``fe`` takes the unit's clock.
+
+        It does unless the layout names that ``fe`` itself.
+        """
 
     def read(self, msgtype: int, payload: bytes) -> dict[str, Value]:
         """Return the named values a message's payload carries."""

@@ -16,14 +16,15 @@ from typing import TYPE_CHECKING
 
 from construct import Array, Flag, If, Int8sl, Int8ul, Int16ul, Struct, this
 
-from anker_ble_emulator.layouts import TYPE_BIN, TYPE_SILE, TYPE_UI, TYPE_VAR, ui
-from anker_ble_emulator.mcu import EPOCH, RTC, Burst
+from anker_ble_emulator.layouts import EPOCH, RTC, TYPE_BIN, TYPE_SILE, TYPE_UI, ui
+from anker_ble_emulator.mcu import Burst
 from anker_ble_emulator.messages import BLE_REPLY_ROUTE
 from anker_ble_emulator.parameters import (
     FieldGroup,
     ParameterContainer,
     ParameterDict,
     Parameters,
+    clock_field,
     container,
     decode_field,
     decode_request,
@@ -103,11 +104,12 @@ SCHEDULE_HEAD = (
 )
 SCHEDULE_HEAD_FIELDS = tuple(sc.name for sc in SCHEDULE_HEAD if sc.name)
 
-#: What the port setters' accepted acks carry back from the request: the port,
-#: ``4208``'s slot, and the clock (captured ``0a07``/``0a08``/``0a09``; the doc's
-#: ``4207`` "reply ``a2`` port ``fe``"). The device writes its own clock; the
-#: request's stands in for it.
-PORT_ECHOES = {0x207: ("a2", "fe"), 0x208: ("a2", "a3", "fe"), 0x209: ("a2", "fe")}
+#: What the port setters' accepted acks carry back from the request: the port
+#: and ``4208``'s slot (captured ``0a07``/``0a08``/``0a09``).
+PORT_ECHOES = {0x207: ("a2",), 0x208: ("a2", "a3"), 0x209: ("a2",)}
+#: The acks that then carry the unit's clock, not the request's (doc
+#: "Commands", "Reply ``a1``").
+PORT_CLOCKED = frozenset(PORT_ECHOES)
 #: A ``4208``'s ``0308`` goes out before its ack (doc ``4208`` row: the ``0308``
 #: "arrives before the ack").
 TIMED_TASK_LEADS = {0x208: frozenset({0x308})}
@@ -292,13 +294,8 @@ def _wifi_came_up(
 def timed_push(
     msgtype: int, fields: Mapping[str, ParameterContainer], state: Mapping[str, Value]
 ) -> tuple[int, bytes]:
-    """Return a push the MCU sends on its own: its route, ``fields``, its clock.
-
-    The clock is the device's UTC epoch, where a command's pushes carry the
-    request's.
-    """
-    clock = container("fe", TYPE_VAR, ui(4).build(state[EPOCH]))
-    return untimed_push(msgtype, {**fields, "fe": clock})
+    """Return a push the MCU sends on its own: its route, ``fields``, its clock."""
+    return untimed_push(msgtype, {**fields, **clock_field(state)})
 
 
 def untimed_push(

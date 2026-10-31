@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher as AesCipher
 from cryptography.hazmat.primitives.ciphers import algorithms, modes
 
 from anker_ble_emulator.layouts import (
+    RTC,
     STATUS_ACCEPTED,
     TYPE_BIN,
     TYPE_SILE,
@@ -34,7 +35,7 @@ from anker_ble_emulator.layouts import (
     ui,
 )
 from anker_ble_emulator.live import LiveSource
-from anker_ble_emulator.mcu import COMMAND, RTC, UNIT_EVENT
+from anker_ble_emulator.mcu import COMMAND, UNIT_EVENT
 from anker_ble_emulator.module import AuthMode
 from anker_ble_emulator.parameters import (
     FieldGroup,
@@ -58,6 +59,7 @@ from .prime import (
     COUNTRY_PERIOD,
     MSGTYPE_303,
     MSGTYPE_A00,
+    PORT_CLOCKED,
     PORT_ECHOES,
     PORT_GROUPS,
     PUSH_ROUTES,
@@ -1789,6 +1791,7 @@ class A2345Layout(TableLayout):
         }
     )
     ECHOES = MappingProxyType(PORT_ECHOES)
+    CLOCKED = PORT_CLOCKED
     #: ``4212``'s and ``4222``'s handlers send no reply.
     SILENT = frozenset({0x212, 0x222})
     #: The ``0308`` before ``4208``'s ack, ``4311`` 1 before the last ``4a21``.

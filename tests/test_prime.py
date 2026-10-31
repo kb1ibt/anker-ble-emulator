@@ -46,6 +46,7 @@ from tests.fixtures.prime import (
     CUSTOM_PHOTO,
     CUSTOM_PHOTO_2,
     HOLIDAY_URL,
+    PRIME_EPOCH,
     advance,
     arm,
     baseline_jpeg,
@@ -97,7 +98,7 @@ async def test_a91b2_negotiates_in_clear_and_authorizes_at_the_key_exchange() ->
 async def test_a91b2_snapshot_arrives_whole_and_the_keepalive_starts_the_stream() -> (
     None
 ):
-    device = A91B2()
+    device = A91B2(clock=ManualClock())
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
         link = BleakLink(client, AppClient(encrypted_outer=False))
         await link.start()
@@ -106,9 +107,10 @@ async def test_a91b2_snapshot_arrives_whole_and_the_keepalive_starts_the_stream(
         snapshot = await link.send(0x200, [(0xA1, b"\x21")], SESSION)
         keepalive = await link.send(0x20B, [(0xA1, b"\x21")], SESSION)
 
-    script = device.negotiated_module.mcu
+    module = device.negotiated_module
+    replayed = module.mcu.respond(0x200, epoch=module.epoch)[0]
     assert [cmd_hex(reply.frame) for reply in snapshot] == ["4a00"]
-    assert snapshot[0].plaintext == script.respond(0x200)[0].payload
+    assert snapshot[0].plaintext == replayed.payload
     assert all(len(data) <= 253 for data in link.raw)
     assert [cmd_hex(reply.frame) for reply in keepalive] == ["4a0b", "4303"]
 
@@ -183,7 +185,7 @@ async def test_bind_echoes_the_serial_and_needs_the_account() -> None:
 
 
 async def test_a2345_grants_by_button_then_sends_a_fragmented_snapshot() -> None:
-    device = A2345()
+    device = A2345(clock=ManualClock())
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
         link = BleakLink(client, AppClient())
         await link.start()
@@ -196,9 +198,9 @@ async def test_a2345_grants_by_button_then_sends_a_fragmented_snapshot() -> None
     assert replies[0x827].status == NEEDS_AUTHENTICATION
     assert authorized
     assert cmd_hex(snapshot[0].frame) == "4a00"
-    assert (
-        snapshot[0].plaintext == device.negotiated_module.mcu.respond(0x200)[0].payload
-    )
+    module = device.negotiated_module
+    replayed = module.mcu.respond(0x200, epoch=module.epoch)[0]
+    assert snapshot[0].plaintext == replayed.payload
     assert sum(1 for data in link.raw if len(data) == 253) >= 1
 
 
@@ -274,7 +276,7 @@ async def test_a91b2_port_switch_covers_both_ac_ports_and_all_four_usbc_ports() 
     PiField/docs/re/prime-a2345-a91b2.md "Commands (fid 0x0f...)":
     cmd207_set_output, port 5 firmware-confirmed by a live toggle.
     """
-    device = A91B2()
+    device = A91B2(clock=ManualClock())
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
         link = BleakLink(client, AppClient(encrypted_outer=False))
         await link.start()
@@ -294,10 +296,10 @@ async def test_a91b2_port_switch_covers_both_ac_ports_and_all_four_usbc_ports() 
         )
 
     assert [cmd_hex(reply.frame) for reply in ac] == ["4a07", "4302"]
-    assert ac[0].plaintext == bytes.fromhex("00a10131a2020100")
-    assert ac[1].plaintext == bytes.fromhex("a10131a2020100a3020100")
+    assert ac[0].plaintext.hex() == "00a10131a2020100" + device_clock(0)
+    assert ac[1].plaintext.hex() == "a10131a2020100a3020100" + device_clock(0)
     assert [cmd_hex(reply.frame) for reply in out_of_range] == ["4a07"]
-    assert usbc[0].plaintext == bytes.fromhex("00a10131a2020102")
+    assert usbc[0].plaintext.hex() == "00a10131a2020102" + device_clock(0)
     assert out_of_range[0].plaintext == bytes.fromhex("04a10131")
     assert bad_switch[0].plaintext == bytes.fromhex("04a10131")
     snapshot = device.mcu.respond(0x200, values=device.negotiated_module.values)[0]
@@ -388,7 +390,7 @@ async def test_a91b2_charging_mode_rejects_an_invalid_submode() -> None:
 
 async def test_a91b2_countdown_disarm_keeps_the_seconds() -> None:
     """PiField/docs/re/prime-a2345-a91b2.md: "en = 0 disarms and keeps the seconds"."""
-    device = A91B2()
+    device = A91B2(clock=ManualClock())
     device.set_values(ac1_countdown_task_switch=True, ac1_countdown_task_seconds=10800)
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
         link = BleakLink(client, AppClient(encrypted_outer=False))
@@ -401,7 +403,7 @@ async def test_a91b2_countdown_disarm_keeps_the_seconds() -> None:
             SESSION,
         )
 
-    assert disarm[0].plaintext == bytes.fromhex("00a10131a2020100")
+    assert disarm[0].plaintext.hex() == "00a10131a2020100" + device_clock(0)
     snapshot = device.mcu.respond(0x200, values=device.negotiated_module.values)[0]
     params = Parameters.parse(snapshot.payload)
     timer = decode_field(params, "aa", Timer)
@@ -410,7 +412,7 @@ async def test_a91b2_countdown_disarm_keeps_the_seconds() -> None:
 
 
 async def test_a91b2_countdown_arms_with_its_seconds_and_rejects_a_bad_port() -> None:
-    device = A91B2()
+    device = A91B2(clock=ManualClock())
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
         link = BleakLink(client, AppClient(encrypted_outer=False))
         await link.start()
@@ -427,7 +429,7 @@ async def test_a91b2_countdown_arms_with_its_seconds_and_rejects_a_bad_port() ->
             SESSION,
         )
 
-    assert armed[0].plaintext == bytes.fromhex("00a10131a2020100")
+    assert armed[0].plaintext.hex() == "00a10131a2020100" + device_clock(0)
     assert bad_port[0].plaintext == bytes.fromhex("04a10131")
     snapshot = device.mcu.respond(0x200, values=device.negotiated_module.values)[0]
     params = Parameters.parse(snapshot.payload)
@@ -452,7 +454,7 @@ async def test_a91b2_charging_mode_rejects_an_unsupported_mode() -> None:
 
 async def test_a91b2_port_schedule_command_sets_the_full_quad() -> None:
     """``4208``: ``a2`` port, ``a3`` slot (0 off-time / 1 on-time), ``a4`` quad."""
-    device = A91B2()
+    device = A91B2(clock=ManualClock())
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
         link = BleakLink(client, AppClient(encrypted_outer=False))
         await link.start()
@@ -489,7 +491,7 @@ async def test_a91b2_port_schedule_command_sets_the_full_quad() -> None:
             SESSION,
         )
 
-    assert on_time[0].plaintext == bytes.fromhex("00a10131a2020102a3020101")
+    assert on_time[0].plaintext.hex() == "00a10131a2020102a3020101" + device_clock(0)
     assert bad_port[0].plaintext == bytes.fromhex("04a10131")
     assert bad_slot[0].plaintext == bytes.fromhex("04a10131")
     snapshot = device.mcu.respond(0x200, values=device.negotiated_module.values)[0]
@@ -702,7 +704,7 @@ async def test_a2345_charging_mode_and_holiday_switch_commands_validate() -> Non
 
 async def test_a2345_port_switch_schedule_and_countdown_cover_all_five_slots() -> None:
     """Port index 0-3 = usbc 1-4, 4 = usba (both ports share one slot)."""
-    device = A2345()
+    device = A2345(clock=ManualClock())
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
         link = BleakLink(client, AppClient())
         await link.start()
@@ -762,13 +764,14 @@ async def test_a2345_port_switch_schedule_and_countdown_cover_all_five_slots() -
             SESSION,
         )
 
-    assert switch[0].plaintext == bytes.fromhex("00a10131a2020104")
+    clock = device_clock(0)
+    assert switch[0].plaintext.hex() == "00a10131a2020104" + clock
     assert bad_port[0].plaintext == bytes.fromhex("04a10131")
-    assert on_time[0].plaintext == bytes.fromhex("00a10131a2020100a3020101")
+    assert on_time[0].plaintext.hex() == "00a10131a2020100a3020101" + clock
     assert bad_schedule_port[0].plaintext == bytes.fromhex("04a10131")
     assert bad_slot[0].plaintext == bytes.fromhex("04a10131")
-    assert countdown[0].plaintext == bytes.fromhex("00a10131a2020100")
-    assert disarm[0].plaintext == bytes.fromhex("00a10131a2020101")
+    assert countdown[0].plaintext.hex() == "00a10131a2020100" + clock
+    assert disarm[0].plaintext.hex() == "00a10131a2020101" + clock
     assert bad_countdown_port[0].plaintext == bytes.fromhex("04a10131")
     snapshot = device.mcu.respond(0x200, values=device.negotiated_module.values)[0]
     params = Parameters.parse(snapshot.payload)
@@ -904,26 +907,27 @@ def test_an_a2345_usbc_status_read_reports_the_power_sharing_budget(
 
 
 @pytest.mark.parametrize(
-    ("clock", "reply"),
+    "clock",
     [
-        pytest.param("fe0503f022a26a", "00a10131a2020182fe0503f022a26a", id="clock"),
-        pytest.param("", "00a10131a2020182", id="no clock"),
+        pytest.param("fe0503e822a26a", id="request clock"),
+        pytest.param("", id="no request clock"),
     ],
 )
-def test_an_a91b2_screensaver_read_reports_what_4205_wrote(
-    clock: str, reply: str
-) -> None:
-    """``4202`` 0x08008ba4 reads the byte ``4205`` writes: switch bit 7, theme low 7."""
+def test_an_a91b2_screensaver_read_reports_what_4205_wrote(clock: str) -> None:
+    """``4202`` 0x08008ba4 reads the byte ``4205`` writes: switch bit 7, theme low 7.
+
+    Then the unit's clock, whatever the request carried, as ``0a02`` does.
+    """
     device = A91B2()
     device.set_values(screen_saver_switch=True, screen_saver_theme=2)
     request = bytes.fromhex("a10121" + clock)
 
     frames = device.mcu.respond(
-        0x202, request=request, values=device.negotiated_module.values
+        0x202, request=request, values=device.negotiated_module.values, epoch=0x6AA222E6
     )
 
     assert [(frame.cmd.msgtype, frame.payload.hex()) for frame in frames] == [
-        (0xA02, reply)
+        (0xA02, "00a10131a2020182fe0503e622a26a")
     ]
 
 
@@ -955,37 +959,83 @@ def test_an_a91b2_screensaver_theme_past_the_last_is_clamped(
     [
         pytest.param(
             0x208,
-            "a2020101a3020101a40503010c0000fe0503f022a26a",
-            "a2020101a3020101fe0503f022a26a",
-            id="4208 echoes port, slot, clock",
+            "a2020101a3020101a40503010c0000fe0503e822a26a",
+            "a2020101a3020101",
+            id="4208 echoes port, slot",
         ),
         pytest.param(
             0x207,
-            "a2020100a3020100fe0503f022a26a",
-            "a2020100fe0503f022a26a",
-            id="4207 echoes port, clock",
+            "a2020100a3020100fe0503e822a26a",
+            "a2020100",
+            id="4207 echoes port",
         ),
         pytest.param(
             0x209,
-            "a2020100a30604012c010000fe0503f022a26a",
-            "a2020100fe0503f022a26a",
-            id="4209 echoes port, clock",
+            "a2020100a30604012c010000fe0503e822a26a",
+            "a2020100",
+            id="4209 echoes port",
         ),
     ],
 )
-def test_a_prime_port_setter_ack_echoes_the_port(
+def test_a_prime_port_setter_ack_carries_the_port_and_the_unit_clock(
     model: type[A2345 | A91B2], command: int, request_fields: str, echoed: str
 ) -> None:
-    """The accepted ack carries the request's port (and slot) and clock.
+    """The accepted ack carries the request's port (and slot), then the unit's clock.
 
-    prime-a2345-a91b2.md's ``4207`` / ``4208`` / ``4209`` rows: the ``0a08`` frame
-    the ``4208`` row carries, ``4207``'s port and ``fe``; ``4209``'s the same.
+    prime-a2345-a91b2.md's ``4207`` / ``4208`` / ``4209`` rows; the clock is the
+    unit's, not the request's, as the ``0a07`` and ``0a09`` frames show.
     """
     request = bytes.fromhex("a10121" + request_fields)
 
-    frames = model().mcu.respond(command, request=request)
+    frames = model().mcu.respond(command, request=request, epoch=0x6AA222E6)
 
-    assert frames[0].payload.hex() == "00a10131" + echoed
+    assert frames[0].payload.hex() == "00a10131" + echoed + "fe0503e622a26a"
+
+
+@pytest.mark.parametrize(
+    ("msgtype", "fields", "frames"),
+    [
+        pytest.param(
+            0x209,
+            [(0xA2, b"\x01\x01"), (0xA3, bytes.fromhex("0401201c0000"))],
+            [
+                ("4a09", "00a10131a2020101"),
+                ("4307", "a10131a2020101a30a0401201c0000201c0000"),
+            ],
+            id="4209 ack, then 0307, 2026-09-09 23:24:24",
+        ),
+        pytest.param(
+            0x207,
+            [(0xA2, b"\x01\x00"), (0xA3, b"\x01\x01")],
+            [("4a07", "00a10131a2020100")],
+            id="4207 ack, 2026-09-04 20:15:23",
+        ),
+        pytest.param(
+            0x208,
+            [(0xA2, b"\x01\x01"), (0xA3, b"\x01\x00"), (0xA4, b"\x03\x00\x0c\x00\x00")],
+            [("4a08", "00a10131a2020101a3020100")],
+            id="4208 ack, 2026-09-09 23:24:50",
+        ),
+    ],
+)
+def test_an_a2345_setter_stamps_its_own_clock_replays_the_app_log(
+    msgtype: int, fields: list[tuple[int, bytes]], frames: list[tuple[str, str]]
+) -> None:
+    """The ack and its pushes carry the unit's clock, not the request's.
+
+    prime-a2345-a91b2.md "Commands", "Reply ``a1``" and the ``4209`` row: over
+    MQTT ``0209`` at ``e822a26a`` drew ``0a09`` and ``0307`` at the unit's
+    ``e622a26a``, ``0207`` at ``1b5f9b6a`` its ``0a07`` at ``1a5f9b6a``; the
+    ``0208`` at ``0223a26a`` its ``0a08`` at ``0123a26a``. Here the request
+    runs 2 s ahead of the unit.
+    """
+    device = A2345(clock=ManualClock())
+    client = prime_client(device, TOKEN)
+    ahead = (0xFE, b"\x03" + ui(4).build(PRIME_EPOCH + 2))
+
+    answered = command(device, client, msgtype, [*fields, ahead])
+
+    assert answered == [(cmd, body + device_clock(0)) for cmd, body in frames]
 
 
 def test_a2345_screensaver_read_reports_what_the_snapshot_reports() -> None:
@@ -1019,9 +1069,9 @@ def test_an_a91b2_port_switch_is_followed_by_its_0302_push() -> None:
 
     prime-a2345-a91b2.md, the A91B2's "MCU pushes" ``0302`` row.
     """
-    request = bytes.fromhex("a10121a2020102a3020101fe0503933cd66a")
+    request = bytes.fromhex("a10121a2020102a3020101fe0503953cd66a")
 
-    a91b2 = A91B2().mcu.respond(0x207, request=request)
+    a91b2 = A91B2().mcu.respond(0x207, request=request, epoch=0x6AD63C93)
 
     assert [(frame.cmd.msgtype, frame.payload.hex()) for frame in a91b2] == [
         (0xA07, "00a10131a2020102fe0503933cd66a"),
@@ -1031,7 +1081,7 @@ def test_an_a91b2_port_switch_is_followed_by_its_0302_push() -> None:
 
 async def test_a2345_pushes_0302_only_when_a_port_switch_changes() -> None:
     """The A2345's switch watcher (``port_switch_push_0302``) sends on a change."""
-    device = A2345()
+    device = A2345(clock=ManualClock())
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
         link = BleakLink(client, AppClient())
         await link.start()
@@ -1051,11 +1101,11 @@ async def test_a2345_pushes_0302_only_when_a_port_switch_changes() -> None:
 
     assert [cmd_hex(reply.frame) for reply in already_on] == ["4a07"]
     assert [(cmd_hex(reply.frame), reply.plaintext.hex()) for reply in off] == [
-        ("4a07", "00a10131a2020100fe0503933cd66a"),
-        ("4302", "a10131a2020100a3020100fe0503933cd66a"),
+        ("4a07", "00a10131a2020100" + device_clock(0)),
+        ("4302", "a10131a2020100a3020100" + device_clock(0)),
     ]
     assert [cmd_hex(reply.frame) for reply in again] == ["4a07"]
-    assert usb[1].plaintext.hex() == "a10131a2020104a3020100"
+    assert usb[1].plaintext.hex() == "a10131a2020104a3020100" + device_clock(0)
 
 
 @pytest.mark.parametrize(
@@ -1099,7 +1149,7 @@ async def test_a_prime_pushes_0307_when_a_countdown_arms_or_disarms(
     prime-a2345-a91b2.md's "MCU pushes" ``0307`` rows, the A2345's and the
     A91B2's: the push fires on the enable edge, a re-arm 1 -> 1 silent.
     """
-    device = model()
+    device = model(clock=ManualClock())
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as ble:
         link = BleakLink(ble, client)
         await link.start()
@@ -1116,11 +1166,13 @@ async def test_a_prime_pushes_0307_when_a_countdown_arms_or_disarms(
 
     a2 = f"a20201{select:02x}"
     assert [(cmd_hex(reply.frame), reply.plaintext.hex()) for reply in armed] == [
-        ("4a09", f"00a10131{a2}fe0503933cd66a"),
-        ("4307", f"a10131{a2}a30a0401201c0000201c0000fe0503933cd66a"),
+        ("4a09", f"00a10131{a2}{device_clock(0)}"),
+        ("4307", f"a10131{a2}a30a0401201c0000201c0000{device_clock(0)}"),
     ]
     assert [cmd_hex(reply.frame) for reply in rearmed] == ["4a09"]
-    assert disarming[1].plaintext.hex() == f"a10131{a2}a30a04{disarmed}fe0503933cd66a"
+    assert (
+        disarming[1].plaintext.hex() == f"a10131{a2}a30a04{disarmed}{device_clock(0)}"
+    )
     record, remaining = kept
     snapshot = device.mcu.respond(0x200, values=device.negotiated_module.values)[0]
     countdown = decode_field(Parameters.parse(snapshot.payload), record, Timer)
@@ -1448,7 +1500,7 @@ def test_the_a2345_mcu_takes_no_utc_before_2024_04_30() -> None:
 
 async def test_an_a91b2_ac_disarm_copies_the_seconds_into_the_remaining_time() -> None:
     """The AC disarm path (0x08004f3c) restores the remaining time to the seconds."""
-    device = A91B2()
+    device = A91B2(clock=ManualClock())
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as ble:
         link = BleakLink(ble, AppClient(encrypted_outer=False))
         await link.start()
@@ -1461,7 +1513,7 @@ async def test_an_a91b2_ac_disarm_copies_the_seconds_into_the_remaining_time() -
         disarming = await link.send(0x209, disarm, SESSION)
 
     assert disarming[1].plaintext.hex() == (
-        "a10131a2020100a30a0400201c0000201c0000fe0503933cd66a"
+        "a10131a2020100a30a0400201c0000201c0000" + device_clock(0)
     )
     snapshot = device.mcu.respond(0x200, values=device.negotiated_module.values)[0]
     countdown = decode_field(Parameters.parse(snapshot.payload), "aa", Timer)
@@ -1483,9 +1535,10 @@ async def test_a_prime_timed_task_collision_disables_the_other_half_and_pushes_0
     """An on-time at the unset off-time's 12:00 disables it and reports it.
 
     The ``0308`` comes before the ack (prime-a2345-a91b2.md's ``4208`` row and
-    "MCU pushes" ``0308``).
+    "MCU pushes" ``0308``); both carry the unit's clock, as the A91B2 ``0308``
+    worked example does.
     """
-    device = model()
+    device = model(clock=ManualClock())
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as ble:
         link = BleakLink(ble, client)
         await link.start()
@@ -1506,8 +1559,8 @@ async def test_a_prime_timed_task_collision_disables_the_other_half_and_pushes_0
         )
 
     assert [(cmd_hex(reply.frame), reply.plaintext.hex()) for reply in noon] == [
-        ("4308", f"a10131a20201{select:02x}a3020100a40504000c0000fe0503933cd66a"),
-        ("4a08", f"00a10131a20201{select:02x}a3020101fe0503933cd66a"),
+        ("4308", f"a10131a20201{select:02x}a3020100a40504000c0000{device_clock(0)}"),
+        ("4a08", f"00a10131a20201{select:02x}a3020101{device_clock(0)}"),
     ]
     assert [cmd_hex(reply.frame) for reply in nine] == ["4a08"]
     snapshot = device.mcu.respond(0x200, values=device.negotiated_module.values)[0]
@@ -1537,7 +1590,7 @@ def test_a2345_pushes_030f_at_once_and_030d_after_the_mode_settle() -> None:
     profile = "a30804010046412d2d18"
     assert designate == [
         ("4a0c", "00a10131"),
-        ("430f", "a10131a3020101fe0503933cd66a"),
+        ("430f", f"a10131a3020101{device_clock(0)}"),
     ]
     assert early == []
     assert settled == [
@@ -1547,7 +1600,7 @@ def test_a2345_pushes_030f_at_once_and_030d_after_the_mode_settle() -> None:
     assert [cmd for cmd, _ in same_mode] == ["4a06"]
     assert smart == [
         ("4a06", "00a10131"),
-        ("430f", "a10131a3020100fe0503933cd66a"),
+        ("430f", f"a10131a3020100{device_clock(3)}"),
     ]
     assert smart_settled == [
         ("430d", f"a10131a2020101{profile}a4020100{device_clock(6)}"),

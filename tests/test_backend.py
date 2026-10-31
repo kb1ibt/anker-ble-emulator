@@ -69,7 +69,7 @@ async def test_new_owner_is_granted_by_the_button_then_streams() -> None:
 
 
 async def test_status_request_draws_the_recorded_status_and_telemetry() -> None:
-    device = A1783()
+    device = A1783(clock=ManualClock())
     device.negotiated_module.enrolled.add(TOKEN)
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
         link = BleakLink(client, AppClient())
@@ -79,11 +79,12 @@ async def test_status_request_draws_the_recorded_status_and_telemetry() -> None:
         replies = await link.send(0x100, [(0xA1, b"\x21")], SESSION)
 
     status, telemetry = replies
-    script = device.negotiated_module.mcu
+    module = device.negotiated_module
+    replayed = module.mcu.respond(0x100, epoch=module.epoch)
     assert cmd_hex(status.frame) == "4900"
-    assert status.plaintext == script.respond(0x100)[0].payload
+    assert status.plaintext == replayed[0].payload
     assert cmd_hex(telemetry.frame) == "4421"
-    assert telemetry.plaintext == script.respond(0x100)[1].payload
+    assert telemetry.plaintext == replayed[1].payload
     assert len(link.raw[-4:]) == 4
     assert all(len(data) <= 253 for data in link.raw)
 

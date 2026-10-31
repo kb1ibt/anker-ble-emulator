@@ -42,7 +42,8 @@ from .frame import (
     make_frame,
     reply_frame,
 )
-from .mcu import CLOUD, COMMAND, EPOCH, GIVEN, LINK, RTC, UNIT_EVENT, given, mcu_frame
+from .layouts import EPOCH, RTC
+from .mcu import CLOUD, COMMAND, GIVEN, LINK, UNIT_EVENT, given, mcu_frame
 from .messages import (
     AUTH_PENDING_REPLY,
     BIND_REPLY,
@@ -623,7 +624,7 @@ class Module:
         """
         ahead, disconnect = self._run_due() if self.refresh_live() else ([], False)
         frames = self._route_pushes(
-            [self.mcu.push(msgtype, values=self.values, rtc=self.rtc)]
+            [self.mcu.push(msgtype, values=self.values, rtc=self.rtc, epoch=self.epoch)]
         )
         link = self._link
         if link is None or not link.authorized:
@@ -688,11 +689,11 @@ class Module:
             self.schedule(*step.then, start=queued.due)
             if self.clock.bypassed(queued.due):
                 continue
-            rtc = self._rtc_at(queued.due)
+            rtc, epoch = self._rtc_at(queued.due), self._epoch_at(queued.due)
             ble = self._route_pushes(
                 [
                     *(
-                        self.mcu.push(msgtype, values=self.values, rtc=rtc)
+                        self.mcu.push(msgtype, values=self.values, rtc=rtc, epoch=epoch)
                         for msgtype in step.pushes
                     ),
                     *(
@@ -1122,6 +1123,7 @@ class Module:
                 values=self.values,
                 before=before,
                 rtc=self.rtc,
+                epoch=self.epoch,
             )
         )
         if frame.cmd.msgtype == self.mcu.factory_reset:
@@ -1130,7 +1132,9 @@ class Module:
             self.schedule(Timed(FACTORY_RESET_DELAY, "factory_reset", _drop, link=True))
         burst = self.mcu.burst
         if burst is not None and frame.cmd.msgtype == burst.trigger:
-            first = self.mcu.push(burst.push, values=self.values, rtc=self.rtc)
+            first = self.mcu.push(
+                burst.push, values=self.values, rtc=self.rtc, epoch=self.epoch
+            )
             frames.extend(self._route_pushes([first]))
             self.schedule(*_burst(burst, burst.count - 1))
         out = self._relay(link, [*frames, *timed])

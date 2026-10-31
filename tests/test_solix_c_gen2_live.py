@@ -14,6 +14,7 @@ from anker_ble_emulator.devices.solix_c_gen2 import (
     DcInputSource,
 )
 from anker_ble_emulator.layouts import LayoutError
+from anker_ble_emulator.parameters import stamp_clock
 from tests.fixtures.cgen2 import (
     A1783_TABLE,
     INPUT_POWERS,
@@ -221,7 +222,8 @@ def test_two_polls_within_one_period_are_identical() -> None:
 def test_off_by_default_the_a1783_frames_never_move() -> None:
     """With no draws the polls are the recording, period after period.
 
-    The posts move only by their counters: the counter page turns on its own.
+    Only their ``fe``, the unit's clock, ticks. The posts move only by their
+    counters: the counter page turns on its own.
     """
     clock = ManualClock()
     device = A1783(clock=clock)
@@ -229,7 +231,7 @@ def test_off_by_default_the_a1783_frames_never_move() -> None:
 
     frames = run(device, client, clock, MIXED + POSTS)
 
-    polls = {(m, clear) for _, m, clear in frames if m != MSGTYPE_490}
+    polls = {(m, stamp_clock(clear, 0)) for _, m, clear in frames if m != MSGTYPE_490}
     posts = [named(device, m, clear) for _, m, clear in frames if m == MSGTYPE_490]
     assert device.negotiated_module.live is None
     assert sorted(m for m, _ in polls) == [MSGTYPE_421, MSGTYPE_900]

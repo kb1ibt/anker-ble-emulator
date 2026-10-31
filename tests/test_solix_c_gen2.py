@@ -22,7 +22,12 @@ from anker_ble_emulator.c_g2_490 import MSGTYPE_490, PUSH_490_LAYOUT
 from anker_ble_emulator.devices import COMPANY_ID, Profile, solix_c_gen2
 from anker_ble_emulator.frame import decode
 from anker_ble_emulator.layouts import LayoutError, ui
-from anker_ble_emulator.parameters import Parameter, Parameters, decode_field
+from anker_ble_emulator.parameters import (
+    Parameter,
+    Parameters,
+    decode_field,
+    stamp_clock,
+)
 from anker_ble_emulator.tlv import decode_fields
 from tests.fixtures.cgen2 import (
     authorized_client,
@@ -1619,7 +1624,7 @@ def test_the_cloud_frame_is_the_ble_one_under_its_mqtt_route(
     """a1783-telemetry.md "MQTT channel routing": the BLE frame under its MQTT ``a1``.
 
     A plain ``03 01 0f`` frame with no link flags, field for field the one the
-    MCU sends to BLE.
+    MCU sends to BLE, both on the unit's clock.
     """
     device = A1783()
     script = device.mcu
@@ -1633,7 +1638,9 @@ def test_the_cloud_frame_is_the_ble_one_under_its_mqtt_route(
 
     frame = decode(device.mqtt_frame(msgtype))
 
-    ble_fields = Parameters.parse(ble.payload)
+    ble_fields = Parameters.parse(
+        stamp_clock(ble.payload, device.negotiated_module.epoch)
+    )
     fields = Parameters.parse(frame.payload)
     assert (frame.pattern.composer, frame.pattern.channel) == (0x01, 0x0F)
     assert (frame.cmd.encrypted, frame.cmd.fragmented) == (False, False)
@@ -2802,15 +2809,17 @@ def test_display_on_lasts_its_timeout_replays_2026_08_27() -> None:
         pytest.param(0x103, (0xA3, b"\x01\x02"), id="4103-a3-brightness"),
         pytest.param(0x103, (0xA9, b"\x01\x01"), id="4103-a9-language"),
         pytest.param(0x102, (0xA2, b"\x01\x01"), id="4102-a2-car-socket"),
+        pytest.param(0x101, (0xA2, b"\x01\x01"), id="4101-a2-ac-output"),
     ],
 )
 def test_a_waking_setter_turns_the_screen_on(
     msgtype: int, field: tuple[int, bytes]
 ) -> None:
-    """The app_log setters sent with the screen off whose next frame read it on.
+    """a1783-control.md "Screen wake": the setters that wake the screen from off.
 
     ``4103 a3`` (4 of 4, e.g. 2026-07-02 15:11:59), ``a9`` (2026-09-18 06:36:25),
-    ``4102 a2`` (2026-09-01 02:26:41, 4 of 4); the reply's ``4421`` shows it.
+    ``4102 a2`` (2026-09-01 02:26:41, 4 of 4), and ``4101 a2`` on the same
+    state-table path; the reply's ``4421`` shows it.
     """
     device = A1783(clock=ManualClock())
     client = authorized_client(device, TOKEN)
@@ -2830,17 +2839,23 @@ def test_a_waking_setter_turns_the_screen_on(
         pytest.param(0x103, (0xA4, b"\x02\x3c\x00"), id="4103-a4-display-timeout"),
         pytest.param(0x103, (0xA8, b"\x01\x01"), id="4103-a8-port-memory"),
         pytest.param(0x103, (0xB0, b"\x01\x00"), id="4103-b0-outage-alert"),
+        pytest.param(0x103, (0xA3, b"\x01\x00"), id="4103-a3-brightness-0"),
+        pytest.param(0x051, None, id="4051-restore-defaults"),
     ],
 )
 def test_other_setters_leave_the_screen_off(
-    msgtype: int, field: tuple[int, bytes]
+    msgtype: int, field: tuple[int, bytes] | None
 ) -> None:
-    """The same survey: each sent with the screen off left it off (1-3 times each)."""
+    """a1783-control.md "Screen wake": each sent with the screen off leaves it off.
+
+    The app_log survey (1-3 times each); brightness 0 turns the screen off, and
+    ``4051``'s restored brightness and timeout don't wake it.
+    """
     clock = ManualClock()
     device = A1783(clock=clock)
     client = authorized_client(device, TOKEN)
 
-    command(device, client, msgtype, [field])
+    command(device, client, msgtype, [field] if field else [])
     clock.advance(5)
     device.negotiated_module.check_pushes()
 
@@ -2880,12 +2895,93 @@ def test_a_wake_while_on_rearms_the_timeout() -> None:
     assert (rearmed, module.values["screen_switch"]) == (1, 0)
 
 
-def test_the_mains_auto_off_wakes_the_screen_for_its_timeout() -> None:
-    """Q13's auto-off (06:02:35) wakes the screen through the same wake."""
+def test_brightness_0_turns_the_screen_off() -> None:
+    """a1783-control.md "Screen wake": ``4103 a3`` 0 turns the screen off."""
+    device = A1783(clock=ManualClock())
+    device.set_values(screen_off_time=300, lcd_backlight_brightness=2)
+    device.set_values(screen_switch=1)
+    client = authorized_client(device, TOKEN)
+
+    replies = command(device, client, 0x103, [(0xA3, b"\x01\x00")])
+
+    a4 = decode_field(Parameters.parse(replies[-1].plaintext), "a4", GreedyBytes)
+    assert (a4[17], a4[21]) == (0, 0)
+
+
+@pytest.mark.parametrize(
+    ("timeout", "off_at"),
+    [
+        pytest.param(b"\x02\x3c\x00", 260, id="new-60-s"),
+        pytest.param(b"\x02\x2c\x01", 500, id="same-300-s"),
+    ],
+)
+def test_a_display_timeout_write_while_on_rearms_it(
+    timeout: bytes, off_at: int
+) -> None:
+    """``screen_off_time_set?`` posts while the timer runs: the timeout restarts.
+
+    a1783-control.md "Screen wake" ``4103 a4``; off, it stays off (above).
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(screen_off_time=300)
+    device.set_values(screen_switch=1)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    clock.advance(200)
+
+    command(device, client, 0x103, [(0xA4, timeout)])
+    clock.advance(off_at - 201)
+    module.check_pushes()
+    still = module.values["screen_switch"]
+    clock.advance(2)
+    module.check_pushes()
+
+    assert (still, module.values["screen_switch"]) == (1, 0)
+
+
+def test_dc_input_presence_wakes_the_screen() -> None:
+    """a1783-control.md "Screen wake": ``a8[0]`` 0 -> 1 (2026-08-11 15:24:17-19).
+
+    Presence going away doesn't wake it.
+    """
+    device = A1783(clock=ManualClock())
+    module = device.negotiated_module
+
+    device.set_values(pv1_charge_status=1)
+    woken = module.values["screen_switch"]
+    device.set_values(screen_switch=0)
+    device.set_values(pv1_charge_status=0)
+
+    assert (woken, module.values["screen_switch"]) == (1, 0)
+
+
+@pytest.mark.parametrize(
+    "battery_only",
+    [
+        pytest.param({}, id="battery-only-on"),
+        pytest.param(
+            {"ac_input_disable_switch": 0, "ac_input_status": 1}, id="battery-only-off"
+        ),
+    ],
+)
+def test_the_mains_auto_off_wakes_the_screen_for_its_timeout(
+    battery_only: dict[str, Value],
+) -> None:
+    """Q13's auto-off (06:02:35) wakes the screen through the same wake.
+
+    a1783-control.md "Screen wake": the mains drop wakes it with Battery-Only
+    Power on (bench 2026-10-31 14:54:40) or off.
+    """
     clock = ManualClock()
     device = A1783(clock=clock)
     device.set_values(
-        **{**KASA_UNIT, "outage_alert_switch": False, "screen_off_time": 10}
+        **{
+            **KASA_UNIT,
+            **battery_only,
+            "outage_alert_switch": False,
+            "screen_off_time": 10,
+        }
     )
 
     device.set_values(ac_input_status=0)

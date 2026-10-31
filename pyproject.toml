@@ -60,6 +60,8 @@ Issues = "https://github.com/kb1ibt/anker-ble-emulator/issues"
 
 [tool.ruff]
 target-version = "py311"
+# A verbatim copy of the commands SolixBLE #87's upload was run with.
+extend-exclude = ["docs/solixble-theme-upload.md"]
 
 [tool.ruff.lint]
 select = ["ALL"]

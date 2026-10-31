@@ -721,7 +721,10 @@ class EmulatedDevice:
         module = self.negotiated_module
         if module.refresh_live():
             self._emit(module.check_pushes())
-        return encode(module.mcu.mqtt(msgtype, values=module.values, rtc=module.rtc))
+        frame = module.mcu.mqtt(
+            msgtype, values=module.values, rtc=module.rtc, epoch=module.epoch
+        )
+        return encode(frame)
 
     def _emit(self, output: Output) -> None:
         if self._listener is not None:

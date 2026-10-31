@@ -29,7 +29,8 @@ from anker_ble_emulator.frame import (
     fragment,
     make_frame,
 )
-from anker_ble_emulator.mcu import EPOCH, Burst, mcu_frame
+from anker_ble_emulator.layouts import EPOCH
+from anker_ble_emulator.mcu import Burst, mcu_frame
 from anker_ble_emulator.module import AuthMode, Output
 from anker_ble_emulator.parameters import ParameterDict, TableLayout
 from anker_ble_emulator.timed import Step, Timed
@@ -450,9 +451,10 @@ def test_a_follow_up_kept_off_ble_is_published_as_its_mqtt_copies() -> None:
     out = rig.module.write(client.request(0x207, [(0xA1, b"\x21")], SESSION))
 
     replies = [client.open(frame) for frame in out.frames]
+    clock = bytes.fromhex("fe0503") + Int32ul.build(rig.module.epoch)
     assert [cmd_hex(r.frame) for r in replies if r] == ["4a07", "4303"]
     assert rig.module.published == [
-        (0x302, encode(mcu_frame(0x302, bytes.fromhex("a10164"))))
+        (0x302, encode(mcu_frame(0x302, bytes.fromhex("a10164") + clock)))
     ]
 
 

@@ -11,9 +11,9 @@ from construct import GreedyBytes, Int8ul, Struct
 
 from .c_g2_490 import MSGTYPE_490
 from .frame import CHANNEL_SESSION, COMPOSER_SEND, RESPONSE, make_frame
-from .layouts import STATUS_ACCEPTED, LayoutError
+from .layouts import EPOCH, RTC, STATUS_ACCEPTED, LayoutError
 from .messages import BLE_REPLY_ROUTE, ROUTE_FIELD
-from .parameters import ParameterContainer, Parameters
+from .parameters import ParameterContainer, Parameters, stamp_clock
 
 
 if TYPE_CHECKING:
@@ -38,10 +38,6 @@ def _rebuilt(frame: Frame, payload: bytes) -> Frame:
 REPLY = Struct("status" / Int8ul, "fields" / GreedyBytes)
 #: An MCU ack: its status, the ``a1`` route, then the fields it carries back.
 ACK = Struct("status" / Int8ul, "route" / ROUTE_FIELD, "fields" / GreedyBytes)
-#: The state name a read reply finds the MCU's RTC under: local seconds.
-RTC = "rtc"
-#: The state name a timed event finds the UTC epoch under: a push's ``fe``.
-EPOCH = "epoch"
 #: The name the layout's ``timed`` hook finds a change's request msgtype under;
 #: absent for a change made on the unit (``set_values``) or a clock set.
 COMMAND = "command"
@@ -163,7 +159,7 @@ class McuScript:
                 recorded |= layout.read(frame.cmd.msgtype, frame.payload)
         return recorded
 
-    def respond(
+    def respond(  # noqa: PLR0913  # the request, the state around it and its clock
         self,
         msgtype: int,
         *,
@@ -171,6 +167,7 @@ class McuScript:
         values: Mapping[str, Value] | None = None,
         before: Mapping[str, Value] | None = None,
         rtc: int = 0,
+        epoch: int | None = None,
     ) -> list[Frame]:
         """Return the frames answering a request; none for one the MCU drops.
 
@@ -190,6 +187,8 @@ class McuScript:
             before: The values before the request applied; None if it changed
                 nothing.
             rtc: The MCU's RTC, local seconds, for a read that reports it.
+            epoch: The unit's UTC epoch, the ``fe`` its reply and pushes carry;
+                None keeps a recorded frame's ``fe`` (and builds with 0).
 
         """
         layout = self.layout
@@ -200,9 +199,10 @@ class McuScript:
             if status != STATUS_ACCEPTED:
                 frames = [self._ack(msgtype, status)]
             else:
-                after = self.state(values or {})
+                clock = 0 if epoch is None else epoch
+                after = {**self.state(values or {}), RTC: rtc, EPOCH: clock}
                 prior = after if before is None else self.state(before)
-                reply = layout.reply(msgtype, request, {**after, RTC: rtc})
+                reply = layout.reply(msgtype, request, after)
                 pushes = [
                     mcu_frame(push, payload, self.channel)
                     for push, payload in layout.follow_ups(
@@ -220,7 +220,7 @@ class McuScript:
             if table_status is None:
                 return []
             return [self._ack(msgtype, table_status)]
-        return [self._with_values(frame, values, rtc) for frame in frames]
+        return [self._with_values(frame, values, rtc, epoch) for frame in frames]
 
     def _ack(self, msgtype: int, status: int, echoed: bytes = b"") -> Frame:
         """Return the ``<status> a1 01 31`` reply to ``msgtype``, then ``echoed``."""
@@ -243,6 +243,7 @@ class McuScript:
         *,
         values: Mapping[str, Value] | None = None,
         rtc: int | None = None,
+        epoch: int | None = None,
     ) -> Frame:
         """Return the scripted push of ``msgtype``.
 
@@ -250,15 +251,22 @@ class McuScript:
             msgtype: The push's 12-bit message type.
             values: The device's telemetry values by name.
             rtc: The MCU's RTC, local seconds, for a push the clock shapes.
+            epoch: The unit's UTC epoch, its recorded ``fe``'s value; None keeps
+                the recorded one.
 
         Raises:
             KeyError: If the script has no such push.
 
         """
-        return self._with_values(self.pushes[msgtype], values, rtc)
+        return self._with_values(self.pushes[msgtype], values, rtc, epoch)
 
     def mqtt(
-        self, msgtype: int, *, values: Mapping[str, Value] | None = None, rtc: int = 0
+        self,
+        msgtype: int,
+        *,
+        values: Mapping[str, Value] | None = None,
+        rtc: int = 0,
+        epoch: int | None = None,
     ) -> Frame:
         """Return the frame the MCU publishes to MQTT as ``msgtype``, on the cloud.
 
@@ -280,7 +288,7 @@ class McuScript:
         if not layout.publishes(msgtype, payload_of):
             msg = f"the MCU publishes no {msgtype:04x} to MQTT in this state"
             raise RuntimeError(msg)
-        params = Parameters.parse(payload_of(msgtype))
+        params = Parameters.parse(self._clock(msgtype, payload_of(msgtype), epoch))
         params["a1"] = ParameterContainer(key=b"\xa1", type=None, value=route)
         return _rebuilt(recorded, Parameters.build(params))
 
@@ -332,6 +340,31 @@ class McuScript:
         return recorded
 
     def _with_values(
+        self,
+        frame: Frame,
+        values: Mapping[str, Value] | None,
+        rtc: int | None,
+        epoch: int | None = None,
+    ) -> Frame:
+        """Return ``frame`` with the named values set, then the unit's clock.
+
+        A known ``epoch`` replaces a recorded ``fe`` the layout doesn't name
+        (``LayoutProtocol.stamps_clock``); a frame without one gains none.
+        """
+        named = self._named(frame, values, rtc)
+        payload = self._clock(named.cmd.msgtype, named.payload, epoch)
+        return named if payload == named.payload else _rebuilt(named, payload)
+
+    def _clock(self, msgtype: int, payload: bytes, epoch: int | None) -> bytes:
+        """Return ``payload`` with a recorded ``fe`` the unit's clock, if known."""
+        layout = self.layout
+        if epoch is None or layout is None or not layout.stamps_clock(msgtype):
+            return payload
+        if self.push_490 is not None and msgtype == MSGTYPE_490:
+            return payload
+        return stamp_clock(payload, epoch)
+
+    def _named(
         self, frame: Frame, values: Mapping[str, Value] | None, rtc: int | None
     ) -> Frame:
         """Return ``frame`` with the named values set.

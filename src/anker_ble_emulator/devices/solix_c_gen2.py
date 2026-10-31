@@ -53,6 +53,8 @@ from construct import (
 
 from anker_ble_emulator.c_g2_490 import MSGTYPE_490
 from anker_ble_emulator.layouts import (
+    EPOCH,
+    RTC,
     STATUS_ACCEPTED,
     TYPE_BIN,
     TYPE_SILE,
@@ -63,7 +65,7 @@ from anker_ble_emulator.layouts import (
     fitted,
     ui,
 )
-from anker_ble_emulator.mcu import CLOUD, EPOCH, GIVEN, LINK, RTC
+from anker_ble_emulator.mcu import CLOUD, COMMAND, GIVEN, LINK
 from anker_ble_emulator.messages import (
     ROUTE_APP,
     ROUTE_BLE,
@@ -1819,7 +1821,7 @@ def _statuses(state: Mapping[str, Value]) -> dict[str, Value]:
     return {"work_status": main, ON_BUS_STATUS: _pack_status(state, holder)}
 
 
-def _name_set(state: Mapping[str, Value], name: str) -> frozenset[str]:
+def name_set(state: Mapping[str, Value], name: str) -> frozenset[str]:
     """Return the names newline-joined under ``name``; none if it's unset."""
     joined = _bytes_value({name: b"", **state}, name)
     return frozenset(part.decode() for part in joined.split(b"\n") if part)
@@ -1830,7 +1832,7 @@ def _flow_follows(_values: Mapping[str, Value], state: Mapping[str, Value]) -> S
 
     A status set by name since the change that queued it stays.
     """
-    held = _name_set(state, STATUS_HELD)
+    held = name_set(state, STATUS_HELD)
     statuses = _statuses(state).items()
     return Step(values={name: value for name, value in statuses if name not in held})
 
@@ -1849,7 +1851,7 @@ def _statuses_held(
 
     A change that moved the statuses (``moved``) starts the record over.
     """
-    held = names if moved else _name_set(state, STATUS_HELD) | names
+    held = names if moved else name_set(state, STATUS_HELD) | names
     if not held:
         return Step(unset=(STATUS_HELD,))
     return Step(values={STATUS_HELD: b"\n".join(sorted(n.encode() for n in held))})
@@ -2771,16 +2773,33 @@ def _soc_alert(
 SCREEN = "screen_switch"
 SCREEN_OFF_TIME = "screen_off_time"
 SCREEN_WAKE = "screen_wake"
-#: The changes that wake the screen: in the app_log, every write sent with the
-#: screen off of ``4103 a3`` (brightness), ``a9`` (language) and ``4102 a2`` (the
-#: car socket) read it on in the next frame; none of ``4101 a2``/``a4``/``a6``,
-#: ``4102 a4``, ``4103 a4``/``a8``/``aa``/``b0``, ``4104`` or the ``40xx`` ops did.
-SCREEN_WAKES = frozenset({"lcd_backlight_brightness", "device_language", CAR_SOCKET})
+#: What wakes the screen (a1783-control.md "Screen wake"): a ``4103 a3``
+#: (brightness, 0 turns it off instead) or ``a9`` (language) write, a toggle of
+#: the ``4102 a2`` car socket or the ``4101 a2`` AC output, and DC-input presence
+#: (``a8[0]`` 0 -> 1). A ``4103 a4`` write re-arms the timeout only while on.
+#: Every toggle wakes: the kind's state-table screen row isn't modelled.
+BRIGHTNESS = "lcd_backlight_brightness"
+SCREEN_WRITES = frozenset({BRIGHTNESS, "device_language"})
+SCREEN_TOGGLES = frozenset({CAR_SOCKET, AC_OUTPUT_SWITCH})
+DC_PRESENT = "pv1_charge_status"
+#: The writes count from ``4103`` or the unit; ``4051``'s restore never wakes.
+SCREEN_WRITERS = frozenset({None, 0x103})
 
 
-def _screen_wakes(own: frozenset[str], after: Mapping[str, Value]) -> list[Timed]:
-    """Return the wake a waking change, or the screen set on, starts."""
-    if own & SCREEN_WAKES or (SCREEN in own and after[SCREEN]):
+def _screen_wakes(
+    before: Mapping[str, Value],
+    after: Mapping[str, Value],
+    own: frozenset[str],
+    given: frozenset[str],
+) -> list[Timed]:
+    """Return the wake, or the brightness-0 dark, a change starts."""
+    written = own | given if after.get(COMMAND) in SCREEN_WRITERS else frozenset()
+    if BRIGHTNESS in written and not after[BRIGHTNESS]:
+        return [Timed(0.0, "screen_off", _screen_off)]
+    rearm = SCREEN_OFF_TIME in written and after[SCREEN]
+    present = not before[DC_PRESENT] and after[DC_PRESENT]
+    turned_on = SCREEN in own and after[SCREEN]
+    if written & SCREEN_WRITES or own & SCREEN_TOGGLES or rearm or present or turned_on:
         return [Timed(0.0, SCREEN_WAKE, partial(_screen_wake, own))]
     return []
 
@@ -3891,7 +3910,7 @@ class CGen2Layout(TableLayout):
         the bus holder makes is set at once, and the rest read it.
         """
         own = frozenset(name for name in after if before.get(name) != after.get(name))
-        given = _name_set(after, GIVEN)
+        given = name_set(after, GIVEN)
         events: list[Timed] = []
         if own & FLOW_TRIGGERS:
             kept = (own & CURRENT_NAMES) | given
@@ -3911,7 +3930,7 @@ class CGen2Layout(TableLayout):
             events += _socket_edge(after, own)
         events += _timers_started(own, after)
         events += _soc_floors_crossed(before, after)
-        events += _screen_wakes(own, after)
+        events += _screen_wakes(before, after, own, given)
         moved = _statuses(before) != _statuses(after)
         if moved or given & STATUS_NAMES:
             held = partial(_statuses_held, given & STATUS_NAMES, moved=moved)

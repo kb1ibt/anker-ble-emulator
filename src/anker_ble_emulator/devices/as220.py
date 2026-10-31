@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from construct import Bytes, Container, ExprAdapter, Int16ul, Struct
 
 from anker_ble_emulator.layouts import TYPE_VAR, Value, ui
+from anker_ble_emulator.mcu import GIVEN
 from anker_ble_emulator.module import AuthMode
 from anker_ble_emulator.parameters import (
     FieldGroup,
@@ -55,6 +56,7 @@ from .solix_c_gen2 import (
     Tou,
     ac_output_off,
     ac_output_switched,
+    name_set,
 )
 
 
@@ -84,11 +86,14 @@ AcOutput = Struct(
     "ac_input_power" / ui(2),
     "_reserved" / Bytes(5),
 )
-#: ``f0`` (4 B): ``[0]`` is 1 while AC passes through, the AC output on with AC
-#: coming in (PiField s2000-as220.md "Telemetry"); no app name is known. The rest
-#: isn't named.
+#: ``f0`` (4 B, PiField s2000-as220.md "Telemetry"): ``[0]`` is 1 while AC passes
+#: through, the AC output on with AC coming in; ``[3]`` is 3 while UltraFast is
+#: on (``a4[20]`` 1), a ``0421`` late at each edge. No app name is known for
+#: either; ``[1:3]`` isn't named.
 PASSTHROUGH = "ac_pass_through_status"
-Charger = Struct(PASSTHROUGH / ui(1), "_reserved" / Bytes(3))
+ULTRAFAST_SHOWN = "ultrafast_charge_state"
+ULTRAFAST_SHOWN_ON = 3
+Charger = Struct(PASSTHROUGH / ui(1), "_reserved" / Bytes(2), ULTRAFAST_SHOWN / ui(1))
 #: ``a4[28:30]``, in the A1783 tail's reserved bytes: the Smart AC Output
 #: timeout in minutes (``4101 aa``); no app name is known. ``a4[26:28]``, the
 #: app's ``countryCode``, stays as recorded.
@@ -227,9 +232,11 @@ AC_PARAMS = {**AC_GROUP, "aa": (SMART_AC_TIMEOUT, ui(2))}
 SCREEN = "screen_switch"
 #: A ``4103 a2`` screen switch waiting to show.
 SCREEN_REQUEST = "screen_switch_request"
-#: ``4103 a2`` shows in the ``0421`` after its reply's, under a second on.
-SCREEN_DELAY = 0.5
+#: ``4103 a2``, and ``f0[3]`` after a ``4101 a7``, show in a second ``0421``
+#: under a second after the reply's.
+SECOND_0421_DELAY = 0.5
 PASSTHROUGH_EVENT = "ac_pass_through"
+ULTRAFAST_SHOWN_EVENT = "ultrafast_shown"
 
 
 def _set_ac_params(request: ParameterDict) -> dict[str, Value] | None:
@@ -278,6 +285,12 @@ def _pass_through_follows(
     return Step(values={PASSTHROUGH: _passes_through(state)})
 
 
+def _ultrafast_shown(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Set ``f0[3]`` from the UltraFast flag and push the ``0421`` that carries it."""
+    shown = ULTRAFAST_SHOWN_ON if state[ULTRAFAST] else 0
+    return Step(values={ULTRAFAST_SHOWN: shown}, pushes=(MSGTYPE_421,))
+
+
 class AS220Layout(TableLayout):
     """The S2000's own telemetry code; satisfies ``LayoutProtocol``."""
 
@@ -297,7 +310,8 @@ class AS220Layout(TableLayout):
 
         A rating is checked when the change sets a power it reads.
 
-        AC out reads 0 W with the AC output off.
+        AC out reads 0 W with the AC output off. An ``f0`` byte set off its
+        rule is taken: recorded frames beside a change read so.
 
         Raises:
             TypeError: If a total can't be its parts' sum, AC out is set over 0 W
@@ -319,27 +333,28 @@ class AS220Layout(TableLayout):
             if names & resolved.keys() and power > rating:
                 msg = f"{what} reads at most {rating} W on the S2000, not {power} W"
                 raise TypeError(msg)
-        passing = _passes_through(after)
-        if PASSTHROUGH in values and int(after[PASSTHROUGH]) != passing:
-            msg = f"{PASSTHROUGH} follows the AC output and AC in: {passing}"
-            raise TypeError(msg)
         return resolved
 
     def timed(
         self, before: Mapping[str, Value], after: Mapping[str, Value]
     ) -> tuple[Timed, ...]:
-        """Return the screen switch a ``4103 a2`` holds and ``f0[0]``'s follow.
+        """Return the screen switch a ``4103 a2`` holds and ``f0``'s follows.
 
         A request a pending one repeats keeps the pending one's time. A
-        command's change of AC out moves the output total too.
+        command's change of AC out moves the output total too. An ``f0[0]``
+        the change set itself stays until the next change.
         """
         events = []
         if before.get(SCREEN_REQUEST) != after.get(SCREEN_REQUEST):
-            events.append(Timed(SCREEN_DELAY, SCREEN_REQUEST, _screen_shown))
+            events.append(Timed(SECOND_0421_DELAY, SCREEN_REQUEST, _screen_shown))
         if int(after[OUTPUT_TOTAL]) != _outputs(after):
             events.append(Timed(0.0, OUTPUT_TOTAL, _output_total_follows))
-        if int(after[PASSTHROUGH]) != _passes_through(after):
+        set_here = PASSTHROUGH in name_set(after, GIVEN)
+        if not set_here and int(after[PASSTHROUGH]) != _passes_through(after):
             events.append(Timed(0.0, PASSTHROUGH_EVENT, _pass_through_follows))
+        if before[ULTRAFAST] != after[ULTRAFAST]:
+            shown = Timed(SECOND_0421_DELAY, ULTRAFAST_SHOWN_EVENT, _ultrafast_shown)
+            events.append(shown)
         return tuple(events)
 
 

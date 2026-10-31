@@ -41,6 +41,16 @@ AT_RATING = [
         {"ac_recharge_power": 600, "ac_input_power": 1520, "ac_output_power": 0},
         id="recorded charge over a 600 W limit",
     ),
+    # 12:24:14, beside the AC output's switch-off.
+    pytest.param(
+        {
+            "ac_recharge_power": 600,
+            "ac_output_status": 0,
+            "ac_output_power": 0,
+            "ac_input_power": 812,
+        },
+        id="recorded 812 W after the AC output's switch",
+    ),
     pytest.param({"pv1_input_power": 400}, id="solar"),
     pytest.param({"ac_output_power": 3000}, id="AC out peak"),
     pytest.param({"pd1_output_power": 118}, id="USB"),
@@ -439,10 +449,6 @@ def test_as220_ac_pass_through_follows_the_ac_output_and_ac_in() -> None:
     output_off = passing()
     device.set_values(ac_input_status=0)
     no_mains_flag = passing()
-    before = dict(device.negotiated_module.values)
-    with pytest.raises(TypeError, match="ac_pass_through_status follows"):
-        device.set_values(ac_pass_through_status=1)
-    after_refusal = dict(device.negotiated_module.values)
     device.set_values(ac_pass_through_status=1, ac_output_status=1)
 
     assert (recorded, no_input, charging, output_off, no_mains_flag) == (
@@ -452,8 +458,63 @@ def test_as220_ac_pass_through_follows_the_ac_output_and_ac_in() -> None:
         0,
         0,
     )
-    assert after_refusal == before
     assert passing() == 1
+
+
+def test_as220_ac_pass_through_set_off_the_rule_holds_to_the_next_change() -> None:
+    """5 of the 433 #322 payloads read ``f0[0]`` off the rule, beside a change.
+
+    12:38:40: AC output on, AC in 0 W, ``f0[0]`` 1; the next change moves it.
+    """
+    device = AS220()
+
+    def passing() -> object:
+        return next_0421(device)[0]["ac_pass_through_status"]
+
+    device.set_values(ac_input_power=0, ac_pass_through_status=1)
+    held = passing()
+    device.set_values(pd1_output_power=5)
+
+    assert (held, passing()) == (1, 0)
+
+
+def test_as220_ultrafast_shows_in_f0_3_a_frame_late() -> None:
+    """``f0[3]`` is 3 with UltraFast on (``a4[20]`` 1), a ``0421`` behind it.
+
+    #322 12:24:17 and 12:24:21: the ``4101 a7`` reply's ``0421`` shows the new
+    flag with the old ``f0[3]``; a second ``0421`` that second shows it.
+    """
+    clock = ManualClock()
+    device = AS220(clock=clock)
+    client = prime_client(device, TOKEN)
+    layout = device.layout
+    assert layout is not None
+
+    def shown(replies: list[tuple[str, str]]) -> tuple[object, object]:
+        values = layout.read(0x421, bytes.fromhex(replies[-1][1]))
+        return values["super_fast_charge_status"], values["ultrafast_charge_state"]
+
+    on = command(device, client, 0x101, [(0xA7, b"\x01\x01")])
+    on_shown = advance(device, client, clock, 0.5)
+    off = command(device, client, 0x101, [(0xA7, b"\x01\x00")])
+    off_shown = advance(device, client, clock, 0.5)
+
+    assert [cmd for cmd, _ in on_shown] == ["4421"]
+    assert [shown(on), shown(on_shown), shown(off), shown(off_shown)] == [
+        (1, 0),
+        (1, 3),
+        (0, 3),
+        (0, 0),
+    ]
+
+
+def test_as220_takes_f0_3_set_by_name() -> None:
+    """A recorded ``f0[3]`` 3 a frame past UltraFast's off (12:24:21) is a unit's."""
+    device = AS220()
+
+    device.set_values(ultrafast_charge_state=3)
+
+    assert next_0421(device)[0]["ultrafast_charge_state"] == 3
 
 
 def test_as220_ac_output_off_reads_no_ac_out_and_moves_the_total() -> None:

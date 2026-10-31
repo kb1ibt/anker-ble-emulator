@@ -26,6 +26,7 @@ from anker_ble_emulator.parameters import (
     ParameterDict,
     Parameters,
     TableLayout,
+    clock_field,
     container,
     decode_field,
     decode_request,
@@ -41,6 +42,7 @@ from .prime import (
     BLE_ROUTE,
     MSGTYPE_303,
     MSGTYPE_A00,
+    PORT_CLOCKED,
     PORT_ECHOES,
     PORT_GROUPS,
     PUSH_ROUTES,
@@ -169,20 +171,17 @@ def _get_screensaver(
 
 
 def _screensaver_read(
-    request: ParameterDict, state: Mapping[str, Value]
+    request: ParameterDict,  # noqa: ARG001  # the reply reads no request field
+    state: Mapping[str, Value],
 ) -> ParameterDict:
-    """``4a02``: the byte ``4205`` writes (0x08008ba4), then the clock.
-
-    The device writes its own clock; the request's stands in for it.
-    """
+    """``4a02``: the byte ``4205`` writes (0x08008ba4), then the unit's clock."""
     packed = ClockTheme.build(
         {
             "screen_saver_switch": state["screen_saver_switch"],
             "screen_saver_theme": state["screen_saver_theme"],
         }
     )
-    clock = {"fe": request["fe"]} if "fe" in request else {}
-    return ParameterDict({"a2": container("a2", TYPE_UI, packed)} | clock)
+    return ParameterDict({"a2": container("a2", TYPE_UI, packed)} | clock_field(state))
 
 
 def _set_screensaver(request: ParameterDict) -> dict[str, Value] | None:
@@ -264,6 +263,7 @@ class A91B2Layout(TableLayout):
         }
     )
     ECHOES = MappingProxyType(PORT_ECHOES)
+    CLOCKED = PORT_CLOCKED
     LEADING = MappingProxyType(TIMED_TASK_LEADS)
     READ_REPLIES = MappingProxyType({0x202: _screensaver_read})
     SIDE_EFFECTS = MappingProxyType(
