@@ -366,17 +366,26 @@ def test_the_dc_input_source_reads_the_car_socket_until_set() -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "low", "high"),
+    ("values", "low", "high"),
     [
-        pytest.param(0, 0.0, 0.0, id="no-input"),
-        pytest.param(1, 0.9, 1.0, id="car-socket"),
+        pytest.param({"pv1_charge_status": 0}, 0.0, 0.0, id="no-input"),
+        pytest.param({"pv1_charge_status": 1}, 0.9, 1.0, id="car-socket"),
+        pytest.param(
+            {"pv1_charge_status": 1, DC_INPUT_SOURCE: DcInputSource.SOLAR},
+            0.3,
+            0.6,
+            id="solar",
+        ),
     ],
 )
 def test_pv1_draws_as_often_as_its_status_recorded_it(
-    status: int, low: float, high: float
+    values: dict[str, int], low: float, high: float
 ) -> None:
-    """Status 1 drew power in 2 253 of 2 299 recorded frames, whatever else ran."""
-    device, clock, client = a1783_real(18, pv1_charge_status=status)
+    """Plugged in, the car socket drew power in 2 236 of the 2 282 frames kept.
+
+    The solar panels drew power in 433 of 1 002 Pennsic posts.
+    """
+    device, clock, client = a1783_real(18, **values)
 
     frames = run(device, client, clock, MIXED)
 

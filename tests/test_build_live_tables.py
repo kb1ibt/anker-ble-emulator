@@ -29,6 +29,15 @@ from tools.build_live_tables import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+#: The DC input's group as the frame survey writes it.
+PV1 = {
+    "name": "pv1",
+    "fields": ["pv1_charge_status", "pv1_input_power"],
+    "live": ["pv1_input_power"],
+    "idle": [0],
+    "samples": [[[1, 125], 7]],
+}
+
 
 def test_a_table_keeps_the_groups_active_sets_and_held_totals() -> None:
     built = table(SURVEY)
@@ -206,17 +215,10 @@ def test_pv1_samples_take_the_dc_source_of_the_era_their_days_fall_in() -> None:
     survey = copy.deepcopy(SURVEY)
     part = survey["sections"][0]
     part["groups"].append(
-        {
-            "name": "pv1",
-            "fields": ["pv1_charge_status", "pv1_input_power"],
-            "live": ["pv1_input_power"],
-            "idle": [0],
-            "samples": [[[0, 0], 90], [[1, 125], 7], [[1, 0], 2]],
-            "dropped": 1,
-        }
+        {**PV1, "samples": [[[0, 0], 90], [[1, 125], 7], [[1, 0], 2]], "dropped": 1}
     )
     part["active_sets"].append([["usbc", "pv1"], 2])
-    part["a8_by_day"] = [
+    part["a8_by_day_local"] = [
         ["2026-07-21", 0, 0, 40],
         ["2026-08-13", 0, 0, 50],
         ["2026-08-13", 1, 125, 7],
@@ -257,19 +259,66 @@ def test_pv1_samples_the_builder_cant_date_are_refused(
 ) -> None:
     survey = copy.deepcopy(SURVEY)
     part = survey["sections"][0]
-    part["groups"].append(
-        {
-            "name": "pv1",
-            "fields": ["pv1_charge_status", "pv1_input_power"],
-            "live": ["pv1_input_power"],
-            "idle": [0],
-            "samples": [[[1, 125], 7]],
-        }
-    )
+    part["groups"].append(copy.deepcopy(PV1))
     if by_day is not None:
-        part["a8_by_day"] = by_day
+        part["a8_by_day_local"] = by_day
 
     with pytest.raises(SurveyError, match=error):
+        table(survey)
+
+
+def test_solar_samples_come_from_the_0005_posts_of_days_the_panels_were_in() -> None:
+    """A post weighs 540 s, status 1 at 0 W too (night with the panels in).
+
+    A day the frames cover keeps the frames; a day with no post above 0 W had
+    nothing plugged in (the device's status-0 frames that week), so no samples.
+    """
+    survey = copy.deepcopy(SURVEY)
+    part = survey["sections"][0]
+    part["groups"].append(copy.deepcopy(PV1))
+    part["a8_by_day_local"] = [["2026-08-13", 1, 125, 7]]
+    survey["sections"].append(
+        {
+            "msgtype": "490",
+            "schema": "_0005",
+            "frames": 18,
+            "dc_in_by_day_local": [
+                ["2026-07-24", 0, 5],
+                ["2026-08-03", 0, 2],
+                ["2026-08-03", 120, 1],
+                ["2026-08-04", 0, 1],
+                ["2026-08-04", 120, 2],
+                ["2026-08-13", 125, 4],
+                ["2026-08-20", 0, 3],
+            ],
+        }
+    )
+
+    pv1 = table(survey)["sections"][0]["groups"][-1]
+
+    assert pv1["samples"] == [
+        [[1, 125, DcInputSource.CAR_SOCKET], 14],
+        [[1, 0, DcInputSource.SOLAR], 3 * 540],
+        [[1, 120, DcInputSource.SOLAR], 3 * 540],
+    ]
+
+
+def test_a_0005_post_on_a_car_socket_day_the_frames_dont_cover_is_refused() -> None:
+    survey = copy.deepcopy(SURVEY)
+    part = survey["sections"][0]
+    part["groups"].append(copy.deepcopy(PV1))
+    part["a8_by_day_local"] = [["2026-08-13", 1, 125, 7]]
+    survey["sections"].append(
+        {
+            "msgtype": "490",
+            "schema": "_0005",
+            "dc_in_by_day_local": [["2026-08-20", 126, 2]],
+        }
+    )
+
+    with pytest.raises(
+        SurveyError, match="pv1: _0005 posts on 2026-08-20, a car-socket day"
+    ):
         table(survey)
 
 

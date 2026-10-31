@@ -54,6 +54,11 @@ DC_POWER = "pv1_input_power"
 CAR_SOCKET_FROM = "2026-08-08"
 #: Seconds a ``0421``/``0900`` frame stands for: the collector's poll.
 FRAME_SECONDS = 2
+#: The ``0490`` schema whose ``.23.5`` posts (the DC input's register, as
+#: ``a8``) give the solar samples, and the seconds a post stands for: the push
+#: interval, longer gaps being missing posts.
+DC_POSTS_SCHEMA = "_0005"
+POST_SECONDS = 540
 #: Groups that draw on their own, from their samples given their match keys
 #: (an input plugged in or not), not from the section's active sets.
 INDEPENDENT = frozenset({DC_INPUT_GROUP})
@@ -230,12 +235,12 @@ def _with_wildcards(group: dict[str, Any]) -> dict[str, Any]:
 
 
 def _with_dc_source(
-    group: dict[str, Any], by_day: list[list[Any]] | None
+    group: dict[str, Any], by_day: list[list[Any]] | None, posts: list[list[Any]]
 ) -> dict[str, Any]:
     """Return the DC input's group matching on its source, a frame ``FRAME_SECONDS``.
 
     A plugged-in sample (status 1) takes the source of the era its days fall
-    in; one with nothing plugged in matches either.
+    in; one with nothing plugged in matches either. The solar posts join it.
 
     Raises:
         SurveyError: If there are no days, or a plugged-in sample has none or
@@ -268,7 +273,45 @@ def _with_dc_source(
                 DcInputSource.CAR_SOCKET if eras.pop() else DcInputSource.SOLAR
             )
         samples.append([[*sample, source], count * FRAME_SECONDS])
-    return {**group, "match": [*group["match"], DC_INPUT_SOURCE], "samples": samples}
+    frame_days = {row[0] for row in by_day}
+    samples += _solar_posts(group, posts, frame_days)
+    return {
+        **group,
+        "match": [*group["match"], DC_INPUT_SOURCE],
+        "samples": _merged(samples),
+    }
+
+
+def _solar_posts(
+    group: dict[str, Any], posts: list[list[Any]], frame_days: set[str]
+) -> list[list[Any]]:
+    """Return the DC input's solar samples from the posts, each ``POST_SECONDS``.
+
+    A day the frames cover keeps the frames. A day with no post above 0 W had
+    nothing plugged in (the device's own status-0 frames that July week), so
+    it gives none. Every other post is status 1, 0 W included: night with the
+    panels in, a modelling choice.
+
+    Raises:
+        SurveyError: If a day left falls in the car-socket era.
+
+    """
+    plugged = {day for day, power, _ in posts if power}
+    samples = []
+    for day, power, count in posts:
+        if day in frame_days or day not in plugged:
+            continue
+        if day >= CAR_SOCKET_FROM:
+            msg = f"{group['name']}: {DC_POSTS_SCHEMA} posts on {day}, a car-socket"
+            msg += " day the frames don't cover"
+            raise SurveyError(msg)
+        values = {DC_STATUS: 1, DC_POWER: power}
+        sample = [
+            *(values[field] for field in group["fields"]),
+            int(DcInputSource.SOLAR),
+        ]
+        samples.append([sample, count * POST_SECONDS])
+    return samples
 
 
 def _with_carried(group: dict[str, Any], carried: dict[str, Any]) -> dict[str, Any]:
@@ -302,6 +345,7 @@ def section(
     survey: dict[str, Any],
     carried: dict[str, dict[str, Any]] | None = None,
     derived: frozenset[str] = frozenset(),
+    posts: list[list[Any]] | None = None,
 ) -> dict[str, Any] | None:
     """Return a survey section's table; None if it carries nothing live.
 
@@ -309,6 +353,7 @@ def section(
         survey: The survey's section.
         carried: Match keys to add to a group of each name that has none.
         derived: Fields the layout derives: their slow entries are left out.
+        posts: The DC input's posts by day, ``[day, W, posts]``.
 
     """
     groups = [
@@ -323,7 +368,7 @@ def section(
         if not any(identifies(f) for f in (*group["fields"], *group.get("match", [])))
     ]
     groups = [
-        _with_dc_source(group, survey.get("a8_by_day"))
+        _with_dc_source(group, survey.get("a8_by_day_local"), posts or [])
         if group["name"] == DC_INPUT_GROUP
         else group
         for group in groups
@@ -392,6 +437,12 @@ def table(survey: dict[str, Any]) -> dict[str, Any]:
     """
     device = survey["device"]
     derived = derived_by(device)
+    posts = [
+        row
+        for part in survey["sections"]
+        if part.get("schema") == DC_POSTS_SCHEMA
+        for row in part.get("dc_in_by_day_local", [])
+    ]
     left = [part for part in survey["sections"] if not _source(part)]
     if left:
         labels = [
@@ -411,7 +462,7 @@ def table(survey: dict[str, Any]) -> dict[str, Any]:
     if skipped:
         sys.stderr.write(f"{device}: skipped the derived slow fields {skipped}\n")
     carried = carried_matches(survey)
-    sections = [section(part, carried, derived) for part in survey["sections"]]
+    sections = [section(part, carried, derived, posts) for part in survey["sections"]]
     built = {
         "device": device,
         "sections": [part for part in sections if part is not None],
