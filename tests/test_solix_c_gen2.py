@@ -2195,7 +2195,7 @@ def test_a6_carries_the_shared_power_names() -> None:
 
     device.set_values(
         ac_input_disable_switch=0,
-        total_output_power=88,
+        pd2_output_power=88,
         ac_input_power=1211,
         pv1_input_power=79,
         remaining_time=3,
@@ -2265,8 +2265,8 @@ def test_battery_only_on_and_off_replays_the_2026_10_06_frames() -> None:
 @pytest.mark.parametrize(
     ("values", "expected"),
     [
-        pytest.param({"total_output_power": 26}, (0, 0, 0, 1), id="ac-only-output-on"),
-        pytest.param({"total_output_power": 0}, (0, 0, 0, 0), id="ac-only-no-output"),
+        pytest.param({"pd2_output_power": 26}, (0, 0, 0, 1), id="ac-only-output-on"),
+        pytest.param({"pd2_output_power": 0}, (0, 0, 0, 0), id="ac-only-no-output"),
         pytest.param(
             {
                 "pv1_input_power": 80,
@@ -2294,7 +2294,7 @@ async def test_a_held_peak_shows_no_charging_only_ac_could_cause(
         **{
             **TOU_UNIT,
             "pv1_input_power": 0,
-            "total_output_power": 0,
+            "pd2_output_power": 0,
             **values,
         }
     )
@@ -2453,7 +2453,10 @@ def test_only_a_port_with_a_device_plugged_reattaches() -> None:
 
 
 def test_the_edge_calls_own_port_power_wins() -> None:
-    """Set beside the edge, a port's power stands; the re-attach still sets ``[0]``."""
+    """Set beside the edge, a port's power stands; the re-attach still sets ``[0]``.
+
+    The output total moves by the 40 W set, not the device's 86 W.
+    """
     clock = ManualClock()
     device = A1783(clock=clock)
 
@@ -2463,7 +2466,7 @@ def test_the_edge_calls_own_port_power_wins() -> None:
     values = device.negotiated_module.values
 
     assert (values["pd1_output_status"], values["pd1_output_power"]) == (1, 40)
-    assert "total_output_power" not in values
+    assert values["total_output_power"] == 40
 
 
 def test_a_port_detached_again_before_its_power_draws_nothing() -> None:
@@ -3440,8 +3443,8 @@ def test_a_405e_without_its_group_selector_changes_nothing(
 #: The port powers that make each port flow, from idle or output on.
 FLOW_POWERS: dict[int, dict[str, Value]] = {
     2: {"pv1_input_power": 100},
-    1: {"total_output_power": 60},
-    0: {"total_output_power": 0},
+    1: {"pd2_output_power": 60},
+    0: {"pd2_output_power": 0},
 }
 
 
@@ -3468,7 +3471,7 @@ def test_a3_follows_a5_after_its_20_samples(flow: int, work: int) -> None:
         pack_on_bus=1,
         pack_soc=800,
         discharge_latch_from=800,
-        total_output_power=60 * start,
+        pd2_output_power=60 * start,
     )
     clock.advance(5)
     device.negotiated_module.check_pushes()
@@ -3527,7 +3530,7 @@ def test_battery_only_on_leaves_a3_charging_for_its_lag() -> None:
             "ac_input_status": 1,
             "ac_input_power": 1210,
             "battery_level": 64,
-            "total_output_power": 0,
+            "pd2_output_power": 0,
         }
     )
     clock.advance(2)  # the main's charge past its 20 samples: a3[0] 2
@@ -3631,7 +3634,7 @@ def test_the_main_at_its_cap_hands_the_charge_over_replays_2026_10_06() -> None:
             id="expansion-at-its-cap",
         ),
         pytest.param(
-            {"ac_input_status": 0, "ac_input_power": 0, "total_output_power": 60},
+            {"ac_input_status": 0, "ac_input_power": 0, "pd2_output_power": 60},
             id="main-not-charging",
         ),
     ],
@@ -3660,7 +3663,7 @@ EXPANSION_DISCHARGING = {
     "battery_level": 96,
     "pack_soc": 960,
     "discharge_limit_value": 5,
-    "total_output_power": 92,
+    "pd2_output_power": 92,
     "sub_package_connection_status": 1,
     "sub_package_battery_level": 6,
     "sub_package_pack_soc": 60,
@@ -3723,7 +3726,7 @@ FLOOR_LEVER = {
     "discharge_limit_value": 5,
     "battery_level": 100,
     "pack_soc": 1000,
-    "total_output_power": 0,
+    "pd2_output_power": 0,
     "sub_package_connection_status": 1,
     "sub_package_battery_level": 56,
     "sub_package_pack_soc": 560,
@@ -3765,7 +3768,7 @@ def test_lowering_min_soc_waits_for_a_1_percent_drop() -> None:
 
     device.set_values(discharge_limit_value=5)
     kept = tuple(next_0490(device)[name] for name in SLOTS)
-    device.set_values(total_output_power=60, pack_soc=991)
+    device.set_values(pd2_output_power=60, pack_soc=991)
     still = tuple(next_0490(device)[name] for name in SLOTS)
     device.set_values(pack_soc=990)
     values = next_0421(device)[0]
@@ -3783,7 +3786,7 @@ def test_a_new_holder_keeps_the_bus_for_its_dwell() -> None:
     device.set_values(discharge_limit_value=60)
     clock.advance(10)
     device.negotiated_module.check_pushes()
-    device.set_values(discharge_limit_value=5, total_output_power=60)
+    device.set_values(discharge_limit_value=5, pd2_output_power=60)
     device.set_values(pack_soc=990)
 
     device.set_values(discharge_limit_value=60)
@@ -3817,7 +3820,7 @@ def test_the_switch_gap_finds_the_expansion_at_its_floor() -> None:
     device = A1783(clock=clock)
     device.set_values(**FLOOR_LEVER)
     device.set_values(discharge_limit_value=60)
-    device.set_values(discharge_limit_value=5, total_output_power=60)
+    device.set_values(discharge_limit_value=5, pd2_output_power=60)
 
     device.set_values(pack_soc=990)
     device.set_values(sub_package_pack_soc=50)
@@ -3838,7 +3841,7 @@ def test_an_expansion_back_above_its_line_within_its_dwell_keeps_the_bus() -> No
 
     device.set_values(
         ac_input_power=0,
-        total_output_power=60,
+        pd2_output_power=60,
         sub_package_pack_soc=58,
         pack_soc=940,
     )
@@ -3902,7 +3905,7 @@ def test_an_expansion_put_on_the_bus_under_its_line_hands_it_back() -> None:
     device = A1783(clock=ManualClock())
     device.set_values(**{**CHARGING_MAIN, "discharge_limit_value": 5})
 
-    device.set_values(pack_on_bus=2, ac_input_power=0, total_output_power=60)
+    device.set_values(pack_on_bus=2, ac_input_power=0, pd2_output_power=60)
 
     assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
 
@@ -3915,7 +3918,7 @@ def test_a_charge_retakes_the_discharge_latch_baseline() -> None:
     device.set_values(discharge_limit_value=60)
     clock.advance(5)
     device.negotiated_module.check_pushes()
-    device.set_values(discharge_limit_value=5, total_output_power=60)
+    device.set_values(discharge_limit_value=5, pd2_output_power=60)
 
     device.set_values(pack_soc=805, pv1_input_power=100)
     device.set_values(pv1_input_power=0)
@@ -3935,7 +3938,7 @@ def test_a_rise_without_charging_keeps_the_discharge_latch_baseline() -> None:
     device.set_values(discharge_limit_value=60)
     clock.advance(5)
     device.negotiated_module.check_pushes()
-    device.set_values(discharge_limit_value=5, total_output_power=60)
+    device.set_values(discharge_limit_value=5, pd2_output_power=60)
 
     device.set_values(pack_soc=805)
     device.set_values(pack_soc=791)
@@ -3954,7 +3957,7 @@ def test_a_latch_set_over_the_band_hands_over_once_the_expansion_leaves_it() -> 
     device.set_values(discharge_limit_value=60)
     clock.advance(10)
     device.negotiated_module.check_pushes()
-    device.set_values(discharge_limit_value=5, total_output_power=60)
+    device.set_values(discharge_limit_value=5, pd2_output_power=60)
     device.set_values(sub_package_pack_soc=55)
 
     device.set_values(pack_soc=990)
@@ -3973,7 +3976,7 @@ def test_the_charge_cap_latch_clears_the_discharge_latch() -> None:
     device.set_values(discharge_limit_value=60)
     clock.advance(10)
     device.negotiated_module.check_pushes()
-    device.set_values(discharge_limit_value=5, total_output_power=60)
+    device.set_values(discharge_limit_value=5, pd2_output_power=60)
     device.set_values(sub_package_pack_soc=55)
     device.set_values(pack_soc=990)
 
@@ -3998,7 +4001,7 @@ def test_the_expansion_path_hold_blocks_the_discharge_handover() -> None:
     device.set_values(discharge_limit_value=60)
     clock.advance(5)
     device.negotiated_module.check_pushes()
-    device.set_values(discharge_limit_value=5, total_output_power=60)
+    device.set_values(discharge_limit_value=5, pd2_output_power=60)
     device.set_values(sub_package_path_hold=1)
 
     device.set_values(pack_soc=790)
@@ -4032,7 +4035,7 @@ def test_the_expansion_path_hold_blocks_the_charge_handover() -> None:
 @pytest.mark.parametrize(
     "values",
     [
-        pytest.param({"ac_input_power": 0, "total_output_power": 60}, id="discharge"),
+        pytest.param({"ac_input_power": 0, "pd2_output_power": 60}, id="discharge"),
         pytest.param(
             {"ac_input_status": 0, "ac_input_power": 0}, id="charge-source-gone"
         ),
@@ -4437,7 +4440,7 @@ TOPPED_OFF = {
     "battery_level": 95,
     "charging_limit_value": 95,
     "pack_soc": 950,
-    "total_output_power": 6,
+    "pd2_output_power": 6,
     "sub_package_battery_level": 95,
     "discharge_latch_from": 950,
 }
@@ -4611,7 +4614,7 @@ AT_THE_FLOOR = {
     "discharge_limit_value": 5,
     "charging_limit_value": 95,
     "pack_soc": 60,
-    "total_output_power": 60,
+    "pd2_output_power": 60,
     "discharge_latch_from": 60,
 }
 
@@ -4728,7 +4731,6 @@ def test_a_battery_level_set_alone_sets_its_pack_soc() -> None:
         pytest.param("sub_package_status", False, id="c0[24]"),
         pytest.param("work_status", False, id="a3[0]"),
         pytest.param("on_bus_pack_status", True, id=".23.7"),
-        pytest.param("total_input_power", True, id=".23.4"),
     ],
 )
 def test_a_flow_state_set_by_name_stands(name: str, *, in_0490: bool) -> None:
@@ -4785,7 +4787,7 @@ def test_a3_set_beside_a_pack_current_change_skips_its_follow() -> None:
     clock.advance(5)
     device.negotiated_module.check_pushes()
 
-    device.set_values(total_output_power=60, work_status=0)
+    device.set_values(pd2_output_power=60, work_status=0)
     clock.advance(2)
     device.negotiated_module.check_pushes()
 
@@ -4813,7 +4815,7 @@ def test_a_status_set_while_its_follow_waits_stays(
     clock.advance(5)
     device.negotiated_module.check_pushes()
 
-    device.set_values(total_output_power=60)
+    device.set_values(pd2_output_power=60)
     clock.advance(1)
     device.negotiated_module.check_pushes()
     device.set_values(**names)
@@ -4830,7 +4832,7 @@ def test_the_next_status_move_ends_a_status_set_by_name() -> None:
     device.set_values(**MAIN_BELOW_CAPS)
     clock.advance(5)
     device.negotiated_module.check_pushes()
-    device.set_values(total_output_power=60)
+    device.set_values(pd2_output_power=60)
     clock.advance(1)
     device.negotiated_module.check_pushes()
     device.set_values(work_status=2)
@@ -4838,7 +4840,7 @@ def test_the_next_status_move_ends_a_status_set_by_name() -> None:
     device.negotiated_module.check_pushes()
     held = next_0421(device)[0]["work_status"]
 
-    device.set_values(total_output_power=0)
+    device.set_values(pd2_output_power=0)
     clock.advance(2)
     device.negotiated_module.check_pushes()
 
@@ -4865,10 +4867,10 @@ ON_BUS = "on_bus_pack_status"
 #: (bus holder, values) -> (``a3[0]``, ``.23.7``) once 20 samples have passed.
 PACK_STATUS_CASES = [
     pytest.param(1, {"pv1_input_power": 100}, (2, 2), id="main-charging"),
-    pytest.param(1, {"total_output_power": 60}, (1, 1), id="main-discharging"),
+    pytest.param(1, {"pd2_output_power": 60}, (1, 1), id="main-discharging"),
     pytest.param(1, {"pack_current": 500}, (0, 0), id="main-charging-no-source"),
     pytest.param(1, {"pack_current": 29}, (0, 0), id="main-under-0.3-a"),
-    pytest.param(2, {"total_output_power": 60}, (0, 1), id="expansion-discharging"),
+    pytest.param(2, {"pd2_output_power": 60}, (0, 1), id="expansion-discharging"),
     pytest.param(2, {"pv1_input_power": 100}, (0, 0), id="expansion-charging"),
 ]
 
@@ -4948,7 +4950,7 @@ def test_the_port_flow_shows_on_the_bus_holder(
     device = A1783(clock=ManualClock())
     device.set_values(pack_on_bus=bus, ac_input_disable_switch=0, ac_input_status=1)
 
-    device.set_values(pv1_input_power=pv, ac_input_power=ac, total_output_power=out)
+    device.set_values(pv1_input_power=pv, ac_input_power=ac, pd2_output_power=out)
     values = next_0421(device)[0]
 
     assert (values["charge_discharge_status"], values["sub_package_status"]) == flows
@@ -4957,7 +4959,7 @@ def test_the_port_flow_shows_on_the_bus_holder(
 def test_the_port_flow_moves_with_the_bus() -> None:
     """The holder changing moves the code from ``c0[24]`` to ``a5[1]``."""
     device = A1783(clock=ManualClock())
-    device.set_values(pack_on_bus=2, total_output_power=60)
+    device.set_values(pack_on_bus=2, pd2_output_power=60)
 
     device.set_values(pack_on_bus=1)
     values = next_0421(device)[0]
@@ -4969,7 +4971,7 @@ def test_with_no_expansion_the_main_shows_the_port_flow() -> None:
     """The C1000 Gen 2 has no ``c0``: ``a5[1]`` always carries the code."""
     device = A1763(clock=ManualClock())
 
-    device.set_values(pv1_input_power=100, total_output_power=60)
+    device.set_values(pv1_input_power=100, pd2_output_power=60)
 
     assert next_0421(device)[0]["charge_discharge_status"] == 2
 
@@ -5008,7 +5010,7 @@ def test_a_port_flow_change_re_derives_the_pack_current() -> None:
     currents = []
     for values in (
         {"pv1_input_power": 100},
-        {"total_output_power": 200},
+        {"ac_output_power": 200},
         {"pack_on_bus": 2},
     ):
         device.set_values(**values)
@@ -5224,12 +5226,453 @@ def test_the_ac_charge_runs_10_w_over_its_request(
     assert next_0421(device)[0]["ac_input_power"] == power
 
 
+def test_solar_beside_a_full_ac_charge_adds_to_the_input_total() -> None:
+    """The 1800 W ``maxInputPower`` bounds only the AC request; DC adds on top.
+
+    At the 1200 W limit: 1210 W AC, then 630 W solar leaves the AC charge and
+    totals 1840 W (rated AC 1800 W, solar 800 W, AC + solar 2600 W).
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(
+        **{
+            **KASA_UNIT,
+            "outage_alert_switch": False,
+            "ac_recharge_power": 1200,
+            "dc_input_source": solix_c_gen2.DcInputSource.SOLAR,
+        }
+    )
+    module = device.negotiated_module
+    device.set_values(ac_input_status=0)
+    clock.advance(1)
+    module.check_pushes()
+    device.set_values(ac_input_status=1)
+    clock.advance(16)
+    module.check_pushes()
+    before = next_0421(device)[0]["ac_input_power"]
+
+    device.set_values(pv1_input_power=630)
+    clock.advance(2)
+    module.check_pushes()
+    status = next_0421(device)[0]
+
+    assert before == 1210
+    assert (status["ac_input_power"], status["pv1_input_power"]) == (1210, 630)
+    assert next_0490(device)["total_input_power"] == 1840
+
+
+#: Mains in, Battery-Only Power off, a full AC charge at the 1200 W limit.
+FULL_CHARGE_1200 = {
+    "ac_input_disable_switch": 0,
+    "ac_input_status": 1,
+    "ac_recharge_power": 1200,
+    "ac_input_power": 1210,
+}
+SOLAR = solix_c_gen2.DcInputSource.SOLAR
+
+
+#: The 1300 W limit with solar on the DC input.
+SOLAR_AT_1300 = {"ac_recharge_power": 1300, "dc_input_source": SOLAR}
+#: Ultrafast Charge on, which skips the limit, with solar on the DC input.
+ULTRAFAST_SOLAR = {"super_fast_charge_status": 1, "dc_input_source": SOLAR}
+
+
+@pytest.mark.parametrize(
+    ("unit", "change", "split"),
+    [
+        pytest.param(
+            SOLAR_AT_1300, {"total_input_power": 1950}, (1310, 640), id="1950-at-1300"
+        ),
+        pytest.param(
+            {"dc_input_source": SOLAR},
+            {"total_input_power": 2010},
+            (1210, 800),
+            id="dc-at-800",
+        ),
+        pytest.param(
+            ULTRAFAST_SOLAR,
+            {"total_input_power": 2150},
+            (1643, 507),
+            id="2150-at-1200-ultrafast",
+        ),
+        pytest.param(
+            {"tou_setting_system_status": 1, "dc_input_source": SOLAR},
+            {"total_input_power": 2150},
+            (1643, 507),
+            id="2150-at-1200-plan-window",
+        ),
+        pytest.param({}, {"total_input_power": 500}, (500, 0), id="under-the-charge"),
+        pytest.param(
+            {"ac_input_status": 0},
+            {"total_input_power": 130},
+            (0, 130),
+            id="car-socket-130",
+        ),
+        pytest.param(
+            {},
+            {"ac_input_power": 0, "pv1_input_power": 400},
+            (0, 400),
+            id="car-socket-400-by-name",
+        ),
+        pytest.param(
+            {"ac_input_disable_switch": 1},
+            {"total_input_power": 129},
+            (0, 129),
+            id="battery-only",
+        ),
+        pytest.param(
+            SOLAR_AT_1300,
+            {"total_input_power": 1950, "ac_input_power": 1312},
+            (1312, 638),
+            id="total-and-ac",
+        ),
+        pytest.param(
+            SOLAR_AT_1300,
+            {"total_input_power": 1950, "pv1_input_power": 638},
+            (1312, 638),
+            id="total-and-dc",
+        ),
+        pytest.param(
+            SOLAR_AT_1300,
+            {"ac_input_power": 1312, "pv1_input_power": 638},
+            (1312, 638),
+            id="ac-and-dc",
+        ),
+        pytest.param(
+            {},
+            {"ac_input_power": 1833, "pv1_input_power": 0},
+            (1833, 0),
+            id="ac-at-1800-plus-33",
+        ),
+        pytest.param(
+            {"max_input_power": 2300},
+            {"ac_input_power": 2333, "pv1_input_power": 0},
+            (2333, 0),
+            id="ac-at-2300-plus-33",
+        ),
+    ],
+)
+def test_a_total_fills_its_inputs_inside_the_ratings(
+    unit: dict[str, Value], change: dict[str, Value], split: tuple[int, int]
+) -> None:
+    """``.23.4`` alone: AC in takes what the charge request allows, DC in the rest.
+
+    1950 W at the 1300 W limit: 1310 W AC, 640 W solar; DC at exactly 800 W
+    (the XT-60i's rating); no mains or Battery-Only on, all of it DC; the car
+    socket shares the XT-60i, so 130 W and 400 W from it set. Ultrafast or a
+    Fast Charging Plan window skips the limit: 2150 W at 1200 W reads the
+    1643 W band and 507 W solar. Given with one input, the other is the rest:
+    1312 W AC (inside the recorded overshoot) and 638 W solar. AC in reaches
+    ``maxInputPower`` + 33 W.
+    """
+    device = A1783(clock=ManualClock())
+    device.set_values(**{**KASA_UNIT, **FULL_CHARGE_1200, **unit})
+
+    device.set_values(**change)
+    status = next_0421(device)[0]
+
+    assert (status["ac_input_power"], status["pv1_input_power"]) == split
+    assert next_0490(device)["total_input_power"] == sum(split)
+
+
+#: The refusal of a DC input over the XT-60i's rating.
+DC_OVER = "the DC input takes at most 800 W"
+
+
+@pytest.mark.parametrize(
+    ("unit", "change", "match"),
+    [
+        pytest.param(
+            {"dc_input_source": SOLAR},
+            {"total_input_power": 2150},
+            DC_OVER,
+            id="2150-at-1200",
+        ),
+        pytest.param(
+            {"dc_input_source": SOLAR},
+            {"total_input_power": 2011},
+            DC_OVER,
+            id="dc-at-801",
+        ),
+        pytest.param(
+            ULTRAFAST_SOLAR,
+            {"total_input_power": 2444},
+            DC_OVER,
+            id="ultrafast-dc-at-801",
+        ),
+        pytest.param(
+            {"ac_input_status": 0},
+            {"total_input_power": 801},
+            DC_OVER,
+            id="car-socket-total-801",
+        ),
+        pytest.param({}, {"pv1_input_power": 801}, DC_OVER, id="car-socket-801"),
+        pytest.param(
+            {"dc_input_source": SOLAR},
+            {"pv1_input_power": 801},
+            DC_OVER,
+            id="solar-801",
+        ),
+        pytest.param(
+            {},
+            {"total_input_power": 100, "ac_input_power": 500},
+            "the inputs can't sum to 100 W",
+            id="total-under-its-input",
+        ),
+        pytest.param(
+            {},
+            {"ac_input_power": 1834},
+            "AC in reads at most 1833 W on a 1800 W unit",
+            id="ac-over-1800-plus-33",
+        ),
+        pytest.param(
+            {"max_input_power": 2300},
+            {"ac_input_power": 2334},
+            "AC in reads at most 2333 W on a 2300 W unit",
+            id="ac-over-2300-plus-33",
+        ),
+        pytest.param(
+            {"max_input_power": 2300, "ac_input_power": 2000},
+            {"max_input_power": 1800},
+            "AC in reads at most 1833 W on a 1800 W unit",
+            id="ceiling-under-the-ac-in",
+        ),
+        pytest.param(
+            {},
+            {"max_input_power": 2000},
+            "maxInputPower reads 1500, 1800, 2300 W, not 2000 W",
+            id="max-input-2000",
+        ),
+        pytest.param(
+            {},
+            {"ac_output_power": 4001},
+            "AC out reads at most 4000 W, not 4001 W",
+            id="ac-out-4001",
+        ),
+        pytest.param(
+            {},
+            {"total_output_power": 60},
+            "the output total is the ports' 0 W, not 60 W",
+            id="lone-output-total",
+        ),
+        pytest.param(
+            {},
+            {"pd2_output_power": 30, "total_output_power": 40},
+            "the output total is the ports' 30 W, not 40 W",
+            id="output-total-off-its-ports",
+        ),
+    ],
+)
+def test_inputs_no_unit_could_carry_are_refused_and_set_nothing(
+    unit: dict[str, Value], change: dict[str, Value], match: str
+) -> None:
+    """The DC input takes 800 W, the XT-60i's rating, from any source.
+
+    2150 W at the 1200 W limit leaves 940 W of DC: refused, nothing set. A
+    total under the input given with it is refused too, as is AC in over
+    ``maxInputPower`` + 33 W, a ``maxInputPower`` no unit reports, and AC out
+    over its 4000 W peak.
+    """
+    device = A1783(clock=ManualClock())
+    device.set_values(**{**KASA_UNIT, **FULL_CHARGE_1200, **unit})
+    before = (next_0421(device)[0], next_0490(device))
+
+    with pytest.raises(TypeError, match=match):
+        device.set_values(**change)
+
+    assert (next_0421(device)[0], next_0490(device)) == before
+
+
+@pytest.mark.parametrize(
+    "out", [pytest.param(3815, id="overload-trip"), pytest.param(4000, id="peak")]
+)
+def test_ac_out_reads_up_to_its_peak_rating(out: int) -> None:
+    """2400 W continuous, 4000 W peak: the 3815 W overload trip is a state it shows."""
+    device = A1783(clock=ManualClock())
+
+    device.set_values(ac_output_power=out)
+
+    assert next_0421(device)[0]["ac_output_power"] == out
+
+
+def test_outlets_over_the_inlet_discharge_the_on_bus_pack() -> None:
+    """The inlet (1800 W) and the inverter (4000 W peak) are separate ratings.
+
+    With mains and a full charge at the 1200 W limit, 1900 W and then 4000 W
+    out hold AC in at 1833 W; the main pack on the bus discharges the rest.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**KASA_UNIT, **FULL_CHARGE_1200})
+    flows: list[tuple[Value, ...]] = []
+    currents: list[int] = []
+
+    for out in (1900, 4000):
+        device.set_values(ac_output_power=out, total_output_power=out)
+        clock.advance(3)
+        device.negotiated_module.check_pushes()
+        status, post = next_0421(device)[0], next_0490(device)
+        flows.append(
+            (
+                status["ac_input_power"],
+                status["charge_discharge_status"],
+                status["work_status"],
+                post["on_bus_pack_status"],
+                post["total_input_power"],
+            )
+        )
+        currents.append(int(post["pack_current"]))
+
+    assert flows == [(1833, 1, 1, 1, 1833)] * 2
+    assert currents[1] < currents[0] < 0
+
+
+def test_ac_out_alone_moves_the_output_total_and_draws_the_pack() -> None:
+    """``a6[0:2]`` is the port outputs' sum: AC out 4000 W alone moves it.
+
+    The other ports keep their power, so the total is 4000 W plus theirs, and
+    over the 1833 W AC in the main pack discharges.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**KASA_UNIT, **FULL_CHARGE_1200, "pd1_output_power": 77})
+    start = next_0421(device)[0]
+    others = sum(
+        int(start[name])
+        for name in solix_c_gen2.OUTPUT_POWERS
+        if name in start and name != "ac_output_power"
+    )
+
+    device.set_values(ac_output_power=4000)
+    clock.advance(3)
+    device.negotiated_module.check_pushes()
+    status, post = next_0421(device)[0], next_0490(device)
+
+    assert others >= 77
+    assert status["total_output_power"] == 4000 + others
+    assert post["total_output_power"] == 4000 + others
+    assert (status["work_status"], post["on_bus_pack_status"]) == (1, 1)
+    assert int(post["pack_current"]) < 0
+
+
+def test_a_usb_c_port_change_moves_the_output_total() -> None:
+    """``a6[0:2]`` follows each USB-C port: PD2 at 30 W, then off."""
+    device = A1783(clock=ManualClock())
+    before = int(next_0421(device)[0]["total_output_power"])
+
+    device.set_values(pd2_output_status=1, pd2_output_power=30)
+    on = next_0421(device)[0]["total_output_power"]
+    device.set_values(pd2_output_status=0, pd2_output_power=0)
+
+    assert on == before + 30
+    assert next_0421(device)[0]["total_output_power"] == before
+
+
+@pytest.mark.parametrize("out", [1834, 1900, 2400, 4000])
+def test_ac_out_never_leaves_ac_in_over_the_ceiling(out: int) -> None:
+    """The request move stops at the ceiling, so the AC in it leaves sets by name."""
+    device = A1783(clock=ManualClock())
+    device.set_values(**{**KASA_UNIT, **FULL_CHARGE_1200})
+
+    device.set_values(ac_output_power=out)
+    moved = next_0421(device)[0]["ac_input_power"]
+    device.set_values(ac_input_power=moved)
+
+    assert moved == 1833
+
+
+def test_an_output_total_given_with_its_ports_sets() -> None:
+    """``a6[0:2]`` set beside the ports it sums reads as set."""
+    device = A1783(clock=ManualClock())
+
+    device.set_values(pd2_output_power=30, total_output_power=30)
+
+    assert next_0421(device)[0]["total_output_power"] == 30
+
+
+#: Charge source 2's enable, hidden.
+SOURCE_2 = solix_c_gen2.CHARGE_SOURCE_2
+
+
+@pytest.mark.parametrize(
+    ("out", "source_2", "ac_in"),
+    [
+        pytest.param(1700, 0, 1810, id="1700-the-request-over-the-floor"),
+        pytest.param(1700, 1, 1810, id="1700-source-2"),
+        pytest.param(1750, 0, 1824, id="1750-the-floor"),
+        pytest.param(1750, 1, 1810, id="1750-source-2"),
+        pytest.param(1800, 0, 1833, id="1800-the-floor-at-the-cap"),
+        pytest.param(1800, 1, 1800, id="1800-source-2-no-charge"),
+        pytest.param(1900, 0, 1833, id="1900-the-floor"),
+        pytest.param(1900, 1, 1833, id="1900-source-2"),
+        pytest.param(4000, 0, 1833, id="4000-the-floor"),
+        pytest.param(4000, 1, 1833, id="4000-source-2"),
+    ],
+)
+def test_the_ac_charge_request_holds_to_its_floor(
+    out: int, source_2: int, ac_in: int
+) -> None:
+    """a1783-telemetry.md "AC charge request" step 1: never negative.
+
+    With charge source 2 able to charge the request is 0 once AC out reaches
+    the 1800 W ceiling; otherwise it holds to the floor, the pack's 53.5 V
+    rounded + 10 W = 64 W. The limit's +10 W and the 1833 W inlet cap follow.
+    """
+    device = A1783(clock=ManualClock())
+    device.set_values(**{**KASA_UNIT, **FULL_CHARGE_1200, SOURCE_2: source_2})
+
+    device.set_values(ac_output_power=out)
+
+    assert next_0421(device)[0]["ac_input_power"] == ac_in
+
+
+def test_the_floor_s_charge_reaches_the_pack() -> None:
+    """At 1750 W out the floor charges 74 W, source 2's request 60 W.
+
+    The net port flow over the main's 53.5 V: 138 and 112 (10 mA).
+    """
+    currents = []
+    for source_2 in (0, 1):
+        device = A1783(clock=ManualClock())
+        device.set_values(**{**KASA_UNIT, **FULL_CHARGE_1200, SOURCE_2: source_2})
+        device.set_values(ac_output_power=1750)
+        currents.append(next_0490(device)["pack_current"])
+
+    assert currents == [138, 112]
+
+
+def test_the_floor_reads_50_w_with_no_pack_voltage() -> None:
+    """``ac_charge_power_floor?``: 50 W while the pack voltage reads 0.
+
+    At 1770 W out: 50 W over the 30 W left to the ceiling, + 10 W.
+    """
+    device = A1783(clock=ManualClock())
+    device.set_values(**{**KASA_UNIT, **FULL_CHARGE_1200, "battery_voltage": 0})
+
+    device.set_values(ac_output_power=1770)
+
+    assert next_0421(device)[0]["ac_input_power"] == 1830
+
+
+def test_the_c1000_gen_2_dc_input_has_no_recorded_limit() -> None:
+    """Its input ratings aren't recorded: 2150 W at 1200 W leaves 940 W of DC."""
+    device = A1763(clock=ManualClock())
+    device.set_values(**{**FULL_CHARGE_1200, "dc_input_source": SOLAR})
+
+    device.set_values(total_input_power=2150)
+    status = next_0421(device)[0]
+
+    assert (status["ac_input_power"], status["pv1_input_power"]) == (1210, 940)
+
+
 @pytest.mark.parametrize(
     ("charging", "change", "moved"),
     [
         pytest.param(1210, {"ac_recharge_power": 1000}, 1010, id="limit"),
         pytest.param(1210, {"ac_output_power": 100}, 1310, id="ac-out"),
         pytest.param(1210, {"ac_output_power": 700}, 1810, id="ac-out-ceiling"),
+        pytest.param(1210, {"ac_output_power": 1900}, 1833, id="ac-out-1900-inlet"),
+        pytest.param(1210, {"ac_output_power": 4000}, 1833, id="ac-out-4000-inlet"),
         pytest.param(600, {"ac_recharge_power": 1000}, 600, id="set-by-name"),
     ],
 )
@@ -5238,8 +5681,9 @@ def test_a_request_change_moves_a_full_charge(
 ) -> None:
     """``chg_src1_ac_limit_calc`` re-runs each pass: a full charge follows the request.
 
-    At 1200 W: the limit to 1000 W, or AC out to 100 W or 700 W. An AC input
-    set by name off the full charge stays.
+    At 1200 W: the limit to 1000 W, or AC out to 100 W or 700 W; AC out at or
+    over the 1800 W ceiling makes the request 0 and AC in stops at the inlet's
+    1833 W. An AC input set by name off the full charge stays.
     """
     device = A1783(clock=ManualClock())
     device.set_values(

@@ -969,6 +969,30 @@ class DcInputSource(IntEnum):
     CAR_SOCKET = 1
 
 
+#: The most the C2000 chassis's DC input takes, whatever feeds it: the XT-60i
+#: (11-60 V, 17 A, 800 W) that solar, the car cable and the alternator share
+#: (a1783-telemetry.md "C2000 Gen 2 input ratings").
+C2000_DC_INPUT_LIMIT = 800
+#: Hidden: charge source 2 can charge (``chg_src2_can_charge``, ``0x200001e8``
+#: bit 1, set by ``alt_charge_enable_set?``); clear unless set. No field
+#: carries it. While clear, the AC charge request has a floor.
+CHARGE_SOURCE_2 = "charge_source_2_can_charge"
+#: The floor (``ac_charge_power_floor?`` 0x08009ac4): the main pack's voltage
+#: (``.15.3``, 0.1 V) rounded to volts + 10 W; 50 W while it reads 0.
+CHARGE_FLOOR_OVER_VOLTS = 10
+CHARGE_FLOOR_NO_VOLTAGE = 50
+#: The C2000 chassis's ``maxInputPower`` (``max_input_power_get``,
+#: a1783-telemetry.md ``a2`` byte 30): 2300 W on the ``_high`` variant, 1500 W
+#: with country JP, else 1800 W.
+C2000_MAX_INPUT_POWERS = frozenset({1500, 1800, 2300})
+#: AC in tops out at ``maxInputPower`` (the request less AC out, the AC out
+#: passed back through) plus the steady overshoot band's top, about +33 W.
+AC_OVER_CEILING = 33
+#: The C2000 chassis's AC output peak (Anker: 2400 W continuous, 4000 W peak;
+#: a1783-control.md's overload trip came at 3815 W, between the two).
+C2000_AC_OUTPUT_PEAK = 4000
+
+
 #: ``4057 a2``: 0 stops the realtime stream, 1 starts it.
 REALTIME_STOP = 0
 #: The data-read replies and telemetry pushes that ride ``param_info``:
@@ -1148,6 +1172,18 @@ ON_BUS_STATUS = "on_bus_pack_status"
 #: output (``a6[0:2]``).
 PORT_INPUTS = ("ac_input_power", "pv1_input_power")
 PORT_OUTPUT = "total_output_power"
+#: What ``a6[0:2]`` sums (``port_power_out_sum``, a1783-telemetry.md ``a6``):
+#: AC out, the car socket, the alternator accessory's out and the USB ports.
+#: The recordings agree in all 3 054 231 frames.
+OUTPUT_POWERS = (
+    "ac_output_power",
+    "car_charge1_output_power",
+    "external_device_output_power",
+    "pd1_output_power",
+    "pd2_output_power",
+    "pd3_output_power",
+    "usb1_output_power",
+)
 #: ``.23.4``: the ``0490``'s input total, taken as AC in plus DC in; the
 #: recordings agree within 5 s in 6 395 of 6 464 pairs (at most 20 W apart).
 INPUT_TOTAL = "total_input_power"
@@ -1198,7 +1234,7 @@ CHARGE_RAMP_EVENT = "ac_charge_ramp"
 BATTERY_ONLY_CHARGE_DELAY = 7.5
 #: The AC charge runs this far over the limit ``a4[4:6]``: the 1200 W limit's
 #: steady band (survey mode 1210 W); the modes at 800 / 1000 / 1100 / 1200 W are
-#: +8 / +13 / +22 / +10, and a second band at about +20 is unattributed.
+#: +8 / +13 / +22 / +10, and a second band runs at about +20.
 CHARGE_OVER_LIMIT = 10
 AC_LIMIT = "ac_recharge_power"
 #: ``a3[4:6]`` ``maxInputPower``: ``max_input_power_get``, the AC input ceiling
@@ -1225,14 +1261,79 @@ def _ac_charge_power(state: Mapping[str, Value]) -> int:
     ceiling less the AC-out draw, capped at the limit + 10 W; with Ultrafast on
     or a backup window running, the limit is skipped and the charge holds to
     ``PLAN_CHARGE_CAP``. The draw counts while the inverter runs
-    (``0x200001e4`` bits 5:4), the only time AC out reads any. AC in carries
-    the AC out it passes through (survey: limit + out + 24 at 54-59 W out).
+    (``0x200001e4`` bits 5:4), the only time AC out reads any. The request
+    never goes negative: with charge source 2 able to charge it is 0 once AC
+    out reaches the ceiling, otherwise it holds to the floor (MainMcu
+    0x08009ae4). AC in carries the AC out too (survey: limit + out + 24 at
+    54-59 W out), up to the inlet's ``maxInputPower`` + 33 W; the on-bus pack
+    feeds the outlets' rest.
     """
     out = int(state[AC_OUT])
-    ceiling = int(state[MAX_INPUT]) - out
-    if int(state[ULTRAFAST]) or int(state[WINDOW_TYPE]) != WINDOW_NONE:
-        return min(ceiling, PLAN_CHARGE_CAP) + out
-    return min(ceiling, int(state[AC_LIMIT])) + CHARGE_OVER_LIMIT + out
+    inlet = int(state[MAX_INPUT])
+    low = 0 if int(state[CHARGE_SOURCE_2]) else _charge_floor(state)
+    request = max(inlet - out, low)
+    if not request:
+        charge = 0
+    elif int(state[ULTRAFAST]) or int(state[WINDOW_TYPE]) != WINDOW_NONE:
+        charge = min(request, PLAN_CHARGE_CAP)
+    else:
+        charge = min(request, int(state[AC_LIMIT])) + CHARGE_OVER_LIMIT
+    return min(charge + out, inlet + AC_OVER_CEILING)
+
+
+def _charge_floor(state: Mapping[str, Value]) -> int:
+    """Return the AC charge request's floor: the pack's volts + 10 W, 50 W at 0 V."""
+    tenths = int(state.get("battery_voltage", 0))
+    if not tenths:
+        return CHARGE_FLOOR_NO_VOLTAGE
+    return (tenths + 5) // 10 + CHARGE_FLOOR_OVER_VOLTS
+
+
+def _ac_charges(state: Mapping[str, Value]) -> bool:
+    """Whether AC can charge: mains in and Battery-Only Power not on."""
+    mains = state["ac_input_status"] != AC_INPUT_NONE
+    return mains and state[DISABLE] != BATTERY_ONLY_ON
+
+
+def _split_total(
+    values: Mapping[str, Value], state: Mapping[str, Value]
+) -> dict[str, Value]:
+    """Return the AC and DC in that a ``.23.4`` set with at most one of them leaves.
+
+    Alone, AC in takes the full charge, at most the total, and DC in the rest;
+    with one input, the other is the rest. With both, none.
+    """
+    total = int(values[INPUT_TOTAL])
+    if "pv1_input_power" in values:
+        if "ac_input_power" in values:
+            return {}
+        return {"ac_input_power": total - int(values["pv1_input_power"])}
+    if "ac_input_power" in values:
+        ac = int(values["ac_input_power"])
+    else:
+        ac = min(total, _ac_charge_power(state)) if _ac_charges(state) else 0
+    return {"ac_input_power": ac, "pv1_input_power": total - ac}
+
+
+def _check_ac_ceiling(
+    powers: frozenset[int], resolved: Mapping[str, Value], after: Mapping[str, Value]
+) -> None:
+    """Refuse a ``maxInputPower`` not in ``powers`` or AC in over its ceiling.
+
+    Raises:
+        TypeError: If either is set to a value the unit doesn't show.
+
+    """
+    ceiling = int(after[MAX_INPUT])
+    if MAX_INPUT in resolved and ceiling not in powers:
+        listed = ", ".join(str(power) for power in sorted(powers))
+        msg = f"maxInputPower reads {listed} W, not {ceiling} W"
+        raise TypeError(msg)
+    top = ceiling + AC_OVER_CEILING
+    ac = int(after["ac_input_power"])
+    if resolved.keys() & {"ac_input_power", MAX_INPUT} and ac > top:
+        msg = f"AC in reads at most {top} W on a {ceiling} W unit, not {ac} W"
+        raise TypeError(msg)
 
 
 def _without(changes: dict[str, Value], own: frozenset[str]) -> dict[str, Value]:
@@ -1521,13 +1622,33 @@ def _net_flows(
 
 
 def _port_flow_change(
-    kept: frozenset[str], _values: Mapping[str, Value], state: Mapping[str, Value]
+    kept: frozenset[str],
+    moved: Mapping[str, Value],
+    _values: Mapping[str, Value],
+    state: Mapping[str, Value],
 ) -> Step:
     """Show the port flow and pack currents a change of the powers or bus makes.
 
-    A name the change set by name, or a pack current it drew, stays.
+    ``moved`` is the output total the change's port outputs moved. A name the
+    change set by name, or a pack current it drew, stays.
     """
-    return Step(values=_net_flows(state, kept))
+    return Step(values={**moved, **_net_flows({**state, **moved}, kept)})
+
+
+def _output_total_moved(
+    before: Mapping[str, Value], after: Mapping[str, Value], given: frozenset[str]
+) -> dict[str, Value]:
+    """Return ``a6[0:2]`` moved by the port outputs' change; none if set by name.
+
+    The total moves by the ports' change, as a USB-C device's power does, so a
+    total set by name keeps its offset.
+    """
+    change = sum(
+        int(after.get(name, 0)) - int(before.get(name, 0)) for name in OUTPUT_POWERS
+    )
+    if PORT_OUTPUT in given or not change:
+        return {}
+    return {PORT_OUTPUT: max(0, int(before[PORT_OUTPUT]) + change)}
 
 
 #: ``0490`` ``.15.5`` / ``.15.6`` (main, then expansion): the pack holding the bus
@@ -1630,7 +1751,13 @@ PACK_HANDOVER = "pack_handover"
 LATCH_REFERENCE = "discharge_latch_reference"
 #: What a change of moves the port flow: the port powers and the bus holder.
 FLOW_TRIGGERS = frozenset(
-    {*PORT_INPUTS, PORT_OUTPUT, BUS_PACK, "sub_package_connection_status"}
+    {
+        *PORT_INPUTS,
+        PORT_OUTPUT,
+        *OUTPUT_POWERS,
+        BUS_PACK,
+        "sub_package_connection_status",
+    }
 )
 PORT_FLOW = "port_flow"
 #: Each pack's current (``.14.29``, 10 mA, + charging) and voltage (``.15.3``,
@@ -3238,8 +3365,18 @@ class CGen2Layout(TableLayout):
             INPUT_TOTAL,
         }
     )
-    #: The DC input reads the car socket while unset: the latest recorded era.
-    defaults = MappingProxyType({DC_INPUT_SOURCE: DcInputSource.CAR_SOCKET})
+    #: The DC input reads the car socket while unset: the latest recorded era;
+    #: charge source 2 reads clear.
+    defaults = MappingProxyType(
+        {DC_INPUT_SOURCE: DcInputSource.CAR_SOCKET, CHARGE_SOURCE_2: 0}
+    )
+    #: The most the DC input takes, and the ``maxInputPower`` values the unit
+    #: reports, bounding AC in: none on the C1000 Gen 2, whose ratings and
+    #: ceiling aren't recorded.
+    DC_INPUT_LIMIT: int | None = None
+    MAX_INPUT_POWERS: frozenset[int] = frozenset()
+    #: The most AC output reads; none on the C1000 Gen 2, its rating unrecorded.
+    AC_OUTPUT_PEAK: int | None = None
 
     def names(self, msgtype: int) -> frozenset[str]:
         """Return the names ``set_values()`` can reach.
@@ -3247,12 +3384,14 @@ class CGen2Layout(TableLayout):
         ``0425`` adds its SoC byte, a message carrying ``d9`` the stored plan
         and the main pack's c490 SoC its charge hold reads, with the pack
         selection's hidden inputs, one carrying the output ports each USB-C
-        port's device, one carrying the DC input its source, and ``0490`` the
-        device-point switch.
+        port's device, one carrying the DC input its source, one carrying AC
+        input charge source 2's enable, and ``0490`` the device-point switch.
         """
         names = set(super().names(msgtype))
         if "pv1_input_power" in names:
             names.add(DC_INPUT_SOURCE)
+        if "ac_input_power" in names:
+            names.add(CHARGE_SOURCE_2)
         if msgtype == MSGTYPE_425:
             names.add(EVENT_SOC)
         if "d9" in self.FIELDS.get(msgtype, {}):
@@ -3313,6 +3452,46 @@ class CGen2Layout(TableLayout):
             implied["ac_input_power"] = 0
         return implied
 
+    def resolve(
+        self, values: Mapping[str, Value], state: Mapping[str, Value]
+    ) -> dict[str, Value]:
+        """Return what ``values`` set on ``state``: ``.23.4`` fills its inputs.
+
+        AC in holds to ``maxInputPower`` plus the overshoot band, AC out to its
+        peak rating, the DC input to its port's rating, and ``a6[0:2]`` set
+        by name to the port outputs' sum.
+
+        Raises:
+            TypeError: If an input would be negative, the output total off the
+                port outputs' sum, ``maxInputPower`` one the unit doesn't
+                report, AC in over its ceiling, AC out over its peak, or the
+                DC input over its port's rating.
+
+        """
+        resolved = dict(values)
+        if INPUT_TOTAL in values:
+            resolved |= _split_total(values, {**state, **values})
+        after = {**state, **resolved}
+        if any(int(after[name]) < 0 for name in PORT_INPUTS):
+            msg = f"the inputs can't sum to {int(after[INPUT_TOTAL])} W"
+            raise TypeError(msg)
+        ports = sum(int(after.get(name, 0)) for name in OUTPUT_POWERS)
+        if PORT_OUTPUT in resolved and int(after[PORT_OUTPUT]) != ports:
+            total = int(after[PORT_OUTPUT])
+            msg = f"the output total is the ports' {ports} W, not {total} W"
+            raise TypeError(msg)
+        if self.MAX_INPUT_POWERS:
+            _check_ac_ceiling(self.MAX_INPUT_POWERS, resolved, after)
+        peak, out = self.AC_OUTPUT_PEAK, int(after[AC_OUT])
+        if peak is not None and AC_OUT in resolved and out > peak:
+            msg = f"AC out reads at most {peak} W, not {out} W"
+            raise TypeError(msg)
+        limit, dc = self.DC_INPUT_LIMIT, int(after["pv1_input_power"])
+        if limit is not None and "pv1_input_power" in resolved and dc > limit:
+            msg = f"the DC input takes at most {limit} W, not {dc} W"
+            raise TypeError(msg)
+        return resolved
+
     def started(self) -> tuple[Timed, ...]:
         """Return the free-running timers: ``0490``, TOU, the subMCU dip, the pages."""
         return (
@@ -3338,8 +3517,11 @@ class CGen2Layout(TableLayout):
         events: list[Timed] = []
         if own & FLOW_TRIGGERS:
             kept = (own & CURRENT_NAMES) | given
+            output_total = _output_total_moved(before, after, given)
+            after = {**after, **output_total}
             after = {**after, **_net_flows(after, kept)}
-            events.append(Timed(0.0, PORT_FLOW, partial(_port_flow_change, kept)))
+            change = partial(_port_flow_change, kept, output_total)
+            events.append(Timed(0.0, PORT_FLOW, change))
         mains_before, mains = before["ac_input_status"], after["ac_input_status"]
         if (mains_before == AC_INPUT_NONE) != (mains == AC_INPUT_NONE):
             back = mains != AC_INPUT_NONE
@@ -3390,7 +3572,8 @@ class CGen2Layout(TableLayout):
             ConstructError: If a value doesn't fit its field.
             TypeError: If the stored plan isn't its count and record buffer, or
                 the device-point switch, the expansion's path hold, the DC
-                input's source or a USB-C device's plug isn't 0 or 1.
+                input's source, charge source 2's enable or a USB-C device's
+                plug isn't 0 or 1.
 
         """
         given = values or {}
@@ -3410,7 +3593,8 @@ class CGen2Layout(TableLayout):
         ):
             msg = f"{AUTO_PLANS} is {len(AUTO_PLANS_EMPTY)} bytes: 3 x (start, end)"
             raise TypeError(msg)
-        for name in given.keys() & {DEVICE_POINT_SWITCH, PATH_HOLD, DC_INPUT_SOURCE}:
+        switches = {DEVICE_POINT_SWITCH, PATH_HOLD, DC_INPUT_SOURCE, CHARGE_SOURCE_2}
+        for name in given.keys() & switches:
             _check_switch(name, given[name])
         for name in given.keys() & USB_C_DEVICES.keys():
             if name.endswith(DEVICE_PLUGGED):
@@ -3523,3 +3707,6 @@ class CGen2ExpansionLayout(CGen2Layout):
     COMMANDS = MappingProxyType({**LINE_COMMANDS, 0x104: _set_bms_params})
     FIELDS = _fields({**SINGLE_FIELDS, **EXPANSION_FIELDS})
     EVENT_REPORTS = True
+    DC_INPUT_LIMIT = C2000_DC_INPUT_LIMIT
+    MAX_INPUT_POWERS = C2000_MAX_INPUT_POWERS
+    AC_OUTPUT_PEAK = C2000_AC_OUTPUT_PEAK
