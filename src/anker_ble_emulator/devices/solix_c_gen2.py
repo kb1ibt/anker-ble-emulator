@@ -62,7 +62,7 @@ from anker_ble_emulator.layouts import (
     fitted,
     ui,
 )
-from anker_ble_emulator.mcu import CLOUD, EPOCH, RTC
+from anker_ble_emulator.mcu import CLOUD, EPOCH, GIVEN, LINK, RTC
 from anker_ble_emulator.messages import (
     ROUTE_APP,
     ROUTE_BLE,
@@ -382,7 +382,7 @@ TouSchedule = ExprAdapter(
     encoder=_tou_schedule_encode,
 )
 Tou = Struct(
-    "tou_system_status" / ui(1),
+    "tou_active_period" / ui(1),
     "backup_mode" / ui(1),
     "tou_reserve_power" / ui(1),
     "charging_limit_value" / ui(1),
@@ -397,7 +397,7 @@ Tou = Struct(
     "backup_end_time" / ui(4),
 )
 TOU_ZEROS = leaf_zeros(
-    "tou_system_status",
+    "tou_active_period",
     "backup_mode",
     "tou_reserve_power",
     "charging_limit_value",
@@ -1130,19 +1130,57 @@ BATTERY_ONLY_AUTO_OFF = 2
 FLOW_IDLE = 0
 FLOW_OUT = 1
 FLOW_CHARGE = 2
+#: ``.23.7``: the on-bus pack's status, as ``a3[0]`` reads the main's.
+ON_BUS_STATUS = "on_bus_pack_status"
+#: The port powers the port flow compares: input (``a6[2:4]``, ``a6[4:6]``) and
+#: output (``a6[0:2]``).
+PORT_INPUTS = ("ac_input_power", "pv1_input_power")
+PORT_OUTPUT = "total_output_power"
+#: ``.23.4``: the ``0490``'s input total, taken as AC in plus DC in; the
+#: recordings agree within 5 s in 6 395 of 6 464 pairs (at most 20 W apart).
+INPUT_TOTAL = "total_input_power"
 #: ``a3[0]`` follows ``a5[1]`` after its 20-sample pack-current test, 100 ms a
 #: sample: 2 s (on the wire 2.0-3.0 s; a1783-telemetry.md "``a5[1]`` vs ``a3[0]``").
 FLOW_LAG = 2.0
-#: The mains sequence, a1783-control.md "``a4[31]`` witnesses": the 2026-10-26
-#: run's timings, with the range both bench runs measured.
-#: The auto-off after mains goes: 0 s (0-1 s).
-AUTO_OFF_DELAY = 0.0
-#: The 0x59 off-grid alert after mains goes: 4 s (4-5 s).
-GRID_LOSS_ALERT_DELAY = 4.0
-#: The auto-off clearing after mains returns: 3 s (2-3 s).
-AUTO_OFF_CLEAR_DELAY = 3.0
-#: AC charging after mains returns: 11 s (10-16 s).
-MAINS_CHARGE_DELAY = 11.0
+#: The statuses ``a3[0]`` and ``.23.7`` the follow sets.
+STATUS_NAMES = frozenset({"work_status", ON_BUS_STATUS})
+#: Hidden: the statuses set by name since a change of the pack currents last
+#: moved them, newline-joined; the follow leaves these as set.
+STATUS_HELD = "flow_statuses_held"
+STATUS_HELD_EVENT = "flow_statuses_held"
+#: The mains sequence (a1783-control.md "``a4[31]`` witnesses", MainMcu_0901).
+#: ``a7[3]`` is the live mains-lead read; the auto-off, the accept and the alert
+#: key on the power stage's own AC-input flag (``0x2000054a`` bit 0), hidden:
+#: 1 while it reports AC input, set as each mains change settles.
+AC_FLAG = "ac_input_flag"
+AC_FLAG_EVENT = "ac_input_flag"
+#: The input monitor's debounce on the flag: 10 ticks of 10 ms.
+AC_FLAG_DEBOUNCE = 0.1
+#: The power stage's own report time of a mains change, before the debounce; not
+#: in MainMcu, measured on the 2026-10-23 / 10-26 bench runs: a loss 0 s (the
+#: auto-off 0-1 s after ``a7[3]``), a return 2.9 s (the accept 2-3 s after it).
+POWER_STAGE_LOSS_REPORT = 0.0
+POWER_STAGE_RETURN_REPORT = 2.9
+#: The off-grid alert (``offgrid_alert_poll_tick``, 1 s): it commits a flag
+#: change on the 5th consecutive tick that differs from the committed value,
+#: hidden ``ac_input_flag_committed``. The tick's phase isn't modeled: the first
+#: counted tick is taken at the change, so it commits 4 s on, 4.1 s after
+#: ``a7[3]`` (the bench runs: 4-5 s).
+AC_FLAG_COMMITTED = "ac_input_flag_committed"
+ALERT_COMMIT = "grid_loss_alert"
+ALERT_TICKS = 5
+ALERT_TICK = 1.0
+#: The AC charge enable (``ac_inverter_ctrl``, 1 s tick): on the tick after its
+#: 7 s one-shot expires, the firmware's upper bound. The one-shot counts from the
+#: branch's first tick, taken at the accept (the tick's phase isn't modeled); the
+#: power stage's ready bit, which can enable it sooner, isn't modeled.
+CHARGE_ENABLE_TIMEOUT = 7.0
+INVERTER_TICK = 1.0
+#: The power stage's charge ramp after the enable, measured on both bench runs
+#: (2026-10-23, 2026-10-26), not firmware: 118 W first, the full charge ~5 s on.
+CHARGE_FIRST_STEP = 118
+CHARGE_RAMP = 5.0
+CHARGE_RAMP_EVENT = "ac_charge_ramp"
 #: AC charging after Battery-Only Power goes off with mains in: the median of
 #: 6 s (2026-10-06 19:40:42) and 9 s (2026-10-26 16:34:10).
 BATTERY_ONLY_CHARGE_DELAY = 7.5
@@ -1155,33 +1193,50 @@ def _without(changes: dict[str, Value], own: frozenset[str]) -> dict[str, Value]
     return {name: value for name, value in changes.items() if name not in own}
 
 
-def _auto_off(
-    own: frozenset[str], _values: Mapping[str, Value], _state: Mapping[str, Value]
+def _ac_flag_settles(
+    own: frozenset[str],
+    reports: bool,  # noqa: FBT001  # the model's flag
+    _values: Mapping[str, Value],
+    state: Mapping[str, Value],
 ) -> Step:
-    """Clear Battery-Only Power with mains out, the screen woken (06:02:35)."""
-    wake = Timed(0.0, SCREEN_WAKE, partial(_screen_wake, own))
-    return Step(values=_without({DISABLE: BATTERY_ONLY_AUTO_OFF}, own), then=(wake,))
+    """Settle the flag on ``a7[3]``: the auto-off or the accept, and the alert count.
 
-
-def _grid_loss_alert(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
-    """Push the 0x59 off-grid alert with the SoC, if mains is still out.
-
-    Assumed: mains back before it is due cancels it, the loss being debounced.
+    ``ac_input_autooff_eval`` turns Battery-Only Power off (state 2, the screen
+    woken) while the flag reads 0 and stops once it reads 1 (state 2 -> 0).
     """
-    if state["ac_input_status"] != AC_INPUT_NONE:
-        return Step()
-    alert = {"event_code": EVENT_GRID_LOSS, EVENT_SOC: state["battery_level"]}
-    return Step(values=alert, pushes=(MSGTYPE_425,))
+    flag = int(state["ac_input_status"] != AC_INPUT_NONE)
+    changes: dict[str, Value] = {AC_FLAG: flag}
+    then: list[Timed] = []
+    if not flag and state[DISABLE] == BATTERY_ONLY_ON and DISABLE not in own:
+        changes[DISABLE] = BATTERY_ONLY_AUTO_OFF
+        then.append(Timed(0.0, SCREEN_WAKE, partial(_screen_wake, own)))
+    elif flag and state[DISABLE] == BATTERY_ONLY_AUTO_OFF:
+        changes[DISABLE] = BATTERY_ONLY_OFF
+    if flag and "ac_input_power" not in own:
+        enable = CHARGE_ENABLE_TIMEOUT + INVERTER_TICK
+        then.append(Timed(enable, "ac_charge", partial(_ac_charge, own)))
+    delay = (ALERT_TICKS - 1) * ALERT_TICK
+    then.append(Timed(delay, ALERT_COMMIT, partial(_alert_commit, reports)))
+    return Step(values=changes, then=tuple(then))
 
 
-def _auto_off_clear(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
-    """Accept AC input again once mains is back (06:02:52, 15:28:54)."""
-    if (
-        state["ac_input_status"] == AC_INPUT_NONE
-        or state[DISABLE] != BATTERY_ONLY_AUTO_OFF
-    ):
-        return Step()
-    return Step(values={DISABLE: BATTERY_ONLY_OFF})
+def _alert_commit(
+    reports: bool,  # noqa: FBT001  # the model's flag
+    _values: Mapping[str, Value],
+    state: Mapping[str, Value],
+) -> Step:
+    """Commit the flag on the alert's 5th tick; a committed drop pushes the 0x59.
+
+    Only with the outage alert on, the SoC its ``a3``; a return posts nothing. A
+    flag back before the 5th tick re-queues this, committing the unchanged 1.
+    """
+    flag = int(state[AC_FLAG])
+    changes: dict[str, Value] = {AC_FLAG_COMMITTED: flag}
+    dropped = not flag and int(state.get(AC_FLAG_COMMITTED, 1))
+    if not (dropped and reports and state["outage_alert_switch"]):
+        return Step(values=changes)
+    changes |= {"event_code": EVENT_GRID_LOSS, EVENT_SOC: state["battery_level"]}
+    return Step(values=changes, pushes=(MSGTYPE_425,))
 
 
 def _ac_charge(
@@ -1189,35 +1244,41 @@ def _ac_charge(
 ) -> Step:
     """Start AC charging into the pack below its cap (a1783-telemetry.md "Flow state").
 
-    The main below its cap charges (``a5[1]`` 2, ``a3[0]`` following); at it,
-    an attached expansion below its own takes the charge (``c0[24]`` 2,
-    06:03:06); with every pack at its cap no AC input comes.
+    The main below its cap charges; at it, an attached expansion below its own
+    takes the charge and the bus (``c0[24]`` 2, 06:03:00); with every pack at
+    its cap no AC input comes. The port flow shows on the bus holder. The power
+    stage's ramp follows: 118 W, the full charge 5 s on.
     """
     if state["ac_input_status"] == AC_INPUT_NONE or state[DISABLE] == BATTERY_ONLY_ON:
         return Step()
     cap = int(state["charging_limit_value"])
-    if int(state["battery_level"]) < cap:
-        changes: dict[str, Value] = {
-            "ac_input_power": AC_CHARGE_POWER,
-            "charge_discharge_status": FLOW_CHARGE,
-        }
-    elif state.get("sub_package_connection_status") and (
-        int(state["sub_package_battery_level"]) < cap
-    ):
-        changes = {"ac_input_power": AC_CHARGE_POWER, "sub_package_status": FLOW_CHARGE}
-    else:
+    changes: dict[str, Value] = {"ac_input_power": CHARGE_FIRST_STEP}
+    if int(state["battery_level"]) >= cap:
+        if not state.get("sub_package_connection_status") or (
+            int(state["sub_package_battery_level"]) >= cap
+        ):
+            return Step()
+        if _bus_pack(state) == BUS_MAIN:
+            changes |= _bus_to(BUS_EXPANSION, state, flowing=True)
+    ramp = Timed(CHARGE_RAMP, CHARGE_RAMP_EVENT, _ac_charge_ramp)
+    return _flow_step(_without(changes, own), state, (ramp,), own=own)
+
+
+def _ac_charge_ramp(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Bring the charge to its full power, the ramp's first step still in."""
+    if int(state["ac_input_power"]) != CHARGE_FIRST_STEP:
         return Step()
-    return _flow_step(_without(changes, own))
+    return _flow_step({"ac_input_power": AC_CHARGE_POWER}, state)
 
 
-def _mains_back(after: Mapping[str, Value], own: frozenset[str]) -> list[Timed]:
-    """Return the auto-off's clearing and the AC charge start mains returning draws."""
-    events = []
-    if after[DISABLE] == BATTERY_ONLY_AUTO_OFF and DISABLE not in own:
-        events.append(Timed(AUTO_OFF_CLEAR_DELAY, "auto_off_clear", _auto_off_clear))
-    if "ac_input_power" not in own:
-        events.append(Timed(MAINS_CHARGE_DELAY, "ac_charge", partial(_ac_charge, own)))
-    return events
+def _mains_edge(own: frozenset[str], *, back: bool, reports: bool) -> list[Timed]:
+    """Return the flag's settling a mains change draws.
+
+    The flag settles after the power stage's report and the debounce.
+    """
+    report = POWER_STAGE_RETURN_REPORT if back else POWER_STAGE_LOSS_REPORT
+    settles = partial(_ac_flag_settles, own, reports)
+    return [Timed(report + AC_FLAG_DEBOUNCE, AC_FLAG_EVENT, settles)]
 
 
 def _battery_only_switched(
@@ -1225,9 +1286,9 @@ def _battery_only_switched(
 ) -> list[Timed]:
     """Return what switching Battery-Only Power with mains in does.
 
-    On, ``a7[3]`` reads 2 and AC input stops (19:39:18), and a charge only AC
-    fed leaves ``a5[1]`` / ``c0[24]`` at once for the port flow, ``a3[0]``
-    following; off, it reads 1 and AC charging restarts (19:40:42, 6-9 s later).
+    On, ``a7[3]`` reads 2 and AC input stops (19:39:18), ``a5[1]`` / ``c0[24]``
+    showing the port flow left at once, ``a3[0]`` following; off, it reads 1
+    and AC charging restarts (19:40:42, 6-9 s later).
     """
     switched_on = after[DISABLE] == BATTERY_ONLY_ON
     changes: dict[str, Value] = {
@@ -1235,8 +1296,8 @@ def _battery_only_switched(
     }
     if switched_on:
         changes["ac_input_power"] = 0
-        changes |= _ac_charge_left(after)
-    events = [Timed(0.0, "battery_only", partial(_flow_change, _without(changes, own)))]
+    flow = partial(_flow_change, _without(changes, own), own)
+    events = [Timed(0.0, "battery_only", flow)]
     if before[DISABLE] == BATTERY_ONLY_ON and "ac_input_power" not in own:
         charge = partial(_ac_charge, own)
         events.append(Timed(BATTERY_ONLY_CHARGE_DELAY, "ac_charge", charge))
@@ -1254,40 +1315,151 @@ def _step(
 
 def _flow_change(
     changes: dict[str, Value],
+    own: frozenset[str],
     _values: Mapping[str, Value],
-    _state: Mapping[str, Value],
+    state: Mapping[str, Value],
 ) -> Step:
-    """Return a step that sets ``changes``, ``a3[0]`` following a moved ``a5[1]``."""
-    return _flow_step(changes)
+    """Return a step that sets ``changes`` and the port flow they leave."""
+    return _flow_step(changes, state, own=own)
 
 
-def _flow_step(changes: dict[str, Value], then: tuple[Timed, ...] = ()) -> Step:
-    """Return a step setting ``changes``; a moved ``a5[1]`` draws ``a3[0]``'s follow."""
-    if "charge_discharge_status" in changes:
-        then = (*then, FLOW_FOLLOW)
-    return Step(values=changes, then=then)
+def _flow_step(
+    changes: Mapping[str, Value],
+    state: Mapping[str, Value],
+    then: tuple[Timed, ...] = (),
+    *,
+    own: frozenset[str] = frozenset(),
+) -> Step:
+    """Return a step setting ``changes`` and the port flow they leave.
+
+    ``a5[1]``, ``c0[24]`` and the pack currents follow the port powers and the
+    bus holder after ``changes`` (names in ``own`` stay); moved statuses draw
+    their follow and end any held by name.
+    """
+    after = {**state, **changes}
+    flows = _net_flows(after, own)
+    values = {n: v for n, v in changes.items() if n not in flows}
+    values |= {n: f for n, f in flows.items() if state.get(n) != f}
+    if _statuses(state) == _statuses({**state, **values}):
+        return Step(values=values, then=then)
+    return Step(values=values, unset=(STATUS_HELD,), then=(*then, FLOW_FOLLOW))
+
+
+def _pack_status(state: Mapping[str, Value], pack: int) -> int:
+    """Return ``pack``'s instance status by its current: a charge needs ``flag_00c7``.
+
+    The expansion's charge reads 0 (``packinfo_fields_build``).
+    """
+    flow = _pack_flow(state, pack)
+    if flow == FLOW_CHARGE and (pack != BUS_MAIN or not _charge_source(state)):
+        return FLOW_IDLE
+    return flow
+
+
+def _statuses(state: Mapping[str, Value]) -> dict[str, Value]:
+    """Return what ``a3[0]`` and ``.23.7`` settle at: the main's, and the holder's.
+
+    ``a3[0]`` reads 0 while the expansion holds the bus (a1783-telemetry.md
+    "Flow state").
+    """
+    holder = _bus_pack(state)
+    main = _pack_status(state, BUS_MAIN) if holder == BUS_MAIN else FLOW_IDLE
+    return {"work_status": main, ON_BUS_STATUS: _pack_status(state, holder)}
+
+
+def _name_set(state: Mapping[str, Value], name: str) -> frozenset[str]:
+    """Return the names newline-joined under ``name``; none if it's unset."""
+    joined = _bytes_value({name: b"", **state}, name)
+    return frozenset(part.decode() for part in joined.split(b"\n") if part)
 
 
 def _flow_follows(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
-    """Set ``a3[0]`` to ``a5[1]``'s state, its 20 samples passed."""
-    return Step(values={"work_status": int(state["charge_discharge_status"])})
+    """Set ``a3[0]`` and ``.23.7`` from the pack currents, their 20 samples passed.
+
+    A status set by name since the change that queued it stays.
+    """
+    held = _name_set(state, STATUS_HELD)
+    statuses = _statuses(state).items()
+    return Step(values={name: value for name, value in statuses if name not in held})
 
 
 FLOW_FOLLOW = Timed(FLOW_LAG, "work_status_follow", _flow_follows)
 
 
-def _ac_charge_left(state: Mapping[str, Value]) -> dict[str, Value]:
-    """Return the port flow a charge only AC fed leaves ``a5[1]`` / ``c0[24]`` at."""
-    if state["pv1_input_power"] or state.get("external_device_mode") == (
-        ExternalDeviceMode.CHARGING
-    ):
-        return {}
-    flow = FLOW_OUT if state["total_output_power"] else FLOW_IDLE
+def _statuses_held(
+    names: frozenset[str],
+    _values: Mapping[str, Value],
+    state: Mapping[str, Value],
+    *,
+    moved: bool,
+) -> Step:
+    """Record ``names`` as the statuses set by name, added to the record.
+
+    A change that moved the statuses (``moved``) starts the record over.
+    """
+    held = names if moved else _name_set(state, STATUS_HELD) | names
+    if not held:
+        return Step(unset=(STATUS_HELD,))
+    return Step(values={STATUS_HELD: b"\n".join(sorted(n.encode() for n in held))})
+
+
+def _port_flow(state: Mapping[str, Value]) -> int:
+    """Return the port-flow code: 2 with input over output, 0 with none out, else 1."""
+    inputs = sum(int(state[name]) for name in PORT_INPUTS)
+    output = int(state[PORT_OUTPUT])
+    if inputs > output:
+        return FLOW_CHARGE
+    return FLOW_OUT if output else FLOW_IDLE
+
+
+def _port_flows(state: Mapping[str, Value]) -> dict[str, Value]:
+    """Return ``a5[1]`` and ``c0[24]``: the port flow on the bus holder's, else 0.
+
+    a1783-telemetry.md "Flow state"; with no ``c0`` the main always holds it.
+    """
+    code = _port_flow(state)
+    if "sub_package_status" not in state:
+        return {"charge_discharge_status": code}
+    main = _bus_pack(state) == BUS_MAIN
     return {
-        name: flow
-        for name in ("charge_discharge_status", "sub_package_status")
-        if state.get(name) == FLOW_CHARGE
+        "charge_discharge_status": code if main else FLOW_IDLE,
+        "sub_package_status": FLOW_IDLE if main else code,
     }
+
+
+def _pack_currents(state: Mapping[str, Value]) -> dict[str, Value]:
+    """Return each pack's current: the net port flow over its voltage on the bus holder.
+
+    The other pack carries none; a pack with no voltage reads 0.
+    """
+    inputs = sum(int(state[name]) for name in PORT_INPUTS)
+    net = inputs - int(state[PORT_OUTPUT])
+    holder = _bus_pack(state)
+    currents: dict[str, Value] = {}
+    for pack, (current, voltage) in PACK_CURRENTS.items():
+        volts = int(state[voltage])
+        flowing = pack == holder and volts
+        currents[current] = round(net * WATTS_TO_CURRENT / volts) if flowing else 0
+    return currents
+
+
+def _net_flows(
+    state: Mapping[str, Value], kept: frozenset[str] = frozenset()
+) -> dict[str, Value]:
+    """Return the port flow, the pack currents and the input total, less ``kept``."""
+    inputs = {INPUT_TOTAL: sum(int(state[name]) for name in PORT_INPUTS)}
+    flows = _port_flows(state) | _pack_currents(state) | inputs
+    return {name: value for name, value in flows.items() if name not in kept}
+
+
+def _port_flow_change(
+    kept: frozenset[str], _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Show the port flow and pack currents a change of the powers or bus makes.
+
+    A name the change set by name, or a pack current it drew, stays.
+    """
+    return Step(values=_net_flows(state, kept))
 
 
 #: ``0490`` ``.15.5`` / ``.15.6`` (main, then expansion): the pack holding the bus
@@ -1358,6 +1530,29 @@ CAP_LATCH_HOLDOVER_EVENT = "charge_cap_latch_holdover"
 ALT_BYTE_9 = "alternator_byte_9"
 ALT_BYTE_9_SOURCE = 2
 EXPANSION_PACK_SOC = "sub_package_pack_soc"
+#: Each pack's 0.1 % SoC -> the whole-percent level it shows: ``a5[2]`` =
+#: ``a6[8]`` = ``.23.1`` = floor(``.14.18`` / 10), the expansion's ``c0[25]`` /
+#: ``.23.1#1`` from ``.14#1.18`` (a1783-telemetry.md ``a6`` [8], c490 ``.23``).
+#: The lag of 1 at a whole-percent boundary isn't modeled.
+SHOWN_SOC = MappingProxyType(
+    {PACK_SOC: "battery_level", EXPANSION_PACK_SOC: "sub_package_battery_level"}
+)
+
+
+def _shown_levels(values: Mapping[str, Value]) -> dict[str, Value]:
+    """Return each pack's level from its SoC, or its SoC from its level, set alone.
+
+    A level set alone puts the SoC at its whole percent.
+    """
+    implied: dict[str, Value] = {}
+    for soc, level in SHOWN_SOC.items():
+        if soc in values and level not in values:
+            implied[level] = int(values[soc]) // SOC_STEPS_PER_PERCENT
+        elif level in values and soc not in values:
+            implied[soc] = int(values[level]) * SOC_STEPS_PER_PERCENT
+    return implied
+
+
 PATH_HOLD = "sub_package_path_hold"
 BUS_DWELL = 3.01
 SWITCH_GAP = 2.01
@@ -1365,6 +1560,26 @@ CHARGE_CAP_LATCH = 1.0
 DISCHARGE_LATCH_DROP = 10
 PACK_HANDOVER = "pack_handover"
 LATCH_REFERENCE = "discharge_latch_reference"
+#: What a change of moves the port flow: the port powers and the bus holder.
+FLOW_TRIGGERS = frozenset(
+    {*PORT_INPUTS, PORT_OUTPUT, BUS_PACK, "sub_package_connection_status"}
+)
+PORT_FLOW = "port_flow"
+#: Each pack's current (``.14.29``, 10 mA, + charging) and voltage (``.15.3``,
+#: 0.1 V): the bus holder carries the net port flow, the other none.
+PACK_CURRENTS = MappingProxyType(
+    {
+        BUS_MAIN: ("pack_current", "battery_voltage"),
+        BUS_EXPANSION: ("sub_package_pack_current", "sub_package_battery_voltage"),
+    }
+)
+#: Pack W = |I (0.1 A) x V (0.1 V)| / 100, I being the 10 mA value / 10
+#: (a1783-telemetry.md "Flow state", current source): 10 mA = W x 1000 / V.
+WATTS_TO_CURRENT = 1000
+#: The BMS's charge and discharge test, +-0.3 A in 10 mA (a1783-telemetry.md
+#: "Flow state", ``a3[0]``).
+CURRENT_THRESHOLD = 30
+CURRENT_NAMES = frozenset(current for current, _ in PACK_CURRENTS.values())
 
 
 def _bus_pack(state: Mapping[str, Value]) -> int:
@@ -1417,11 +1632,19 @@ def _bus_to(
     return {**dict(slots), BUS_PACK: holder, BUS_TAKEN: int(state[EPOCH])}
 
 
+def _pack_flow(state: Mapping[str, Value], pack: int) -> int:
+    """Return ``pack``'s flow by its current: 2 charging, 1 discharging, else 0."""
+    current = int(state.get(PACK_CURRENTS[pack][0], 0))
+    if current >= CURRENT_THRESHOLD:
+        return FLOW_CHARGE
+    return FLOW_OUT if current <= -CURRENT_THRESHOLD else FLOW_IDLE
+
+
 def _on_bus(state: Mapping[str, Value]) -> tuple[int, int]:
-    """Return the on-bus pack's flow and 0.1 % SoC."""
-    if _bus_pack(state) == BUS_MAIN:
-        return int(state["charge_discharge_status"]), _main_soc(state)
-    return int(state["sub_package_status"]), _expansion_soc(state)
+    """Return the on-bus pack's flow, by its current (:193), and 0.1 % SoC."""
+    holder = _bus_pack(state)
+    soc = _main_soc(state) if holder == BUS_MAIN else _expansion_soc(state)
+    return _pack_flow(state, holder), soc
 
 
 def _alt_byte_9_source(state: Mapping[str, Value]) -> bool:
@@ -1554,7 +1777,7 @@ def _main_handovers(
     stored = after.get(LATCH_FROM)
     base = _main_soc(before) if stored is None else int(stored)
     latched = bool(after.get(LATCH_SET))
-    if not latched and after["charge_discharge_status"] == FLOW_CHARGE:
+    if not latched and _pack_flow(after, BUS_MAIN) == FLOW_CHARGE:
         base = _main_soc(after)
     elif not latched and _latch_arms(after, base):
         latched, base = True, _main_soc(after)
@@ -1585,7 +1808,7 @@ def _latch_arms(state: Mapping[str, Value], base: int) -> bool:
     """
     soc = _main_soc(state)
     return (
-        state["charge_discharge_status"] != FLOW_CHARGE
+        _pack_flow(state, BUS_MAIN) != FLOW_CHARGE
         and soc > _expansion_floor_line(state)
         and soc <= base - DISCHARGE_LATCH_DROP
     )
@@ -1652,14 +1875,11 @@ CAP_LATCH_EXPIRY = Timed(
 def _charge_handover(state: Mapping[str, Value]) -> dict[str, Value]:
     """Return the main's charge moved to the expansion (2026-10-06 20:20:03).
 
-    ``a3[0]`` and ``a5[1]`` read 0 at once, the expansion holding the bus.
+    ``a3[0]`` and ``a5[1]`` read 0 at once, the expansion holding the bus, and
+    ``c0[24]`` the port flow.
     """
-    return {
-        "work_status": FLOW_IDLE,
-        "charge_discharge_status": FLOW_IDLE,
-        "sub_package_status": FLOW_CHARGE,
-        **_bus_to(BUS_EXPANSION, state, flowing=True),
-    }
+    bus = _bus_to(BUS_EXPANSION, state, flowing=True)
+    return {"work_status": FLOW_IDLE, **bus, **_net_flows({**state, **bus})}
 
 
 def _charge_to_expansion(
@@ -1679,13 +1899,11 @@ def _discharge_to_expansion(
     if not _latch_hands_over(state):
         return Step()
     output = bool(state["total_output_power"])
-    changes: dict[str, Value] = {
+    changes = {
         "work_status": FLOW_IDLE,
-        "charge_discharge_status": FLOW_IDLE,
-        "sub_package_status": FLOW_OUT if output else FLOW_IDLE,
         **_bus_to(BUS_EXPANSION, state, flowing=output),
     }
-    return Step(values=changes)
+    return _flow_step(changes, state)
 
 
 def _bus_to_main(values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
@@ -1701,12 +1919,7 @@ def _switched_off(_values: Mapping[str, Value], state: Mapping[str, Value]) -> S
     ``c0[24]`` reads 0 and ``a5[1]`` the port flow at once, ``a3[0]`` following.
     """
     output = bool(state["total_output_power"])
-    changes: dict[str, Value] = {
-        "sub_package_status": FLOW_IDLE,
-        "charge_discharge_status": FLOW_OUT if output else FLOW_IDLE,
-        **_bus_to(BUS_MAIN, state, flowing=output),
-    }
-    return _flow_step(changes)
+    return _flow_step(_bus_to(BUS_MAIN, state, flowing=output), state)
 
 
 #: The AC top-off (a1783-telemetry.md "AC top-off burst", "Top-off hysteresis"):
@@ -1733,29 +1946,25 @@ def _top_offs(
 ) -> list[Timed]:
     """Return the top-off burst the main's SoC falling below the clear threshold draws.
 
-    Only AC into the main on the bus: mains in, Battery-Only Power off, and the
-    expansion not on the bus (``c0[24]`` 0, the closest the frames show).
+    Only AC into the main on the bus: mains in, Battery-Only Power off.
     """
     _, clear = _top_off_band(int(after["charging_limit_value"]))
     if not int(before[PACK_SOC]) >= clear > int(after[PACK_SOC]):
         return []
     if after["ac_input_status"] != AC_INPUT_MAINS or after[DISABLE] == BATTERY_ONLY_ON:
         return []
-    if after.get("sub_package_status", FLOW_IDLE) != FLOW_IDLE:
+    if _bus_pack(after) != BUS_MAIN:
         return []
     return [Timed(0.0, "top_off", partial(_top_off, own))]
 
 
 def _top_off(
-    own: frozenset[str], _values: Mapping[str, Value], _state: Mapping[str, Value]
+    own: frozenset[str], _values: Mapping[str, Value], state: Mapping[str, Value]
 ) -> Step:
-    """Start the top-off burst: AC in, ``a5[1]`` 2 with ``a3[0]`` following."""
-    changes: dict[str, Value] = {
-        "ac_input_power": AC_CHARGE_POWER,
-        "charge_discharge_status": FLOW_CHARGE,
-    }
+    """Start the top-off burst: AC in, ``a5[1]`` the port flow, ``a3[0]`` following."""
     end = Timed(TOP_OFF_BURST, "top_off_end", _top_off_end)
-    return _flow_step(_without(changes, own), (end,))
+    changes = _without({"ac_input_power": AC_CHARGE_POWER}, own)
+    return _flow_step(changes, state, (end,), own=own)
 
 
 def _top_off_end(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
@@ -1767,13 +1976,7 @@ def _top_off_end(_values: Mapping[str, Value], state: Mapping[str, Value]) -> St
     top, clear = _top_off_band(int(state["charging_limit_value"]))
     if int(state[PACK_SOC]) < clear - 1:
         return Step()
-    flow = FLOW_OUT if state["total_output_power"] else FLOW_IDLE
-    changes: dict[str, Value] = {
-        "ac_input_power": 0,
-        "charge_discharge_status": flow,
-        PACK_SOC: top,
-    }
-    return _flow_step(changes)
+    return _flow_step({"ac_input_power": 0, PACK_SOC: top}, state)
 
 
 #: The OTA precheck (``ota_precheck_update``, a1783-control.md ``4089``): 0 2
@@ -1858,16 +2061,6 @@ def _floor_exit_clear(_values: Mapping[str, Value], state: Mapping[str, Value]) 
     return Step(values={DISABLE: BATTERY_ONLY_OFF}, then=(wake,))
 
 
-def _other_input_charging(params: ParameterDict) -> bool:
-    """Whether a DC input or the alternator charger feeds the unit."""
-    if decode_field(params, "a8", DcInput).pv1_input_power:
-        return True
-    if "ce" not in params:
-        return False
-    mode = decode_field(params, "ce", Alternator).external_device_mode
-    return bool(mode == ExternalDeviceMode.CHARGING)
-
-
 def _battery_only_on(params: ParameterDict) -> bool:
     """Whether ``a4[31]`` holds Battery-Only Power on (state 1, AC input disabled)."""
     return bool(decode_field(params, "a4", Settings)[DISABLE] == BATTERY_ONLY_ON)
@@ -1949,8 +2142,9 @@ def _port_power(
 ) -> Step:
     """Draw the device's power on an attached ``port``, into the output total.
 
-    ``a5[1]`` goes 0 -> 1 when that makes the unit discharge (2026-09-01 02:26:46).
-    A port detached again first draws nothing (2026-09-24 05:18:22).
+    The port flow follows: ``a5[1]`` 0 -> 1 with the main on the bus and no
+    input (2026-09-01 02:26:46). A port detached again first draws nothing
+    (2026-09-24 05:18:22).
     """
     if state[f"{port}_output_status"] != 1:
         return Step()
@@ -1961,9 +2155,7 @@ def _port_power(
         f"{port}_output_power": power,
         "total_output_power": total,
     }
-    if state["charge_discharge_status"] == FLOW_IDLE and total:
-        changes["charge_discharge_status"] = FLOW_OUT
-    return _flow_step(_without(changes, own))
+    return _flow_step(_without(changes, own), state, own=own)
 
 
 #: ``0403``: MainMcu's own event push, ``a1 01 31 · a2 02 01 <code>`` with no
@@ -2116,16 +2308,79 @@ def _screen_off(_values: Mapping[str, Value], _state: Mapping[str, Value]) -> St
 #: "When the display board posts c490".
 C490_PERIOD = 540.0
 C490_POST = "c490_post"
+#: ``usage_stats_tick`` accumulates every 9 s and queues on every 60th (540 s).
+#: ``c490_queue`` fails with no link up (BLE authorized, or bound and on WiFi);
+#: then, hidden ``c490_pending``, every accumulation queues until one succeeds,
+#: the 540 s grid untouched (firmware/mainmcu.md "c490 gates and cadence").
+C490_ACCUMULATION = 9.0
+C490_ACCUMULATIONS = 60
+C490_PENDING = "c490_pending"
+#: The ``c421`` stream's period, the live values' draw period: ``c421_change_tick``
+#: runs on a 1000-tick periodic timer, pushes ~1.0 s apart (a1783-control.md
+#: ``4057``).
+STREAM_PERIOD = 1.0
 
 
-def _c490_post(_values: Mapping[str, Value], _state: Mapping[str, Value]) -> Step:
-    """Post the ``0490``, the device-point switch and the link allowing, and re-arm.
+#: ``.14.25``: each pack's MainBMS turns its counter page 0..3 every 3 601 calls
+#: of its 10 Hz ``coulomb_integrate`` (c490-schema.md ``page_index_get``).
+COUNTER_PAGE_PERIOD = 360.1
+COUNTER_PAGE_EVENT = "counter_page"
+COUNTER_PAGES = 4
+SECONDS_PER_HOUR = 3600
+#: Each pack's page, its ``.14.26`` hours, the hidden seconds its counters hold,
+#: and whether it is the expansion's. The four counters start at the recording's
+#: hours and count on; their zeroings (charge end, full charge, the OCV SET)
+#: aren't modeled (a1783-telemetry.md "``.14.25`` / ``.14.26`` pages").
+COUNTER_PAGE_FIELDS = (
+    ("counter_page", "counter_page_hours", "counter_page_seconds", False),
+    (
+        "sub_package_counter_page",
+        "sub_package_counter_page_hours",
+        "sub_package_counter_page_seconds",
+        True,
+    ),
+)
 
-    A post due with the switch off or no authorized link goes unsent.
+
+def _counter_page_tick(
+    _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Turn each attached pack's counter page and count the period into its hours."""
+    changes: dict[str, Value] = {}
+    for page, hours, counted, expansion in COUNTER_PAGE_FIELDS:
+        attached = not expansion or state.get("sub_package_connection_status")
+        if page not in state or not attached:
+            continue
+        held = state.get(counted, int(state[hours]) * SECONDS_PER_HOUR)
+        seconds = float(held) + COUNTER_PAGE_PERIOD
+        changes |= {
+            page: (int(state[page]) + 1) % COUNTER_PAGES,
+            hours: int(seconds // SECONDS_PER_HOUR),
+            counted: seconds,
+        }
+    tick = Timed(COUNTER_PAGE_PERIOD, COUNTER_PAGE_EVENT, _counter_page_tick)
+    return Step(values=changes, then=(tick,))
+
+
+def _c490_accumulation(
+    count: int, _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Queue the ``0490`` on the 60th accumulation, or on each one while pending.
+
+    ``count`` is this accumulation's place in the 540 s period. The switch off
+    queues nothing; with no link up the post stays pending.
     """
-    return Step(
-        pushes=(MSGTYPE_490,), then=(Timed(C490_PERIOD, C490_POST, _c490_post),)
-    )
+    changes: dict[str, Value] = {}
+    pushes: tuple[int, ...] = ()
+    if (not count or state.get(C490_PENDING)) and state.get(DEVICE_POINT_SWITCH, 1):
+        linked = state[LINK] or state[CLOUD]
+        changes[C490_PENDING] = int(not linked)
+        pushes = (MSGTYPE_490,) if linked else ()
+    pending = changes.get(C490_PENDING, state.get(C490_PENDING))
+    step = 1 if pending else C490_ACCUMULATIONS - count
+    accumulate = partial(_c490_accumulation, (count + step) % C490_ACCUMULATIONS)
+    then = (Timed(step * C490_ACCUMULATION, C490_POST, accumulate),)
+    return Step(values=changes, pushes=pushes, then=then)
 
 
 #: The ``0503`` usage pass: a 10 s timer from the display board's start that,
@@ -2375,7 +2630,7 @@ def _backup_window(
         delay = max(min(edges) - now - 1, 0) or BACKUP_PASS
         later = partial(_backup_window, reports)
         then = (Timed(delay, BACKUP_WINDOW_EVENT, later),)
-    step = _flow_step(changes, then)
+    step = _flow_step(changes, state, then)
     return Step(values=step.values, pushes=pushes if reports else (), then=step.then)
 
 
@@ -2389,15 +2644,15 @@ def _window_event(code: int, start: int, end: int) -> dict[str, Value]:
 
 
 def _charge_to_main(state: Mapping[str, Value]) -> dict[str, Value]:
-    """Move an expansion's charge to a main pack below 100 % (21:00:04).
+    """Move an expansion's charge and the bus to a main pack below 100 % (21:00:04).
 
-    ``a5[1]`` goes 2 at once and ``a3[0]`` follows.
+    ``a5[1]`` shows the port flow (2) at once and ``a3[0]`` follows.
     """
     if state.get("sub_package_status") != FLOW_CHARGE:
         return {}
     if int(state["battery_level"]) >= SOC_FULL // SOC_STEPS_PER_PERCENT:
         return {}
-    return {"sub_package_status": FLOW_IDLE, "charge_discharge_status": FLOW_CHARGE}
+    return _bus_to(BUS_MAIN, state, flowing=True)
 
 
 #: ``4091`` tag -> (the ``da`` leaf it writes, its width): a1783-control.md
@@ -2899,6 +3154,19 @@ class CGen2Layout(TableLayout):
     #: The model pushes ``0425`` event reports (the 0x59 off-grid alert, the
     #: backup windows): only those whose recordings carry a ``0425`` to build from.
     EVENT_REPORTS = False
+    #: Fields the layout derives from others, never drawn: each pack's battery
+    #: level from its SoC, the flow state (a1783-telemetry.md "Flow state") and
+    #: the ``0490`` input total.
+    derived = frozenset(
+        {
+            *SHOWN_SOC.values(),
+            "charge_discharge_status",
+            "work_status",
+            "sub_package_status",
+            ON_BUS_STATUS,
+            INPUT_TOTAL,
+        }
+    )
 
     def names(self, msgtype: int) -> frozenset[str]:
         """Return the names ``set_values()`` can reach.
@@ -2913,15 +3181,23 @@ class CGen2Layout(TableLayout):
             names.add(EVENT_SOC)
         if "d9" in self.FIELDS.get(msgtype, {}):
             names |= {TOU_TABLE, PACK_SOC, AUTO_PLANS, BUS_PACK, PATH_HOLD, ALT_BYTE_9}
+            names.add(LATCH_FROM)
         if OUTPUT_PORTS in self.GROUPS.get(msgtype, ()):
             names |= USB_C_DEVICES.keys()
         if msgtype == MSGTYPE_490:
             names.add(DEVICE_POINT_SWITCH)
         return frozenset(names)
 
+    def derive(self, state: Mapping[str, Value]) -> dict[str, Value]:
+        """Return the port flow, the pack currents and ``.23.4`` that ``state`` makes.
+
+        The same derivation a change of values and every step run.
+        """
+        return _net_flows(state)
+
     def locate(self, name: str) -> tuple[int, ...]:
         """Return the messages ``name`` reaches; the device-point switch, ``0490``."""
-        if name == DEVICE_POINT_SWITCH:
+        if name in {DEVICE_POINT_SWITCH, ON_BUS_STATUS, INPUT_TOTAL}:
             return (MSGTYPE_490,)
         return super().locate(name)
 
@@ -2947,12 +3223,14 @@ class CGen2Layout(TableLayout):
     def implied(self, values: Mapping[str, Value]) -> dict[str, Value]:
         """Return what ``values`` imply that they don't set themselves.
 
-        The stored plan of a ``tou_periods``, and no AC input with no mains.
+        The stored plan of a ``tou_periods``, no AC input with no mains, and each
+        pack's battery level from its 0.1 % SoC.
         """
         implied: dict[str, Value] = {}
         if "tou_periods" in values and TOU_TABLE not in values:
             periods = _bytes_value(values, "tou_periods")
             implied[TOU_TABLE] = _tou_table_of(periods)
+        implied |= _shown_levels(values)
         if values.get("ac_input_status") == AC_INPUT_NONE and (
             "ac_input_power" not in values
         ):
@@ -2960,11 +3238,12 @@ class CGen2Layout(TableLayout):
         return implied
 
     def started(self) -> tuple[Timed, ...]:
-        """Return the free-running timers: ``0490``, TOU usage, the subMCU dip."""
+        """Return the free-running timers: ``0490``, TOU, the subMCU dip, the pages."""
         return (
-            Timed(C490_PERIOD, C490_POST, _c490_post),
+            Timed(C490_PERIOD, C490_POST, partial(_c490_accumulation, 0)),
             Timed(USAGE_PASS, USAGE_EVENT, _usage_pass),
             Timed(SUB_MCU_PERIOD, SUB_MCU_EVENT, _sub_mcu_tick),
+            Timed(COUNTER_PAGE_PERIOD, COUNTER_PAGE_EVENT, _counter_page_tick),
         )
 
     def timed(
@@ -2975,15 +3254,20 @@ class CGen2Layout(TableLayout):
         a1783-control.md "``a4[31]`` witnesses" (the 2026-10-23 and 2026-10-26
         mains runs, the 2026-10-06 Battery-Only steps) and "``4102 a2`` and the
         USB-C ports". A name the change set itself stays as set; each step acts
-        only if its state still holds.
+        only if its state still holds. The port flow a change of the powers or
+        the bus holder makes is set at once, and the rest read it.
         """
         own = frozenset(name for name in after if before.get(name) != after.get(name))
-        mains_before, mains = before["ac_input_status"], after["ac_input_status"]
+        given = _name_set(after, GIVEN)
         events: list[Timed] = []
-        if mains_before != AC_INPUT_NONE and mains == AC_INPUT_NONE:
-            events += self._mains_lost(after, own)
-        if mains_before == AC_INPUT_NONE and mains != AC_INPUT_NONE:
-            events += _mains_back(after, own)
+        if own & FLOW_TRIGGERS:
+            kept = (own & CURRENT_NAMES) | given
+            after = {**after, **_net_flows(after, kept)}
+            events.append(Timed(0.0, PORT_FLOW, partial(_port_flow_change, kept)))
+        mains_before, mains = before["ac_input_status"], after["ac_input_status"]
+        if (mains_before == AC_INPUT_NONE) != (mains == AC_INPUT_NONE):
+            back = mains != AC_INPUT_NONE
+            events += _mains_edge(own, back=back, reports=self.EVENT_REPORTS)
         if DISABLE in own and mains != AC_INPUT_NONE:
             events += _battery_only_switched(before, after, own)
         if CAR_SOCKET in own:
@@ -2991,7 +3275,11 @@ class CGen2Layout(TableLayout):
         events += _timers_started(own, after)
         events += _soc_floors_crossed(before, after)
         events += _screen_wakes(own, after)
-        if "charge_discharge_status" in own and "work_status" not in own:
+        moved = _statuses(before) != _statuses(after)
+        if moved or given & STATUS_NAMES:
+            held = partial(_statuses_held, given & STATUS_NAMES, moved=moved)
+            events.append(Timed(0.0, STATUS_HELD_EVENT, held))
+        if moved:
             events.append(FLOW_FOLLOW)
         events += _handovers(before, after, own)
         events += _switch_events(before, after, own)
@@ -3002,18 +3290,6 @@ class CGen2Layout(TableLayout):
         events += _backup_passes(own, self.EVENT_REPORTS)
         events += _inv_version_events(before, after)
         return tuple(events)
-
-    def _mains_lost(
-        self, after: Mapping[str, Value], own: frozenset[str]
-    ) -> list[Timed]:
-        """Return the auto-off and the off-grid alert mains going draws."""
-        events = []
-        if after[DISABLE] == BATTERY_ONLY_ON and DISABLE not in own:
-            events.append(Timed(AUTO_OFF_DELAY, "auto_off", partial(_auto_off, own)))
-        if self.EVENT_REPORTS and after["outage_alert_switch"]:
-            alert = Timed(GRID_LOSS_ALERT_DELAY, "grid_loss_alert", _grid_loss_alert)
-            events.append(alert)
-        return events
 
     def state_changes(
         self, msgtype: int, plaintext: bytes, state: Mapping[str, Value]
@@ -3045,6 +3321,8 @@ class CGen2Layout(TableLayout):
             ui(1).build(given[EVENT_SOC])
         if ALT_BYTE_9 in given:
             ui(1).build(given[ALT_BYTE_9])
+        if LATCH_FROM in given:
+            ui(2).build(given[LATCH_FROM])
         if TOU_TABLE in given:
             _check_tou_table(given[TOU_TABLE])
         if BUS_PACK in given and given[BUS_PACK] not in {BUS_MAIN, BUS_EXPANSION}:
@@ -3072,7 +3350,7 @@ class CGen2Layout(TableLayout):
         if msgtype != MSGTYPE_503:
             return super().publishes(msgtype, payload_of)
         params = Parameters.parse(payload_of(MSGTYPE_421))
-        period = decode_field(params, "d9", Tou).tou_system_status
+        period = decode_field(params, "d9", Tou).tou_active_period
         return bool(period != TouPeriodType.NONE)
 
     def finish(
@@ -3097,7 +3375,7 @@ class CGen2Layout(TableLayout):
         if tou is not None and RTC in values:
             codec, type_byte, _ = tou
             period = _active_period(params, values)
-            self._encode_field(params, "d9", codec, type_byte, tou_system_status=period)
+            self._encode_field(params, "d9", codec, type_byte, tou_active_period=period)
             held = _charge_held(params, values, period)
             ended = None if held else _hold_ended(params, values)
         if "a7" not in fields:
@@ -3126,33 +3404,36 @@ class CGen2Layout(TableLayout):
         *,
         work: bool = True,
     ) -> None:
-        """Show grid charging held off: AC input 0 W, and no AC-only charging state.
+        """Show grid charging held off: AC input 0 W, the port flow without it.
 
-        With no DC or alternator input, a charging ``a5[1]`` / ``c0[24]`` reads
-        the port flow left, output on or none, and with ``work`` a charging
-        ``a3[0]`` reads idle: the Peak hold, cloud ``0421`` 2026-10-21 15:49:53
-        (a1783-telemetry.md "Flow state"). Battery-Only Power leaves ``a3[0]``
-        to its stored lag (19:39:18 -> 19:39:22).
+        The bus holder's ``a5[1]`` / ``c0[24]`` reads the port flow of the DC
+        input against the output, and with ``work`` a charging ``a3[0]`` reads
+        idle unless the DC input still charges: the Peak hold, cloud ``0421``
+        2026-10-21 15:49:53 (a1783-telemetry.md "Flow state", the port-flow
+        code; ``c0[24]`` following each output step under the hold). Battery-Only
+        Power leaves ``a3[0]`` to its stored lag (19:39:18 -> 19:39:22).
         """
         for tag in ("a6", "a7"):
             codec, type_byte, _ = fields[tag]
             self._encode_field(params, tag, codec, type_byte, ac_input_power=0)
-        if _other_input_charging(params):
-            return
-        output = decode_field(params, "a6", MainData).total_output_power
-        flow = FLOW_OUT if output else FLOW_IDLE
+        main = decode_field(params, "a6", MainData)
+        flow = _port_flow(main)
         held = (
-            ("a3", "work_status", FLOW_IDLE),
-            ("a5", "charge_discharge_status", flow),
-            ("c0", "sub_package_status", flow),
+            ("a3", "work_status"),
+            ("a5", "charge_discharge_status"),
+            ("c0", "sub_package_status"),
         )
-        for tag, name, idle in held if work else held[1:]:
+        for tag, name in held if work else held[1:]:
             spec = fields.get(tag)
             if spec is None:
                 continue
             codec, type_byte, _ = spec
-            if decode_field(params, tag, codec)[name] == FLOW_CHARGE:
-                self._encode_field(params, tag, codec, type_byte, **{name: idle})
+            shown = decode_field(params, tag, codec)[name]
+            if tag == "a3":
+                if shown == FLOW_CHARGE and flow != FLOW_CHARGE:
+                    self._encode_field(params, tag, codec, type_byte, **{name: 0})
+            elif shown not in {FLOW_IDLE, flow}:
+                self._encode_field(params, tag, codec, type_byte, **{name: flow})
 
 
 class CGen2ExpansionLayout(CGen2Layout):

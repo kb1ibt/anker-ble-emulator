@@ -17,7 +17,7 @@ from .parameters import ParameterContainer, Parameters
 
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
     from .c_g2_490 import CG2_490
     from .frame import Frame
@@ -48,9 +48,23 @@ COMMAND = "command"
 #: The name the ``timed`` hook finds an on-unit event under (``unit_event``),
 #: as its name's bytes; absent otherwise.
 UNIT_EVENT = "unit_event"
+#: The name the ``timed`` hook finds the names a change set directly under (by
+#: name, a draw or a command's own values, not what they imply), sorted and
+#: newline-joined as bytes; absent for a change that set none.
+GIVEN = "given"
+
+
+def given(names: Iterable[str]) -> bytes:
+    """Return ``names`` as the ``GIVEN`` state value."""
+    return b"\n".join(sorted(name.encode() for name in names))
+
+
 #: The state name a frame built for MQTT finds set: the unit is bound and on
 #: WiFi to the cloud, where it has no BLE link.
 CLOUD = "cloud"
+#: The state name a timed event finds 1 under while an authorized BLE link is up
+#: (the module's wireless-state bit 0, set on authorizing).
+LINK = "link"
 
 
 @dataclass(frozen=True)

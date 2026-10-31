@@ -148,7 +148,7 @@ TOU_HOLD_CASES = [
 PACK_SOC_HOLD_CASES = [
     pytest.param({"pack_soc": 499}, 50, 1290, id="below-500"),
     pytest.param({"pack_soc": 500}, 50, 0, id="at-500"),
-    pytest.param({"pack_soc": None, "battery_level": 0}, 50, 0, id="battery-level-low"),
+    pytest.param({"pack_soc": 1000, "battery_level": 0}, 50, 0, id="battery-level-low"),
     pytest.param(
         {"pack_soc": 499, "battery_level": 100}, 50, 1290, id="battery-level-high"
     ),
@@ -1304,7 +1304,7 @@ async def test_the_bench_peak_holds_grid_charging_until_the_period_ends() -> Non
         fields = Parameters.parse(frame.payload)
         states.append(
             (
-                decode_field(fields, "d9", solix_c_gen2.Tou).tou_system_status,
+                decode_field(fields, "d9", solix_c_gen2.Tou).tou_active_period,
                 decode_field(fields, "a7", solix_c_gen2.AcOutput).ac_input_power,
                 decode_field(fields, "a1", GreedyBytes).hex(),
             )
@@ -1343,7 +1343,7 @@ def test_the_peak_end_ramps_ac_input_back_replays_2026_10_21() -> None:
         fields = Parameters.parse(decode(device.mqtt_frame(0x421)).payload)
         readings.append(
             (
-                decode_field(fields, "d9", solix_c_gen2.Tou).tou_system_status,
+                decode_field(fields, "d9", solix_c_gen2.Tou).tou_active_period,
                 decode_field(fields, "a7", solix_c_gen2.AcOutput).ac_input_power,
                 decode_field(fields, "a6", solix_c_gen2.MainData).ac_input_power,
             )
@@ -1384,7 +1384,7 @@ def test_a_held_period_running_into_another_keeps_holding() -> None:
     clock.advance(TO_16_00 + 9)
     fields = Parameters.parse(decode(device.mqtt_frame(0x421)).payload)
 
-    assert decode_field(fields, "d9", solix_c_gen2.Tou).tou_system_status == 2
+    assert decode_field(fields, "d9", solix_c_gen2.Tou).tou_active_period == 2
     assert decode_field(fields, "a7", solix_c_gen2.AcOutput).ac_input_power == 0
 
 
@@ -1435,7 +1435,7 @@ async def test_over_ble_no_period_activates() -> None:
 
     fields = Parameters.parse(status[-1].plaintext)
     assert (
-        decode_field(fields, "d9", solix_c_gen2.Tou).tou_system_status,
+        decode_field(fields, "d9", solix_c_gen2.Tou).tou_active_period,
         decode_field(fields, "a7", solix_c_gen2.AcOutput).ac_input_power,
         decode_field(fields, "a1", GreedyBytes).hex(),
     ) == (0, 1290, "31")
@@ -1477,7 +1477,7 @@ async def test_the_active_period_and_its_charge_hold(
 
     fields = Parameters.parse(decode(device.mqtt_frame(0x421)).payload)
     assert (
-        decode_field(fields, "d9", solix_c_gen2.Tou).tou_system_status,
+        decode_field(fields, "d9", solix_c_gen2.Tou).tou_active_period,
         decode_field(fields, "a7", solix_c_gen2.AcOutput).ac_input_power,
         decode_field(fields, "a1", GreedyBytes).hex(),
     ) == expected
@@ -1502,7 +1502,7 @@ def test_the_c1000_gen_2_shares_the_peak_hold() -> None:
     device.set_cloud(True)
     fields = Parameters.parse(decode(device.mqtt_frame(0x421)).payload)
 
-    assert decode_field(fields, "d9", solix_c_gen2.Tou).tou_system_status == 1
+    assert decode_field(fields, "d9", solix_c_gen2.Tou).tou_active_period == 1
     assert decode_field(fields, "a7", solix_c_gen2.AcOutput).ac_input_power == 0
 
 
@@ -1529,7 +1529,7 @@ def test_the_peak_hold_compares_the_main_pack_soc(
     device.set_cloud(True)
 
     fields = Parameters.parse(decode(device.mqtt_frame(0x421)).payload)
-    assert decode_field(fields, "d9", solix_c_gen2.Tou).tou_system_status == 1
+    assert decode_field(fields, "d9", solix_c_gen2.Tou).tou_active_period == 1
     assert (
         decode_field(fields, "a7", solix_c_gen2.AcOutput).ac_input_power
         == ac_input_power
@@ -1761,7 +1761,7 @@ async def test_the_bench_tou_writes_leave_the_plans_the_unit_reported() -> None:
             )
             acks.append(ack.plaintext.hex())
             plans.append(
-                (tou.backup_mode, tou.tou_periods.hex(), tou.tou_system_status)
+                (tou.backup_mode, tou.tou_periods.hex(), tou.tou_active_period)
             )
 
     assert acks == ["00a10131"] * len(TOU_BENCH)
@@ -1865,7 +1865,10 @@ def test_ota_readiness_is_set_in_the_push_and_the_reply_alike() -> None:
 
 
 #: The 2026-10-26 Kasa run (a1783-control.md "``a4[31]`` witnesses"): Battery-Only
-#: Power on, the outage alert on, mains in, the main pack at 18 % under a 95 % cap.
+#: Power on, the outage alert on, mains in, the main pack at 18 % under a 95 % cap
+#: and on the bus (``a5[1]`` 2 from 15:29:01), the expansion attached (its 5 %
+#: left at the recording's 90 %, which keeps the OTA precheck still). Its
+#: discharge latch counts from the main's own SoC.
 KASA_UNIT: dict[str, Value] = {
     "ac_input_disable_switch": 1,
     "outage_alert_switch": True,
@@ -1874,19 +1877,21 @@ KASA_UNIT: dict[str, Value] = {
     "battery_level": 18,
     "charging_limit_value": 95,
     "screen_switch": 0,
-    "work_status": 0,
-    "charge_discharge_status": 0,
+    "pack_on_bus": 1,
+    "discharge_latch_from": 180,
 }
 #: The ``4425`` the Kasa run's grid loss drew at 15:28:49: event 0x59, SoC 18 %.
 GRID_LOSS_4425 = ("4425", "a10131a2020159a3020412")
 
 
 def test_kasa_toggle_replays_bench() -> None:
-    """a1783-control.md "``a4[31]`` witnesses", 2026-10-26 15:28:45-15:29:02 EDT.
+    """a1783-control.md "``a4[31]`` witnesses", 2026-10-26 15:28:45-15:29:05 EDT.
 
-    Mains off for 6 s: ``a7[3]`` 2 -> 0 and ``a4[31]`` ``06`` -> ``0a`` in one
-    frame with the screen woken (15:28:45), the 0x59 alert 4 s on (:49), mains
-    back at :51, the auto-off cleared at :54, AC charging from 15:29:02.
+    Mains off for 6 s: ``a7[3]`` 2 -> 0, the flag's 0.1 s debounce, then
+    ``a4[31]`` ``06`` -> ``0a`` with the screen woken (one frame at 15:28:45);
+    the 0x59 alert on the 5th tick (:49); mains back at :51, the accept at :54;
+    the charge enable 8 s on at 118 W (15:29:01), ``a3[0]`` 2 (:02), the full
+    charge 5 s after the enable (:05).
     """
     clock = ManualClock()
     device = A1783(clock=clock)
@@ -1916,35 +1921,31 @@ def test_kasa_toggle_replays_bench() -> None:
         )
         outputs.clear()
 
+    def step(seconds: float) -> None:
+        clock.advance(seconds)
+        outputs.append(module.check_pushes())
+        note()
+
     device.set_values(ac_input_status=0)
-    note()
-    clock.advance(3.9)
-    outputs.append(module.check_pushes())
-    note()
-    clock.advance(0.1)
-    outputs.append(module.check_pushes())
-    note()
-    clock.advance(2)
+    for seconds in (0.1, 3.9, 0.1):
+        step(seconds)
+    clock.advance(1.9)
     device.set_values(ac_input_status=1)
     note()
-    clock.advance(3)
-    outputs.append(module.check_pushes())
-    note()
-    clock.advance(8)
-    outputs.append(module.check_pushes())
-    note()
-    clock.advance(2)
-    outputs.append(module.check_pushes())
-    note()
+    for seconds in (2.9, 0.1, 7.9, 0.1, 2, 3):
+        step(seconds)
 
     assert timeline == [
         ("0a", 1, 0, "0000", "0000", 0, 0, []),  # 15:28:45
         ("0a", 1, 0, "0000", "0000", 0, 0, []),
         ("0a", 1, 0, "0000", "0000", 0, 0, [GRID_LOSS_4425]),  # 15:28:49
         ("0a", 1, 1, "0000", "0000", 0, 0, []),  # 15:28:51
+        ("0a", 1, 1, "0000", "0000", 0, 0, []),
         ("02", 1, 1, "0000", "0000", 0, 0, []),  # 15:28:54
-        ("02", 1, 1, "b804", "b804", 0, 2, []),  # 15:29:01, AC in, a5[1] 2
-        ("02", 1, 1, "b804", "b804", 2, 2, []),  # 15:29:02, a3[0] 2
+        ("02", 1, 1, "0000", "0000", 0, 0, []),
+        ("02", 1, 1, "7600", "7600", 0, 2, []),  # 15:29:01, 118 W, a5[1] 2
+        ("02", 1, 1, "7600", "7600", 2, 2, []),  # 15:29:02, a3[0] 2
+        ("02", 1, 1, "b804", "b804", 2, 2, []),  # 15:29:05
     ]
 
 
@@ -2035,24 +2036,11 @@ def test_a_mains_loss_without_battery_only_moves_only_the_input() -> None:
     assert pushed(client, [out]) == []
 
 
-def test_the_alert_waits_out_a_short_loss() -> None:
-    """Assumed: mains back before the 4 s alert is due cancels it (debounced loss)."""
-    clock = ManualClock()
-    device = A1783(clock=clock)
-    device.set_values(**KASA_UNIT)
-    client = authorized_client(device, TOKEN)
-
-    device.set_values(ac_input_status=0)
-    clock.advance(2)
-    device.set_values(ac_input_status=1)
-    clock.advance(3)
-    out = device.negotiated_module.check_pushes()
-
-    assert pushed(client, [out]) == []
-
-
 def test_mains_lost_again_before_the_clear_keeps_the_auto_off() -> None:
-    """Back for 2 s only: the 3 s clear and the 11 s charge find mains out."""
+    """Back for 2 s only: the next loss settles the flag at 0 before it returns.
+
+    No accept, and so no charge enable.
+    """
     clock = ManualClock()
     device = A1783(clock=clock)
     device.set_values(**{**KASA_UNIT, "outage_alert_switch": False})
@@ -2086,19 +2074,23 @@ def test_battery_only_back_on_before_the_restart_stops_it() -> None:
 
 
 def test_mains_back_with_its_own_ac_input_power_starts_no_charge() -> None:
-    """The call's ``ac_input_power`` stands; the 11 s charge start isn't queued."""
+    """The call's ``ac_input_power`` stands past the charge enable and its ramp.
+
+    Its 300 W charges the main on the bus all the same: ``a3[0]`` 2 once its
+    20 samples pass (a1783-telemetry.md "Flow state").
+    """
     clock = ManualClock()
     device = A1783(clock=clock)
-    device.set_values(
-        **{**KASA_UNIT, "ac_input_disable_switch": 0, "ac_input_status": 0}
-    )
+    unit = {**KASA_UNIT, "ac_input_disable_switch": 0, "ac_input_status": 0}
+    device.set_values(**unit)
 
     device.set_values(ac_input_status=1, ac_input_power=300)
-    clock.advance(12)
-    device.negotiated_module.check_pushes()
+    for _ in range(17):
+        clock.advance(1)
+        device.negotiated_module.check_pushes()
     values, fields = next_0421(device)
 
-    assert (values["ac_input_power"], values["work_status"]) == (300, 0)
+    assert (values["ac_input_power"], values["work_status"]) == (300, 2)
     assert decode_field(fields, "a6", GreedyBytes)[2:4] == (300).to_bytes(2, "little")
 
 
@@ -2146,12 +2138,12 @@ def test_a_jump_settles_the_sequence_but_sends_no_alert() -> None:
 def test_ac_charging_after_mains_returns_follows_the_packs_caps(
     values: dict[str, Value], expected: tuple[int, int, int, int]
 ) -> None:
-    """a1783-telemetry.md "Flow state"; a1783-control.md 06:03:06 (the expansion).
+    """a1783-telemetry.md "Flow state"; a1783-control.md 06:03:00 (the expansion).
 
-    The main below its cap charges (``a5[1]`` 2, ``a3[0]`` 2 s later; read once
-    settled); at its cap an attached expansion below its own takes the charge
-    (``c0[24]`` 2) and the main's states stay 0; with every pack at its cap no
-    AC input comes.
+    The main below its cap charges (``a5[1]`` 2, ``a3[0]`` 2 s later); at its
+    cap an attached expansion below its own takes the charge (``c0[24]`` 2) and
+    the main's states stay 0; with every pack at its cap no AC input comes. Read
+    at the ramp's end: the accept 3 s on, the enable 8 s after, the ramp 5 s.
     """
     clock = ManualClock()
     device = A1783(clock=clock)
@@ -2161,13 +2153,12 @@ def test_ac_charging_after_mains_returns_follows_the_packs_caps(
             "ac_input_disable_switch": 0,
             "ac_input_status": 0,
             "sub_package_connection_status": 1,
-            "sub_package_status": 0,
             **values,
         }
     )
 
     device.set_values(ac_input_status=1)
-    clock.advance(13)
+    clock.advance(16)
     device.negotiated_module.check_pushes()
     state = next_0421(device)[0]
 
@@ -2223,7 +2214,8 @@ def test_battery_only_on_and_off_replays_the_2026_10_06_frames() -> None:
 
     Charging at 1208 W with mains in; Battery-Only on reads ``a7[3]`` 2 with AC
     input 0 W; off, ``a7[3]`` 1 and still 0 W, until charging restarts 7.5 s
-    on (the corpus: 6 and 9 s, its first sample a ramp's start).
+    on (the corpus: 6 and 9 s, its first sample a ramp's start): the power
+    stage's 118 W first, the full charge 5 s later.
     """
     clock = ManualClock()
     device = A1783(clock=clock)
@@ -2234,7 +2226,6 @@ def test_battery_only_on_and_off_replays_the_2026_10_06_frames() -> None:
             "ac_input_status": 1,
             "ac_input_power": 1208,
             "battery_level": 63,
-            "work_status": 2,
         }
     )
     timeline = []
@@ -2257,12 +2248,16 @@ def test_battery_only_on_and_off_replays_the_2026_10_06_frames() -> None:
     clock.advance(0.1)
     device.negotiated_module.check_pushes()
     note()
+    clock.advance(5)
+    device.negotiated_module.check_pushes()
+    note()
 
     assert timeline == [
         ("02", 1, "b804", "b804"),  # 19:38:27
         ("06", 2, "0000", "0000"),  # 19:39:18
         ("02", 1, "0000", "0000"),  # 19:40:42
         ("02", 1, "0000", "0000"),
+        ("02", 1, "7600", "7600"),
         ("02", 1, "b804", "b804"),
     ]
 
@@ -2270,30 +2265,41 @@ def test_battery_only_on_and_off_replays_the_2026_10_06_frames() -> None:
 @pytest.mark.parametrize(
     ("values", "expected"),
     [
-        pytest.param({"total_output_power": 26}, (0, 1, 0), id="ac-only-output-on"),
-        pytest.param({"total_output_power": 0}, (0, 0, 0), id="ac-only-no-output"),
-        pytest.param({"pv1_input_power": 80}, (2, 2, 0), id="dc-input-charging"),
+        pytest.param({"total_output_power": 26}, (0, 0, 0, 1), id="ac-only-output-on"),
+        pytest.param({"total_output_power": 0}, (0, 0, 0, 0), id="ac-only-no-output"),
+        pytest.param(
+            {
+                "pv1_input_power": 80,
+                "pack_on_bus": 1,
+                "pack_soc": 900,
+                "discharge_latch_from": 900,
+            },
+            (2, 2, 0, 0),
+            id="dc-input-charging",
+        ),
     ],
 )
 async def test_a_held_peak_shows_no_charging_only_ac_could_cause(
-    values: dict[str, Value], expected: tuple[int, int, int]
+    values: dict[str, Value], expected: tuple[int, int, int, int]
 ) -> None:
     """Cloud ``0421`` 2026-10-21 15:49:53 (a1783-telemetry.md "Flow state").
 
-    In the Peak hold ``a3[0]`` reads 0 and ``a5[1]`` the port flow (1 with
-    output on), unless a DC input still charges.
+    In the Peak hold ``a3[0]`` reads 0 and the bus holder's port flow drops to
+    the output's: ``c0[24]`` 1 with output on, the expansion holding the bus as
+    recorded. A DC input still charging the main on the bus keeps it charging.
     """
-    device = A1783(clock=ManualClock())
+    clock = ManualClock()
+    device = A1783(clock=clock)
     device.set_values(
         **{
             **TOU_UNIT,
-            "work_status": 2,
-            "charge_discharge_status": 2,
             "pv1_input_power": 0,
             "total_output_power": 0,
             **values,
         }
     )
+    clock.advance(2)  # a3[0] past its 20 samples
+    device.negotiated_module.check_pushes()
     plan = [
         (0xA1, b"\x21"),
         (0xA2, b"\x01\x01"),
@@ -2315,8 +2321,14 @@ async def test_a_held_peak_shows_no_charging_only_ac_could_cause(
     status = decode_field(fields, "a3", solix_c_gen2.Status)
     battery = decode_field(fields, "a5", solix_c_gen2.Battery)
     ac = decode_field(fields, "a6", solix_c_gen2.MainData).ac_input_power
-    assert decode_field(fields, "d9", solix_c_gen2.Tou).tou_system_status == 1
-    assert (status.work_status, battery.charge_discharge_status, ac) == expected
+    expansion = decode_field(fields, "c0", solix_c_gen2.Expansion)
+    assert decode_field(fields, "d9", solix_c_gen2.Tou).tou_active_period == 1
+    assert (
+        status.work_status,
+        battery.charge_discharge_status,
+        ac,
+        expansion.sub_package_status,
+    ) == expected
 
 
 def test_socket_taps_replay_the_2026_09_01_reattach() -> None:
@@ -2324,10 +2336,14 @@ def test_socket_taps_replay_the_2026_09_01_reattach() -> None:
 
     The on tap (02:26:41.696), PD1 ``[0]`` 1 at 43.096, the off tap at 43.547
     (PD1 holds), 86 W at 46.095 with ``a6[0:2]`` 86 and ``a5[1]`` 1. PD2, already
-    attached, and the empty PD3 don't move; nor do ``a3[0]``, ``ae``, ``a7``.
+    attached, and the empty PD3 don't move; nor do ``a3[0]``, ``ae``, ``a7``. The
+    main is on the bus, the expansion attached at 56 % (``c0`` 02:26:40.159).
     """
     clock = ManualClock()
     device = A1783(clock=clock)
+    device.set_values(
+        pack_on_bus=1, discharge_latch_from=1000, sub_package_battery_level=56
+    )
     client = authorized_client(device, TOKEN)
     module = device.negotiated_module
     timeline = [socket_and_ports(next_0421(device)[1])]  # 02:26:40.159
@@ -2366,18 +2382,17 @@ def test_socket_taps_replay_the_2026_09_01_reattach() -> None:
 
 
 def test_an_off_edge_alone_reattaches_a_port_dropped_with_the_socket_on() -> None:
-    """2026-10-08: PD1 dropped 01:22:39; socket off 11:40:57, ``aa`` 01 at :58, 86 W."""
+    """2026-10-08: PD1 dropped 01:22:39; socket off 11:40:57, ``aa`` 01 at :58, 86 W.
+
+    The expansion holds the bus: the 86 W shows in ``c0[24]`` 1, ``a5[1]`` 0
+    (c421 11:41:00.658).
+    """
     clock = ManualClock()
     device = A1783(clock=clock)
     device.set_values(car_charge1_output_status=1)
     clock.advance(5)
     device.negotiated_module.check_pushes()
-    device.set_values(
-        pd1_output_status=0,
-        pd1_output_power=0,
-        total_output_power=0,
-        charge_discharge_status=0,
-    )
+    device.set_values(pd1_output_status=0, pd1_output_power=0, total_output_power=0)
 
     device.set_values(car_charge1_output_status=0)
     clock.advance(1)
@@ -2385,16 +2400,11 @@ def test_an_off_edge_alone_reattaches_a_port_dropped_with_the_socket_on() -> Non
     attached = socket_and_ports(next_0421(device)[1])
     clock.advance(3)
     device.negotiated_module.check_pushes()
+    values, fields = next_0421(device)
 
     assert attached == (0, "010000", "010000", "000000", "0000", 0)
-    assert socket_and_ports(next_0421(device)[1]) == (
-        0,
-        "015600",
-        "010000",
-        "000000",
-        "5600",
-        1,
-    )
+    assert socket_and_ports(fields) == (0, "015600", "010000", "000000", "5600", 0)
+    assert values["sub_package_status"] == 1
 
 
 def test_an_attached_port_holds_through_the_edge() -> None:
@@ -2479,14 +2489,10 @@ def test_a_jump_past_the_reattach_settles_it() -> None:
     device.set_values(car_charge1_output_status=1)
     clock.jump(10)
     device.negotiated_module.check_pushes()
+    values, fields = next_0421(device)
 
-    assert socket_and_ports(next_0421(device)[1])[1:] == (
-        "015600",
-        "010000",
-        "000000",
-        "5600",
-        1,
-    )
+    assert socket_and_ports(fields)[1:] == ("015600", "010000", "000000", "5600", 0)
+    assert values["sub_package_status"] == 1
 
 
 @pytest.mark.parametrize("model", MODELS)
@@ -2627,7 +2633,6 @@ def test_a_car_timeout_is_a_socket_edge() -> None:
         pd1_output_status=0,
         pd1_output_power=0,
         total_output_power=0,
-        charge_discharge_status=0,
         car_charger_timer_value=2,
     )
 
@@ -2840,6 +2845,8 @@ def test_the_mains_auto_off_wakes_the_screen_for_its_timeout() -> None:
     )
 
     device.set_values(ac_input_status=0)
+    clock.advance(0.1)
+    device.negotiated_module.check_pushes()
     woken = device.negotiated_module.values["screen_switch"]
     clock.advance(10)
     device.negotiated_module.check_pushes()
@@ -2891,14 +2898,57 @@ def test_a_0490_stop_misses_posts_and_keeps_the_grid() -> None:
     assert len(pushed(client, [module.check_pushes()])) == 1
 
 
-def test_the_0490_grid_runs_without_a_link() -> None:
-    """2026-09-19: back at 18:54:34, 94 x 540 s after 04:48:33, the link idle between.
+def test_a_0490_due_in_a_link_gap_goes_out_on_the_next_accumulation() -> None:
+    """firmware/mainmcu.md: ``c490_queue`` fails with no link, then retries every 9 s.
 
-    A post due with no link goes unsent; a link up at 1000 s gets the 1080 s one.
+    The 540 s post falls due before any link; a link authorized at 1000 s gets it
+    on the 1008 s accumulation, and the next post is back on the grid at 1080 s.
     """
     clock = ManualClock()
     device = A1783(clock=clock)
     clock.advance(1000)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    posts = []
+
+    for step in (7, 1, 71, 1):
+        clock.advance(step)
+        posts.append(len(pushed(client, [module.check_pushes()])))
+
+    assert posts == [0, 1, 0, 1]
+
+
+def test_a_link_gap_with_no_0490_due_adds_no_post() -> None:
+    """Down from 100 s to 500 s, no boundary between: the next post is the 540 s one."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    clock.advance(100)
+    module.check_pushes()
+    module.disconnect()
+    clock.advance(400)
+    client = authorized_client(device, TOKEN)
+
+    clock.advance(39)
+    early = pushed(client, [module.check_pushes()])
+    clock.advance(1)
+
+    assert early == []
+    assert len(pushed(client, [module.check_pushes()])) == 1
+
+
+def test_a_0490_due_on_the_cloud_is_queued_and_not_retried() -> None:
+    """Bound and on WiFi the queue succeeds (the cloud upload, not modeled).
+
+    Back on BLE at 1000 s, the next post is the 1080 s one.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_cloud(True)
+    clock.advance(1000)
+    device.negotiated_module.check_pushes()
+    device.set_cloud(False)
     client = authorized_client(device, TOKEN)
     module = device.negotiated_module
 
@@ -2907,6 +2957,24 @@ def test_the_0490_grid_runs_without_a_link() -> None:
     clock.advance(1)
 
     assert early == []
+    assert len(pushed(client, [module.check_pushes()])) == 1
+
+
+def test_a_0490_retry_waits_out_the_switch() -> None:
+    """The switch off keeps a missed post pending; on again, the next 9 s sends it."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    clock.advance(600)
+    device.set_values(device_point_switch=0)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    clock.advance(30)
+    held = pushed(client, [module.check_pushes()])
+    device.set_values(device_point_switch=1)
+
+    clock.advance(9)
+
+    assert held == []
     assert len(pushed(client, [module.check_pushes()])) == 1
 
 
@@ -3070,13 +3138,7 @@ def test_a_plan_window_starts_and_ends_on_its_own_replays_2026_10_06() -> None:
     """
     clock = ManualClock()
     device = A1783(clock=clock)
-    device.set_values(
-        **TOU_UNIT,
-        sub_package_status=2,
-        battery_level=96,
-        work_status=0,
-        charge_discharge_status=0,
-    )
+    device.set_values(**TOU_UNIT, battery_level=96, sub_package_battery_level=22)
     client = authorized_client(device, TOKEN)
     module = device.negotiated_module
     clock_set = [(0xA1, EPOCH_20_59_54.to_bytes(4, "little")), (0xA3, EDT)]
@@ -3326,7 +3388,12 @@ def test_a_window_start_leaves_a_full_main_pack_charging_the_expansion() -> None
     """The bus moves to the main only below 100 %; a full main leaves ``c0[24]`` 2."""
     clock = ManualClock()
     device = A1783(clock=clock)
-    device.set_values(sub_package_status=2, battery_level=100)
+    device.set_values(
+        ac_input_disable_switch=0,
+        ac_input_status=1,
+        ac_input_power=1210,
+        battery_level=100,
+    )
     client = authorized_client(device, TOKEN)
     module = device.negotiated_module
     clock_set = [(0xA1, EPOCH_19_53_36.to_bytes(4, "little")), (0xA3, EDT)]
@@ -3370,6 +3437,14 @@ def test_a_405e_without_its_group_selector_changes_nothing(
     assert backup_tail(next_0421(device)[0]) == before
 
 
+#: The port powers that make each port flow, from idle or output on.
+FLOW_POWERS: dict[int, dict[str, Value]] = {
+    2: {"pv1_input_power": 100},
+    1: {"total_output_power": 60},
+    0: {"total_output_power": 0},
+}
+
+
 @pytest.mark.parametrize(
     ("flow", "work"),
     [
@@ -3381,18 +3456,24 @@ def test_a_405e_without_its_group_selector_changes_nothing(
 def test_a3_follows_a5_after_its_20_samples(flow: int, work: int) -> None:
     """a1783-telemetry.md "``a5[1]`` vs ``a3[0]``": ``a3[0]`` lags 2 s (20 x 100 ms).
 
-    Wire: 2.0 s charge (2026-08-29), 3.0 / 2.4 s discharge, upper bounds.
+    Wire: 2.0 s charge (2026-08-29), 3.0 / 2.4 s discharge, upper bounds. The
+    main on the bus below its cap; PV in over the output charges it, output
+    alone discharges it, and ``a3[0]`` follows its current.
     """
     clock = ManualClock()
     device = A1783(clock=clock)
     start = 1 if flow == 0 else 0
     device.set_values(
-        ac_input_disable_switch=0, work_status=start, charge_discharge_status=start
+        ac_input_disable_switch=0,
+        pack_on_bus=1,
+        pack_soc=800,
+        discharge_latch_from=800,
+        total_output_power=60 * start,
     )
     clock.advance(5)
     device.negotiated_module.check_pushes()
 
-    device.set_values(charge_discharge_status=flow)
+    device.set_values(**FLOW_POWERS[flow])
     moved = next_0421(device)[0]
     clock.advance(1.9)
     device.negotiated_module.check_pushes()
@@ -3446,11 +3527,11 @@ def test_battery_only_on_leaves_a3_charging_for_its_lag() -> None:
             "ac_input_status": 1,
             "ac_input_power": 1210,
             "battery_level": 64,
-            "work_status": 2,
-            "charge_discharge_status": 2,
             "total_output_power": 0,
         }
     )
+    clock.advance(2)  # the main's charge past its 20 samples: a3[0] 2
+    device.negotiated_module.check_pushes()
 
     device.set_values(ac_input_disable_switch=1)
     switched = next_0421(device)[0]
@@ -3476,8 +3557,6 @@ def test_battery_only_on_leaves_a_dc_fed_charge_charging() -> None:
             "ac_input_disable_switch": 0,
             "ac_input_status": 1,
             "pv1_input_power": 80,
-            "work_status": 2,
-            "charge_discharge_status": 2,
         }
     )
 
@@ -3506,14 +3585,12 @@ CHARGING_MAIN = {
     "ac_input_power": 1210,
     "battery_level": 94,
     "charging_limit_value": 95,
-    "work_status": 2,
-    "charge_discharge_status": 2,
     "pack_soc": 940,
     "sub_package_connection_status": 1,
     "sub_package_battery_level": 5,
     "sub_package_pack_soc": 50,
-    "sub_package_status": 0,
     "pack_on_bus": 1,
+    "discharge_latch_from": 940,
     **MAIN_ON_BUS,
 }
 
@@ -3553,7 +3630,10 @@ def test_the_main_at_its_cap_hands_the_charge_over_replays_2026_10_06() -> None:
             {"sub_package_battery_level": 95, "sub_package_pack_soc": 950},
             id="expansion-at-its-cap",
         ),
-        pytest.param({"charge_discharge_status": 1}, id="main-not-charging"),
+        pytest.param(
+            {"ac_input_status": 0, "ac_input_power": 0, "total_output_power": 60},
+            id="main-not-charging",
+        ),
     ],
 )
 def test_no_cap_handover_without_an_expansion_to_charge(
@@ -3581,12 +3661,11 @@ EXPANSION_DISCHARGING = {
     "pack_soc": 960,
     "discharge_limit_value": 5,
     "total_output_power": 92,
-    "work_status": 0,
-    "charge_discharge_status": 0,
     "sub_package_connection_status": 1,
     "sub_package_battery_level": 6,
     "sub_package_pack_soc": 60,
-    "sub_package_status": 1,
+    "pack_on_bus": 2,
+    "discharge_latch_from": 960,
 }
 
 
@@ -3619,17 +3698,20 @@ def test_the_expansion_keeps_the_bus_off_its_line() -> None:
     device = A1783(clock=ManualClock())
     device.set_values(**{**EXPANSION_DISCHARGING, "sub_package_pack_soc": 59})
 
-    device.set_values(sub_package_battery_level=5)
+    device.set_values(sub_package_battery_level=5, sub_package_pack_soc=59)
 
     assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
 
 
 def test_a_charging_expansion_under_its_line_hands_back_the_cap_latch_clear() -> None:
-    """:170 tests the charge-cap latch, not the flow: under its cap, it's clear."""
+    """:170 tests the charge-cap latch, not the flow: under its cap, it's clear.
+
+    The DC input over the output charges the expansion on the bus.
+    """
     device = A1783(clock=ManualClock())
     device.set_values(**{**EXPANSION_DISCHARGING, "sub_package_pack_soc": 59})
 
-    device.set_values(sub_package_pack_soc=58, sub_package_status=2)
+    device.set_values(sub_package_pack_soc=58, pv1_input_power=100)
 
     assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
 
@@ -3642,12 +3724,11 @@ FLOOR_LEVER = {
     "battery_level": 100,
     "pack_soc": 1000,
     "total_output_power": 0,
-    "work_status": 0,
-    "charge_discharge_status": 0,
     "sub_package_connection_status": 1,
     "sub_package_battery_level": 56,
     "sub_package_pack_soc": 560,
-    "sub_package_status": 0,
+    "pack_on_bus": 2,
+    "discharge_latch_from": 1000,
 }
 
 
@@ -3723,7 +3804,7 @@ def test_a_main_leaving_charge_within_the_latch_keeps_the_charge() -> None:
     device.set_values(**CHARGING_MAIN)
 
     device.set_values(battery_level=95, pack_soc=950)
-    device.set_values(charge_discharge_status=0, work_status=0)
+    device.set_values(ac_input_power=0)
     clock.advance(2)
     device.negotiated_module.check_pushes()
 
@@ -3755,7 +3836,12 @@ def test_an_expansion_back_above_its_line_within_its_dwell_keeps_the_bus() -> No
     clock.advance(1)
     device.negotiated_module.check_pushes()
 
-    device.set_values(sub_package_status=1, sub_package_pack_soc=58, pack_soc=940)
+    device.set_values(
+        ac_input_power=0,
+        total_output_power=60,
+        sub_package_pack_soc=58,
+        pack_soc=940,
+    )
     clock.advance(1)
     device.negotiated_module.check_pushes()
     device.set_values(sub_package_pack_soc=60)
@@ -3768,7 +3854,7 @@ def test_an_expansion_back_above_its_line_within_its_dwell_keeps_the_bus() -> No
 def test_a_main_below_its_cap_takes_the_bus_at_8() -> None:
     """``.15.5`` reads 3 only quiet at or above the cap; inside the band, 8."""
     device = A1783(clock=ManualClock())
-    device.set_values(**{**FLOOR_LEVER, "battery_level": 80, "pack_soc": 800})
+    device.set_values(**{**FLOOR_LEVER, "pack_soc": 800, "discharge_latch_from": 800})
 
     device.set_values(discharge_limit_value=60)
 
@@ -3816,7 +3902,7 @@ def test_an_expansion_put_on_the_bus_under_its_line_hands_it_back() -> None:
     device = A1783(clock=ManualClock())
     device.set_values(**{**CHARGING_MAIN, "discharge_limit_value": 5})
 
-    device.set_values(pack_on_bus=2, sub_package_status=1)
+    device.set_values(pack_on_bus=2, ac_input_power=0, total_output_power=60)
 
     assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
 
@@ -3825,14 +3911,14 @@ def test_a_charge_retakes_the_discharge_latch_baseline() -> None:
     """The >= 1.0 % drop counts from the main's SoC when its charging stopped."""
     clock = ManualClock()
     device = A1783(clock=clock)
-    device.set_values(**{**FLOOR_LEVER, "battery_level": 80, "pack_soc": 800})
+    device.set_values(**{**FLOOR_LEVER, "pack_soc": 800, "discharge_latch_from": 800})
     device.set_values(discharge_limit_value=60)
     clock.advance(5)
     device.negotiated_module.check_pushes()
     device.set_values(discharge_limit_value=5, total_output_power=60)
 
-    device.set_values(pack_soc=805, charge_discharge_status=2)
-    device.set_values(charge_discharge_status=1)
+    device.set_values(pack_soc=805, pv1_input_power=100)
+    device.set_values(pv1_input_power=0)
     device.set_values(pack_soc=796)
     kept = tuple(next_0490(device)[name] for name in SLOTS)
     device.set_values(pack_soc=795)
@@ -3845,7 +3931,7 @@ def test_a_rise_without_charging_keeps_the_discharge_latch_baseline() -> None:
     """A SoC rise with no charge doesn't re-take the baseline."""
     clock = ManualClock()
     device = A1783(clock=clock)
-    device.set_values(**{**FLOOR_LEVER, "battery_level": 80, "pack_soc": 800})
+    device.set_values(**{**FLOOR_LEVER, "pack_soc": 800, "discharge_latch_from": 800})
     device.set_values(discharge_limit_value=60)
     clock.advance(5)
     device.negotiated_module.check_pushes()
@@ -3891,11 +3977,11 @@ def test_the_charge_cap_latch_clears_the_discharge_latch() -> None:
     device.set_values(sub_package_pack_soc=55)
     device.set_values(pack_soc=990)
 
-    device.set_values(pack_soc=1000, charge_discharge_status=2)
+    device.set_values(pack_soc=1000, pv1_input_power=100)
     clock.advance(1)
     device.negotiated_module.check_pushes()
     charging = tuple(next_0490(device)[name] for name in SLOTS)
-    device.set_values(sub_package_status=1)
+    device.set_values(pv1_input_power=0)
     clock.advance(4)
     device.negotiated_module.check_pushes()
     device.set_values(sub_package_pack_soc=60)
@@ -3908,7 +3994,7 @@ def test_the_expansion_path_hold_blocks_the_discharge_handover() -> None:
     """The expansion's ``raw+0x95`` set holds :164 off; cleared, the latch moves it."""
     clock = ManualClock()
     device = A1783(clock=clock)
-    device.set_values(**{**FLOOR_LEVER, "battery_level": 80, "pack_soc": 800})
+    device.set_values(**{**FLOOR_LEVER, "pack_soc": 800, "discharge_latch_from": 800})
     device.set_values(discharge_limit_value=60)
     clock.advance(5)
     device.negotiated_module.check_pushes()
@@ -3946,13 +4032,12 @@ def test_the_expansion_path_hold_blocks_the_charge_handover() -> None:
 @pytest.mark.parametrize(
     "values",
     [
-        pytest.param({"charge_discharge_status": 1}, id="discharge"),
+        pytest.param({"ac_input_power": 0, "total_output_power": 60}, id="discharge"),
         pytest.param(
             {"ac_input_status": 0, "ac_input_power": 0}, id="charge-source-gone"
         ),
         pytest.param(
-            {"charge_discharge_status": 0, "pack_soc": 940},
-            id="discharge-latch-armed",
+            {"ac_input_power": 0, "pack_soc": 940}, id="discharge-latch-armed"
         ),
     ],
 )
@@ -3978,10 +4063,20 @@ def test_the_cap_latch_clears(values: dict[str, Value]) -> None:
 
 
 def test_alternator_byte_9_sets_the_cap_latch_with_no_charge_source() -> None:
-    """:193's source is ``flag_00c7`` or ALT byte +9 == 2: +9 alone moves the charge."""
+    """:193's source is ``flag_00c7`` or ALT byte +9 == 2: +9 alone moves the charge.
+
+    The main charges (+5 A on ``.14.29``) with no port input to raise ``flag_00c7``.
+    """
     clock = ManualClock()
     device = A1783(clock=clock)
-    device.set_values(**{**CHARGING_MAIN, "ac_input_status": 0, "ac_input_power": 0})
+    device.set_values(
+        **{
+            **CHARGING_MAIN,
+            "ac_input_status": 0,
+            "ac_input_power": 0,
+            "pack_current": 500,
+        }
+    )
     device.set_values(alternator_byte_9=2)
 
     device.set_values(battery_level=95, pack_soc=950)
@@ -4005,7 +4100,7 @@ def test_the_source_going_holds_the_cap_latch_15_s_with_alternator_byte_9() -> N
     clock.advance(1)
     device.negotiated_module.check_pushes()
 
-    device.set_values(ac_input_status=0, ac_input_power=0, sub_package_status=0)
+    device.set_values(ac_input_status=0, ac_input_power=0)
     clock.advance(14)
     device.negotiated_module.check_pushes()
     held = tuple(next_0490(device)[name] for name in SLOTS)
@@ -4019,18 +4114,31 @@ def test_the_source_going_holds_the_cap_latch_15_s_with_alternator_byte_9() -> N
 def test_alternator_byte_9_alone_holds_the_cap_latch_15_s() -> None:
     """Set with ``flag_00c7`` gone, the latch clears 1 500 steps on.
 
-    The path hold kept the main on the bus; cleared after that, it moves nothing.
+    The main charges (+5 A on ``.14.29``) with no port input; the path hold kept
+    it on the bus, and cleared after the latch it moves nothing.
     """
     clock = ManualClock()
     device = A1783(clock=clock)
-    device.set_values(**{**CHARGING_MAIN, "ac_input_status": 0, "ac_input_power": 0})
+    device.set_values(
+        **{
+            **CHARGING_MAIN,
+            "ac_input_status": 0,
+            "ac_input_power": 0,
+            "pack_current": 500,
+        }
+    )
     device.set_values(alternator_byte_9=2, sub_package_path_hold=1)
     device.set_values(battery_level=95, pack_soc=950)
-    clock.advance(17)
+    clock.advance(1)
+    device.negotiated_module.check_pushes()
+    latched = device.negotiated_module.values["charge_cap_latch"]
+    clock.advance(16)
     device.negotiated_module.check_pushes()
 
     device.set_values(sub_package_path_hold=0)
 
+    assert latched == 1
+    assert device.negotiated_module.values["charge_cap_latch"] == 0
     assert tuple(next_0490(device)[name] for name in SLOTS) == (8, 9, 3, 3)
 
 
@@ -4043,7 +4151,7 @@ def test_the_source_back_within_15_s_keeps_the_cap_latch() -> None:
     device.set_values(battery_level=95, pack_soc=950)
     clock.advance(1)
     device.negotiated_module.check_pushes()
-    device.set_values(ac_input_status=0, ac_input_power=0, sub_package_status=0)
+    device.set_values(ac_input_status=0, ac_input_power=0)
     clock.advance(10)
     device.negotiated_module.check_pushes()
 
@@ -4057,7 +4165,8 @@ def test_the_source_back_within_15_s_keeps_the_cap_latch() -> None:
 def test_a_spent_cap_latch_waits_for_the_charge_source() -> None:
     """The clear count outlives the clear: +9 alone re-sets nothing.
 
-    With ``flag_00c7`` back it sets at once, its 1 s count run out before.
+    The main charging again (+5 A on ``.14.29``) with no source sets nothing; with
+    ``flag_00c7`` back it sets at once, its 1 s count run out before.
     """
     clock = ManualClock()
     device = A1783(clock=clock)
@@ -4066,11 +4175,11 @@ def test_a_spent_cap_latch_waits_for_the_charge_source() -> None:
     device.set_values(battery_level=95, pack_soc=950)
     clock.advance(1)
     device.negotiated_module.check_pushes()
-    device.set_values(ac_input_status=0, ac_input_power=0, sub_package_status=0)
+    device.set_values(ac_input_status=0, ac_input_power=0)
     clock.advance(19)
     device.negotiated_module.check_pushes()
 
-    device.set_values(charge_discharge_status=2)
+    device.set_values(pack_current=500)
     clock.advance(2)
     device.negotiated_module.check_pushes()
     spent = tuple(next_0490(device)[name] for name in SLOTS)
@@ -4100,12 +4209,12 @@ def test_the_1_s_charging_count_runs_once() -> None:
     device.set_values(battery_level=95, pack_soc=950)
     clock.advance(1)
     device.negotiated_module.check_pushes()
-    device.set_values(ac_input_status=0, ac_input_power=0, sub_package_status=0)
+    device.set_values(ac_input_status=0, ac_input_power=0)
     clock.advance(4)
     device.negotiated_module.check_pushes()
     back = tuple(next_0490(device)[name] for name in SLOTS)
 
-    device.set_values(ac_input_status=1, ac_input_power=1210, charge_discharge_status=2)
+    device.set_values(ac_input_status=1, ac_input_power=1210)
 
     assert back == (3, 9, 3, 3)
     assert tuple(next_0490(device)[name] for name in SLOTS) == (3, 3, 8, 9)
@@ -4123,7 +4232,7 @@ def test_the_cap_latch_keeps_an_idle_expansion_under_its_line_on_the_bus() -> No
     clock.advance(1)
     device.negotiated_module.check_pushes()
 
-    device.set_values(sub_package_status=0)
+    device.set_values(ac_input_power=0)
     clock.advance(4)
     device.negotiated_module.check_pushes()
 
@@ -4141,9 +4250,9 @@ def test_the_charge_source_going_hands_an_expansion_under_its_line_back() -> Non
     device.set_values(battery_level=95, pack_soc=950)
     clock.advance(1)
     device.negotiated_module.check_pushes()
-    device.set_values(sub_package_status=0)
+    device.set_values(ac_input_power=0)
 
-    device.set_values(ac_input_status=0, ac_input_power=0)
+    device.set_values(ac_input_status=0)
     clock.advance(4)
     device.negotiated_module.check_pushes()
 
@@ -4247,7 +4356,7 @@ def test_a_switched_off_expansion_takes_no_charge_at_the_cap() -> None:
     clock.advance(2)
     device.negotiated_module.check_pushes()
 
-    device.set_values(ac_input_status=1, ac_input_power=1210, charge_discharge_status=2)
+    device.set_values(ac_input_status=1, ac_input_power=1210)
     device.set_values(battery_level=95, pack_soc=950)
     clock.advance(2)
     device.negotiated_module.check_pushes()
@@ -4318,7 +4427,8 @@ def test_the_bus_holder_is_main_or_expansion() -> None:
 
 
 #: The 2026-10-20 04:58 bench unit: mains in, the main on the bus at its 95 % cap,
-#: a 6 W pad on PD2 draining it (a1783-telemetry.md "AC top-off burst").
+#: a 6 W pad on PD2 draining it, the expansion attached at 95 % (a1783-telemetry.md
+#: "AC top-off burst").
 TOPPED_OFF = {
     **KASA_UNIT,
     "ac_input_disable_switch": 0,
@@ -4328,9 +4438,8 @@ TOPPED_OFF = {
     "charging_limit_value": 95,
     "pack_soc": 950,
     "total_output_power": 6,
-    "work_status": 1,
-    "charge_discharge_status": 1,
-    "sub_package_status": 0,
+    "sub_package_battery_level": 95,
+    "discharge_latch_from": 950,
 }
 
 
@@ -4387,7 +4496,7 @@ def test_the_top_off_reopens_below_the_clear_threshold(cap: int, clear: int) -> 
     [
         pytest.param({"ac_input_status": 0}, id="no-mains"),
         pytest.param({"ac_input_disable_switch": 1}, id="battery-only"),
-        pytest.param({"sub_package_status": 1}, id="expansion-on-the-bus"),
+        pytest.param({"pack_on_bus": 2}, id="expansion-on-the-bus"),
     ],
 )
 def test_no_top_off_without_mains_on_a_main_on_the_bus(
@@ -4491,7 +4600,8 @@ def test_no_ota_precheck_push_without_a_changed_pair(values: dict[str, Value]) -
 
 
 #: 2026-10-15 05:44:42: Battery-Only Power on with mains in, the main at its 5 %
-#: floor (6.0 % in 0.1 %), discharging into the loads.
+#: floor (6.0 % in 0.1 %) on the bus, discharging into the loads, the expansion
+#: attached at 5 %.
 AT_THE_FLOOR = {
     **KASA_UNIT,
     "ac_input_disable_switch": 1,
@@ -4502,9 +4612,7 @@ AT_THE_FLOOR = {
     "charging_limit_value": 95,
     "pack_soc": 60,
     "total_output_power": 60,
-    "work_status": 1,
-    "charge_discharge_status": 1,
-    "sub_package_status": 0,
+    "discharge_latch_from": 60,
 }
 
 
@@ -4512,7 +4620,8 @@ def test_battery_only_drops_at_the_main_floor_replays_2026_10_15() -> None:
     """a1783-operation.md "Battery-Only Power at the floor", BLE 05:45:36-05:46:21.
 
     Under ``min_soc`` + 0.9 % the BMS's low-battery bit drops the mode: state
-    1 -> 2 and ``a7[3]`` 2 -> 1 at once, AC charging 4 s later; back above it,
+    1 -> 2 and ``a7[3]`` 2 -> 1 at once, AC charging 4 s later from the power
+    stage's 118 W first step (the frames: 96 -> 609 -> 1 227 W); back above it,
     state 2 -> 0 and the screen on 1 s later.
     """
     clock = ManualClock()
@@ -4533,7 +4642,7 @@ def test_battery_only_drops_at_the_main_floor_replays_2026_10_15() -> None:
     a4 = decode_field(dropped, "a4", GreedyBytes)
     assert (f"{a4[31]:02x}", decode_field(dropped, "a7", GreedyBytes)[3]) == ("0a", 1)
     assert (charging["ac_input_power"], charging["charge_discharge_status"]) == (
-        1208,
+        118,
         2,
     )
     a4 = decode_field(cleared, "a4", GreedyBytes)
@@ -4573,3 +4682,545 @@ def test_battery_only_set_again_before_the_clear_stays_on() -> None:
     device.negotiated_module.check_pushes()
 
     assert device.negotiated_module.values["ac_input_disable_switch"] == 1
+
+
+def test_each_pack_soc_shows_as_its_battery_level() -> None:
+    """``a5[2]`` = ``a6[8]`` = ``.23.1`` = floor(``.14.18`` / 10), per pack.
+
+    a1783-telemetry.md ``a6`` [8] and c490 ``.23``: the expansion's
+    ``.23.1#1`` and ``c0[25]`` from ``.14#1.18`` the same way.
+    """
+    device = A1783()
+
+    device.set_values(pack_soc=957, sub_package_pack_soc=449)
+    values, fields = next_0421(device)
+    post = next_0490(device)
+
+    assert (values["battery_level"], values["sub_package_battery_level"]) == (95, 44)
+    assert decode_field(fields, "a5", GreedyBytes)[2] == 95
+    assert decode_field(fields, "a6", GreedyBytes)[8] == 95
+    assert (post["battery_level"], post["sub_package_battery_level"]) == (95, 44)
+
+
+def test_a_battery_level_set_by_name_stays_as_set() -> None:
+    """Set together, the battery level by name wins over its ``pack_soc``."""
+    device = A1783()
+
+    device.set_values(battery_level=96, pack_soc=957)
+
+    assert next_0421(device)[0]["battery_level"] == 96
+
+
+def test_a_battery_level_set_alone_sets_its_pack_soc() -> None:
+    """Each pack's level set alone puts its 0.1 % SoC at the level's whole percent."""
+    device = A1783()
+
+    device.set_values(battery_level=94, sub_package_battery_level=37)
+    post = next_0490(device)
+
+    assert (post["pack_soc"], post["sub_package_pack_soc"]) == (940, 370)
+
+
+@pytest.mark.parametrize(
+    ("name", "in_0490"),
+    [
+        pytest.param("charge_discharge_status", False, id="a5[1]"),
+        pytest.param("sub_package_status", False, id="c0[24]"),
+        pytest.param("work_status", False, id="a3[0]"),
+        pytest.param("on_bus_pack_status", True, id=".23.7"),
+        pytest.param("total_input_power", True, id=".23.4"),
+    ],
+)
+def test_a_flow_state_set_by_name_stands(name: str, *, in_0490: bool) -> None:
+    """A flow-state name set alone reads as set; none of its inputs moved.
+
+    Battery-Only Power off and no mains: no AC hold reshapes the frame.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(ac_input_disable_switch=0, ac_input_status=0)
+
+    device.set_values(**{name: 1})
+    clock.advance(3)
+    device.negotiated_module.check_pushes()
+
+    assert (next_0490(device) if in_0490 else next_0421(device)[0])[name] == 1
+
+
+def test_an_input_total_set_beside_its_inputs_stands_until_they_next_change() -> None:
+    """``.23.4`` set with the AC and DC powers keeps; the next DC change refills it."""
+    device = A1783(clock=ManualClock())
+    device.set_values(
+        ac_input_disable_switch=0,
+        ac_input_status=1,
+        ac_input_power=600,
+        pv1_input_power=90,
+        total_input_power=5,
+    )
+    held = next_0490(device)["total_input_power"]
+
+    device.set_values(pv1_input_power=100)
+
+    assert held == 5
+    assert next_0490(device)["total_input_power"] == 700
+
+
+#: The main on the bus, both packs below their caps, no mains: an output step
+#: moves both statuses.
+MAIN_BELOW_CAPS = {
+    "pack_on_bus": 1,
+    "pack_soc": 800,
+    "sub_package_pack_soc": 800,
+    "discharge_latch_from": 800,
+    "ac_input_disable_switch": 0,
+    "ac_input_status": 0,
+}
+
+
+def test_a3_set_beside_a_pack_current_change_skips_its_follow() -> None:
+    """Output on with ``a3[0]`` 0 given: ``.23.7`` follows to 1, ``a3[0]`` stays 0."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**MAIN_BELOW_CAPS)
+    clock.advance(5)
+    device.negotiated_module.check_pushes()
+
+    device.set_values(total_output_power=60, work_status=0)
+    clock.advance(2)
+    device.negotiated_module.check_pushes()
+
+    assert next_0421(device)[0]["work_status"] == 0
+    assert next_0490(device)["on_bus_pack_status"] == 1
+
+
+@pytest.mark.parametrize(
+    ("names", "statuses"),
+    [
+        pytest.param({"work_status": 0}, (0, 1), id="a3[0]"),
+        pytest.param({"work_status": 0, "on_bus_pack_status": 0}, (0, 0), id="both"),
+    ],
+)
+def test_a_status_set_while_its_follow_waits_stays(
+    names: dict[str, Value], statuses: tuple[int, int]
+) -> None:
+    """Output on queues the follow; a status set 1 s in stands at 2 s, the rest follow.
+
+    The follow was queued before the set, by no later input change.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**MAIN_BELOW_CAPS)
+    clock.advance(5)
+    device.negotiated_module.check_pushes()
+
+    device.set_values(total_output_power=60)
+    clock.advance(1)
+    device.negotiated_module.check_pushes()
+    device.set_values(**names)
+    clock.advance(1)
+    device.negotiated_module.check_pushes()
+
+    assert (next_0421(device)[0]["work_status"], next_0490(device)[ON_BUS]) == statuses
+
+
+def test_the_next_status_move_ends_a_status_set_by_name() -> None:
+    """``a3[0]`` set to 2 holds through a queued follow; output off moves it to 0."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**MAIN_BELOW_CAPS)
+    clock.advance(5)
+    device.negotiated_module.check_pushes()
+    device.set_values(total_output_power=60)
+    clock.advance(1)
+    device.negotiated_module.check_pushes()
+    device.set_values(work_status=2)
+    clock.advance(2)
+    device.negotiated_module.check_pushes()
+    held = next_0421(device)[0]["work_status"]
+
+    device.set_values(total_output_power=0)
+    clock.advance(2)
+    device.negotiated_module.check_pushes()
+
+    assert held == 2
+    assert next_0421(device)[0]["work_status"] == 0
+
+
+def test_the_0490_input_total_sums_the_ac_and_dc_inputs() -> None:
+    """``.23.4`` = ``a6[2:4]`` + ``a6[4:6]``: AC in plus DC in, one state."""
+    device = A1783(clock=ManualClock())
+
+    device.set_values(
+        ac_input_disable_switch=0,
+        ac_input_status=1,
+        ac_input_power=600,
+        pv1_input_power=90,
+    )
+
+    assert next_0490(device)["total_input_power"] == 690
+
+
+#: ``.23.7``, the on-bus pack's status.
+ON_BUS = "on_bus_pack_status"
+#: (bus holder, values) -> (``a3[0]``, ``.23.7``) once 20 samples have passed.
+PACK_STATUS_CASES = [
+    pytest.param(1, {"pv1_input_power": 100}, (2, 2), id="main-charging"),
+    pytest.param(1, {"total_output_power": 60}, (1, 1), id="main-discharging"),
+    pytest.param(1, {"pack_current": 500}, (0, 0), id="main-charging-no-source"),
+    pytest.param(1, {"pack_current": 29}, (0, 0), id="main-under-0.3-a"),
+    pytest.param(2, {"total_output_power": 60}, (0, 1), id="expansion-discharging"),
+    pytest.param(2, {"pv1_input_power": 100}, (0, 0), id="expansion-charging"),
+]
+
+
+@pytest.mark.parametrize(("bus", "values", "statuses"), PACK_STATUS_CASES)
+def test_a3_and_the_on_bus_status_follow_the_pack_current(
+    bus: int, values: dict[str, Value], statuses: tuple[int, int]
+) -> None:
+    """a1783-telemetry.md "Flow state" ``a3[0]`` and ``.23.7``: +-0.3 A, 20 samples.
+
+    ``a3[0]`` is the main's status, 0 while the expansion holds the bus;
+    ``.23.7`` the bus holder's. A charge needs ``flag_00c7`` on the main, and
+    the expansion's 2 reads 0. Both packs sit below their caps.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(
+        pack_on_bus=bus,
+        pack_soc=800,
+        sub_package_pack_soc=800,
+        discharge_latch_from=800,
+        ac_input_disable_switch=0,
+        ac_input_status=0,
+    )
+    clock.advance(5)
+    device.negotiated_module.check_pushes()
+
+    device.set_values(**values)
+    early = (next_0421(device)[0]["work_status"], next_0490(device)[ON_BUS])
+    clock.advance(2)
+    device.negotiated_module.check_pushes()
+
+    assert early == (0, 0)
+    assert (next_0421(device)[0]["work_status"], next_0490(device)[ON_BUS]) == statuses
+
+
+def test_the_top_off_end_shows_its_pack_soc_as_the_battery_level() -> None:
+    """The burst ends with ``pack_soc`` at the set threshold, 95.7 %: 95 %."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**TOPPED_OFF)
+
+    device.set_values(pack_soc=949)
+    shown = next_0421(device)[0]["battery_level"]
+    clock.advance(60)
+    device.negotiated_module.check_pushes()
+
+    assert shown == 94
+    assert next_0421(device)[0]["battery_level"] == 95
+
+
+#: (bus holder, PV in, AC in, output) -> (``a5[1]``, ``c0[24]``).
+PORT_FLOW_CASES = [
+    pytest.param(1, 0, 0, 0, (0, 0), id="main-idle"),
+    pytest.param(1, 0, 0, 60, (1, 0), id="main-out"),
+    pytest.param(1, 100, 0, 60, (2, 0), id="main-in-over-out"),
+    pytest.param(1, 50, 0, 60, (1, 0), id="main-in-under-out"),
+    pytest.param(1, 60, 0, 60, (1, 0), id="main-in-equal-out"),
+    pytest.param(1, 0, 1210, 0, (2, 0), id="main-ac-in"),
+    pytest.param(2, 0, 0, 0, (0, 0), id="expansion-idle"),
+    pytest.param(2, 0, 0, 60, (0, 1), id="expansion-out"),
+    pytest.param(2, 100, 0, 60, (0, 2), id="expansion-in-over-out"),
+    pytest.param(2, 0, 1210, 0, (0, 2), id="expansion-ac-in"),
+]
+
+
+@pytest.mark.parametrize(("bus", "pv", "ac", "out", "flows"), PORT_FLOW_CASES)
+def test_the_port_flow_shows_on_the_bus_holder(
+    bus: int, pv: int, ac: int, out: int, flows: tuple[int, int]
+) -> None:
+    """a1783-telemetry.md "Flow state": ``a5[1]`` / ``c0[24]`` from the port powers.
+
+    The port-flow code is 2 with Σ input over Σ output, 0 with no output, else
+    1, no debounce; ``a5[1]`` carries it while the main holds the bus and
+    ``c0[24]`` while the expansion does, the other reading 0.
+    """
+    device = A1783(clock=ManualClock())
+    device.set_values(pack_on_bus=bus, ac_input_disable_switch=0, ac_input_status=1)
+
+    device.set_values(pv1_input_power=pv, ac_input_power=ac, total_output_power=out)
+    values = next_0421(device)[0]
+
+    assert (values["charge_discharge_status"], values["sub_package_status"]) == flows
+
+
+def test_the_port_flow_moves_with_the_bus() -> None:
+    """The holder changing moves the code from ``c0[24]`` to ``a5[1]``."""
+    device = A1783(clock=ManualClock())
+    device.set_values(pack_on_bus=2, total_output_power=60)
+
+    device.set_values(pack_on_bus=1)
+    values = next_0421(device)[0]
+
+    assert (values["charge_discharge_status"], values["sub_package_status"]) == (1, 0)
+
+
+def test_with_no_expansion_the_main_shows_the_port_flow() -> None:
+    """The C1000 Gen 2 has no ``c0``: ``a5[1]`` always carries the code."""
+    device = A1763(clock=ManualClock())
+
+    device.set_values(pv1_input_power=100, total_output_power=60)
+
+    assert next_0421(device)[0]["charge_discharge_status"] == 2
+
+
+def test_a_reattached_port_over_the_input_shows_output() -> None:
+    """Charging at 50 W from PV, PD1's 86 W back after a socket tap outweighs it: 1.
+
+    The port power step shows the port flow, not only idle to output.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    client = authorized_client(device, TOKEN)
+    device.set_values(pack_on_bus=1, pv1_input_power=50)
+    charging = next_0421(device)[0]["charge_discharge_status"]
+
+    for on in (1, 0):
+        command(device, client, 0x102, [(0xA2, bytes([0x01, on]))])
+        clock.advance(2)
+        device.negotiated_module.check_pushes()
+    clock.advance(4)
+    device.negotiated_module.check_pushes()
+    values = next_0421(device)[0]
+
+    assert charging == 2
+    assert (values["total_output_power"], values["charge_discharge_status"]) == (86, 1)
+
+
+def test_a_port_flow_change_re_derives_the_pack_current() -> None:
+    """``.14.29`` / ``.14#1.29``: the net port flow over the bus holder's voltage.
+
+    10 mA = W x 1000 / V in 0.1 V (a1783-telemetry.md "Flow state", current
+    source); the main at 53.5 V, the expansion at 53.2 V; the other pack 0.
+    """
+    device = A1783(clock=ManualClock())
+    device.set_values(pack_on_bus=1, discharge_latch_from=1000)
+    currents = []
+    for values in (
+        {"pv1_input_power": 100},
+        {"total_output_power": 200},
+        {"pack_on_bus": 2},
+    ):
+        device.set_values(**values)
+        post = next_0490(device)
+        currents.append((post["pack_current"], post["sub_package_pack_current"]))
+
+    assert currents == [(187, 0), (-187, 0), (0, -188)]
+
+
+def test_the_0490_counter_page_turns_every_360_s() -> None:
+    """``.14.25`` / ``.14.26``: each pack's page advances every 3 601 calls at 10 Hz.
+
+    a1783-telemetry.md ``.14.25`` / ``.14.26`` and "pages"; c490-schema.md
+    ``page_index_get``. 540 s posts land 1.5 pages apart; the recorded main
+    reads page 3 at 707 h, the expansion page 0 at 14 h.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    pages = []
+    for _ in range(4):
+        clock.advance(540)
+        device.negotiated_module.check_pushes()
+        post = next_0490(device)
+        pages.append((post["counter_page"], post["sub_package_counter_page"]))
+    hours = next_0490(device)["counter_page_hours"]
+    clock.advance(1442)  # 3 602 s: the 10th turn, 3 601 s counted
+    device.negotiated_module.check_pushes()
+
+    assert pages == [(0, 1), (1, 2), (3, 0), (0, 1)]
+    assert hours == 707
+    assert next_0490(device)["counter_page_hours"] == 708
+
+
+def test_a_detached_expansion_s_counter_page_holds() -> None:
+    """With no expansion attached its page doesn't turn; the main's does."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(sub_package_connection_status=0)
+
+    clock.advance(400)
+    device.negotiated_module.check_pushes()
+    post = next_0490(device)
+
+    assert (post["counter_page"], post["sub_package_counter_page"]) == (0, 0)
+
+
+def test_a_pack_current_set_with_the_change_stays() -> None:
+    """Set beside a port-flow change, ``pack_current`` wins in that change."""
+    device = A1783(clock=ManualClock())
+    device.set_values(pack_on_bus=1, discharge_latch_from=1000)
+
+    device.set_values(pv1_input_power=100, pack_current=12)
+
+    assert next_0490(device)["pack_current"] == 12
+
+
+def test_the_auto_off_waits_for_the_power_stage_flag() -> None:
+    """a1783-control.md "``a4[31]`` witnesses": the auto-off keys on the AC-input flag.
+
+    The power stage's flag (``0x2000054a`` bit 0) drops with ``a7[3]`` and settles
+    after the input monitor's 10-tick, 10 ms debounce: ``a4[31]`` ``06`` -> ``0a``
+    0.1 s on.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**KASA_UNIT)
+
+    device.set_values(ac_input_status=0)
+    clock.advance(0.05)
+    device.negotiated_module.check_pushes()
+    early = decode_field(next_0421(device)[1], "a4", GreedyBytes)[31]
+    clock.advance(0.05)
+    device.negotiated_module.check_pushes()
+
+    assert early == 0x06
+    assert decode_field(next_0421(device)[1], "a4", GreedyBytes)[31] == 0x0A
+
+
+def test_the_accept_waits_for_the_power_stage_report() -> None:
+    """Mains back: the flag returns after the power stage's report and the debounce.
+
+    The report, 2.9 s (the bench's accept 2-3 s after ``a7[3]``), isn't in MainMcu;
+    the accept (state 2 -> 0; ``08`` -> ``00`` with the outage alert off) lands
+    3.0 s after ``a7[3]`` returns.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**KASA_UNIT, "outage_alert_switch": False})
+    device.set_values(ac_input_status=0)
+    clock.advance(1)
+    device.negotiated_module.check_pushes()
+
+    device.set_values(ac_input_status=1)
+    clock.advance(2.9)
+    device.negotiated_module.check_pushes()
+    early = decode_field(next_0421(device)[1], "a4", GreedyBytes)[31]
+    clock.advance(0.1)
+    device.negotiated_module.check_pushes()
+
+    assert early == 0x08
+    assert decode_field(next_0421(device)[1], "a4", GreedyBytes)[31] == 0x00
+
+
+def test_the_alert_commits_on_its_fifth_tick() -> None:
+    """The off-grid alert's 1 s tick commits the flag's drop on the 5th differing tick.
+
+    The first counted tick is taken at the flag's drop, so the ``0x59`` goes out
+    4 s after it: 4.1 s after ``a7[3]`` (15:28:45 -> :49 on the bench).
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**KASA_UNIT)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+
+    device.set_values(ac_input_status=0)
+    clock.advance(4.0)
+    early = pushed(client, [module.check_pushes()])
+    clock.advance(0.1)
+
+    assert [push for push in early if push[0] == "4425"] == []
+    assert pushed(client, [module.check_pushes()]) == [GRID_LOSS_4425]
+
+
+@pytest.mark.parametrize(
+    ("back_after", "alerts"),
+    [
+        pytest.param(1.0, [], id="flag-back-before-the-commit"),
+        pytest.param(1.2, [GRID_LOSS_4425], id="flag-back-after-it"),
+    ],
+)
+def test_a_flag_back_before_the_alert_commits_cancels_it(
+    back_after: float, alerts: list[tuple[str, str]]
+) -> None:
+    """Mains back resets the count once the flag returns (3 s on), not at ``a7[3]``."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**KASA_UNIT)
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+
+    device.set_values(ac_input_status=0)
+    clock.advance(back_after)
+    device.set_values(ac_input_status=1)
+    clock.advance(10)
+    out = pushed(client, [module.check_pushes()])
+
+    assert [push for push in out if push[0] == "4425"] == alerts
+
+
+def test_the_charge_enables_after_the_one_shot_and_ramps() -> None:
+    """a1783-control.md:870: the enable on the 1 s tick after the 7 s one-shot.
+
+    8 s after the accept (the bench: power 4-8 s after it), 118 W first, then the
+    full charge 5 s on (both bench runs).
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**KASA_UNIT, "outage_alert_switch": False})
+    module = device.negotiated_module
+    device.set_values(ac_input_status=0)
+    clock.advance(1)
+    module.check_pushes()
+    device.set_values(ac_input_status=1)
+    clock.advance(3)
+    module.check_pushes()
+    powers = []
+
+    for seconds in (7.9, 0.1, 4.9, 0.1):
+        clock.advance(seconds)
+        module.check_pushes()
+        powers.append(next_0421(device)[0]["ac_input_power"])
+
+    assert powers == [0, 118, 118, 1208]
+
+
+@pytest.mark.parametrize(
+    "on_at",
+    [pytest.param(4, id="before-the-enable"), pytest.param(10, id="in-the-ramp")],
+)
+def test_battery_only_on_holds_the_charge_enable_off(on_at: float) -> None:
+    """a1783-control.md:870: the charge enable is held 0 while Battery-Only is on."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**KASA_UNIT, "outage_alert_switch": False})
+    module = device.negotiated_module
+    device.set_values(ac_input_status=0)
+    clock.advance(1)
+    module.check_pushes()
+    device.set_values(ac_input_status=1)
+    clock.advance(3 + on_at)
+    module.check_pushes()
+
+    device.set_values(ac_input_disable_switch=1)
+    clock.advance(14 - on_at)
+    module.check_pushes()
+
+    assert next_0421(device)[0]["ac_input_power"] == 0
+
+
+def test_a_committed_return_posts_nothing() -> None:
+    """The flag's return commits on its 5th tick with no ``0425``."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**KASA_UNIT, "ac_input_disable_switch": 0})
+    client = authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(ac_input_status=0)
+    clock.advance(5)
+    module.check_pushes()
+
+    device.set_values(ac_input_status=1)
+    clock.advance(8)
+
+    assert [p for p in pushed(client, [module.check_pushes()]) if p[0] == "4425"] == []

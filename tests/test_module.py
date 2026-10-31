@@ -403,7 +403,9 @@ def test_an_action_gets_the_set_values_and_the_whole_state() -> None:
     rig.clock.advance(7.0)
     rig.module.check_pushes()
 
-    assert seen == [({"level": 1}, {"level": 1, "rtc": 7, "epoch": 7, "cloud": 0})]
+    assert seen == [
+        ({"level": 1}, {"level": 1, "rtc": 7, "epoch": 7, "cloud": 0, "link": 0})
+    ]
     rig.module.cloud = True
     rig.module.schedule(Timed(1.0, "event", record))
     rig.clock.advance(1.0)

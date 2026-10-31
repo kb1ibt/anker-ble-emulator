@@ -18,6 +18,7 @@ from construct import (
 )
 
 from anker_ble_emulator.layouts import STATUS_ACCEPTED, TYPE_UI, ui
+from anker_ble_emulator.live import LiveSource
 from anker_ble_emulator.module import AuthMode
 from anker_ble_emulator.parameters import (
     FieldGroup,
@@ -352,6 +353,7 @@ PROFILE = Profile(
     past_table_status=STATUS_ACCEPTED,
     layout=A91B2Layout(),
     burst=REALTIME_BURST,
+    live=LiveSource("a91b2_live.json", REALTIME_BURST.period),
     clock_lead=CLOCK_LEAD,
 )
 register(Product.A91B2, PROFILE)

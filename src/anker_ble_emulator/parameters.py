@@ -402,6 +402,8 @@ class TableLayout(StructFieldLayout, CommandDispatchLayout):
 
     FIELDS: ClassVar[Mapping[int, Mapping[str, FieldSpec]]] = MappingProxyType({})
     GROUPS: ClassVar[Mapping[int, tuple[FieldGroup, ...]]] = MappingProxyType({})
+    #: The fields it works out from others: none here.
+    derived: frozenset[str] = frozenset()
 
     def names(self, msgtype: int) -> frozenset[str]:
         """Return the names ``set_values()`` can reach in ``msgtype``."""
@@ -419,6 +421,13 @@ class TableLayout(StructFieldLayout, CommandDispatchLayout):
         """Return the messages with a named field matching ``name``."""
         msgtypes = dict.fromkeys([*self.FIELDS, *self.GROUPS])
         return tuple(msgtype for msgtype in msgtypes if name in self.names(msgtype))
+
+    def derive(
+        self,
+        state: Mapping[str, Value],  # noqa: ARG002  # nothing derives here
+    ) -> dict[str, Value]:
+        """Return the values that are pure functions of ``state``: none."""
+        return {}
 
     def implied(
         self,
@@ -541,6 +550,8 @@ class ScalarFieldLayout:
     """
 
     TELEMETRY: ClassVar[Mapping[int, tuple[ScalarField, ...]]] = MappingProxyType({})
+    #: The fields it works out from others: none here.
+    derived: frozenset[str] = frozenset()
 
     def names(self, msgtype: int) -> frozenset[str]:
         """Return the named fields of ``msgtype``; none if it has none."""
@@ -549,6 +560,13 @@ class ScalarFieldLayout:
     def locate(self, name: str) -> tuple[int, ...]:
         """Return the messages with a field called ``name``."""
         return tuple(m for m in self.TELEMETRY if name in self.names(m))
+
+    def derive(
+        self,
+        state: Mapping[str, Value],  # noqa: ARG002  # nothing derives here
+    ) -> dict[str, Value]:
+        """Return the values that are pure functions of ``state``: none."""
+        return {}
 
     def implied(
         self,

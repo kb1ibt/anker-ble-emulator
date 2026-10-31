@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from anker_ble_emulator.live import LiveSource
 from anker_ble_emulator.module import AuthMode
 from anker_ble_emulator.products import ModuleBuild, Outer, Path, Product
 
@@ -36,6 +37,7 @@ PROFILE = Profile(
     clock_keeps_blank=True,
     push_490=solix_c_gen2.PUSH_490_FIELDS,
     layout=solix_c_gen2.CGen2ExpansionLayout(),
+    live=LiveSource("a1783_live.json", solix_c_gen2.STREAM_PERIOD),
     module_replies={
         ModuleBuild.V0_3_3_0: (
             0x820,

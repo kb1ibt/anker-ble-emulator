@@ -100,6 +100,11 @@ strict = true
 python_version = "3.11"
 files = ["src", "tests", "tools"]
 
+# tools/solixble_theme_check.py runs from a SolixBLE checkout, not this venv.
+[[tool.mypy.overrides]]
+module = ["SolixBLE", "SolixBLE.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 addopts = [
     "--strict-markers",

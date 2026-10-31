@@ -19,29 +19,29 @@ When the app has several names for one field, the first is the emulator name: th
 | field | app name | emulator name | agree |
 |---|---|---|---|
 | `a2[0]` | `protocolVersion` | `protocol_version` | 96 % (constant 32) |
-| `a2[30]` | `voltageType` | `voltage_type` | constant 0 |
+| `a2[30]` | `voltageType` | `voltage_type` | constant 0; the position is the firmware's (MainMcu `tlv_a2_basicData` byte 30, the factory variant: `PiField/docs/re/a1783-telemetry.md:143`), and the app's key=value dump lists it between `packageVersion` (`a2[26:30]`) and `maxBatteryNum`, `workStatus` (the dump's wire order: `PiField/docs/re/anker-crypto-and-negotiation.md:20`) |
 | `a3[0]` | `workStatus` | `work_status` | 99 % |
 | `a3[1]` | `errorCode` | `error_code` | not re-checked (0, 25 and 40 seen) |
 | `a3[2]` | `packageCount` | `package_count` | 100 % |
 | `a3[3]` | `packageUseCount` | `package_use_count` | 100 % |
-| `a3[4:6]` | `maxInputPower` | `max_input_power` | constant 1800 |
+| `a3[4:6]` | `maxInputPower` | `max_input_power` | constant 1800; the position is the firmware's (`max_input_power_get`, `PiField/docs/re/a1783-telemetry.md:147`), between `packageUseCount` and `upgradeProgress` in the app's key=value dump (the dump's wire order: `PiField/docs/re/anker-crypto-and-negotiation.md:20`) |
 | `a3[6]` | `upgradeProgress` | `upgrade_progress` | 100 % |
 | `a3[7]` | `wifiSignalStrength` (dBm = byte / 2 − 100) | `wifi_signal_strength` | 100 % |
-| `a3[8:10]` | `mtuSize` | `mtu_size` | constant |
+| `a3[8:10]` | `mtuSize` | `mtu_size` | constant; the position is the firmware's (`fid10_op4e_ble_mtu`, `PiField/docs/re/a1783-telemetry.md:150`), between `wifiSignalStrength` and `silentRechargePower` in the app's key=value dump (the dump's wire order: `PiField/docs/re/anker-crypto-and-negotiation.md:20`) |
 | `a3[10:12]` | `silentRechargePower` | `silent_recharge_power` | 100 % |
-| `a3[12]` | `weakLightLockFlag` | `weak_light_lock_flag` | constant 0 |
+| `a3[12]` | `weakLightLockFlag` | `weak_light_lock_flag` | constant 0; the position is the firmware's (`PiField/docs/re/a1783-telemetry.md:152`), the last `a3` byte, after `silentRechargePower` and before `acTimerValue` (`a4[0:4]`) in the app's key=value dump (the dump's wire order: `PiField/docs/re/anker-crypto-and-negotiation.md:20`) |
 | `a4[0:4]` | `acTimerValue` | `ac_timer_value` | 100 % |
 | `a4[4:6]` | `acRechargePower` | `ac_recharge_power` | 99 % |
-| `a4[6]` | `acFrequency` | `ac_frequency` | constant 60 |
+| `a4[6]` | `acFrequency` | `ac_frequency` | constant 60; the position is the firmware's (S+0x25, set by `4101 a5` `ac_freq_set`: `PiField/docs/re/a1783-control.md:311`, `:719`), between `acRechargePower` and `acEnergySavingSwitch` in the app's key=value dump (the dump's wire order: `PiField/docs/re/anker-crypto-and-negotiation.md:20`) |
 | `a4[7]` | `acEnergySavingSwitch` | `ac_energy_saving_switch` | 100 % |
 | `a4[8:12]` | `carChargerTimerValue` | `car_charger_timer_value` | 100 % |
 | `a4[12]` | `carChargerEnergySavingSwitch` | `car_charger_energy_saving_switch` | 100 % |
 | `a4[13:15]` | `deviceStandbyTime` | `device_standby_time` | 100 % |
 | `a4[15:17]` | `screenOffTime` | `screen_off_time` | 100 % |
 | `a4[17]` | `lcdBacklightBrightness` | `lcd_backlight_brightness` | 100 % |
-| `a4[18]` | `ambientLightBrightness` | `ambient_light_brightness` | constant 0 |
-| `a4[19]` | `temperatureUnit` | `temperature_unit` | constant 1 |
-| `a4[20]` | `superFastChargeStatus` | `super_fast_charge_status` | constant |
+| `a4[18]` | `ambientLightBrightness` | `ambient_light_brightness` | constant 0; the firmware writes a literal 0 there (`PiField/docs/re/a1783-control.md:726`), and the name's position comes from the app's key=value dump, which lists `lcdBacklightBrightness` (`a4[17]`), `ambientLightBrightness`, `temperatureUnit`, `superFastChargeStatus`, `screenSwitch` (`a4[21]`) in that order (the dump's wire order: `PiField/docs/re/anker-crypto-and-negotiation.md:20`) |
+| `a4[19]` | `temperatureUnit` | `temperature_unit` | constant 1; the position is the firmware's (S+0x29, set by `4103 a5`: `PiField/docs/re/a1783-control.md:727`; the app action `action_set_system_params` sends `temperatureUnit`, `:647`), and the dump above pins it |
+| `a4[20]` | `superFastChargeStatus` | `super_fast_charge_status` | constant; the position is the firmware's (TM+0x14 bit 2, set by `4101 a7`, which `a4[20]` follows: `PiField/docs/re/a1783-control.md:368`, `:728`), and the dump above pins it |
 | `a4[21]` | `screenSwitch` | `screen_switch` | 100 % |
 | `a4[22]` | `memorySwitch` | `memory_switch` | 100 % |
 | `a4[23]` | `chargingLimitValue` | `charging_limit_value` | 100 % |
@@ -70,7 +70,6 @@ When the app has several names for one field, the first is the emulator name: th
 | `b2[1:3]` | `carCharge1OutputPower` | `car_charge1_output_power` | constant 0 (the socket never loaded); the position is the firmware's (`PiField/docs/re/a1783-telemetry.md` `b2`), and a C1000 Gen 2 was seen at `04 01 06 00`, 6 W (SolixBLE `tests/test_devices.py` `c1000g2_dc_on`) |
 | `c0` | `subPackageInfo[]`: `subPackageSN`, `subPackageNumber`, `subPackageVersion`, `subPackageTemperature`, `subPackageStatus`, `subPackageBatteryLevel`, `subPackageHealth`, `subPackageBlinkStatus`, `subPackageSwitchStatus`, `subPackageErrorCode`, `subPackageConnectionStatus`, `subPackageBalanceStatus`, `subPackageType` | `sub_package_sn` … `sub_package_type` | field order |
 | `ce` | `externalDeviceInfoList[]`: `externalDeviceProductCode`, `externalDeviceType`, `externalDeviceSn`, `externalDeviceVersion`; the mode and power have no app name | `external_device_product_code`, `external_device_sn`, `external_device_mode`, `external_device_output_power` | not checked |
-| `d9[0]` | `TOUSystemStatus` | `tou_system_status` | constant 0 |
 | `d9[1]` | `backupMode` | `backup_mode` | 99 % |
 | `d9[2]` | `TOUReservePower` | `tou_reserve_power` | 100 % |
 | `d9[3]`, `d9[4]` | `chargingLimitValue`, `dischargeLimitValue` (the `a4[23]`/`[24]` bytes) | as `a4` | 100 % |
@@ -82,11 +81,11 @@ When the app has several names for one field, the first is the emulator name: th
 | `d9` tail `[11:15]`, `[15:19]` | `backupStartTime`, `backupEndTime` | `backup_start_time`, `backup_end_time` | 100 % |
 | `da[0]` bit 7 | `screenSaverSwitch` | `screen_saver_switch` | 100 % |
 | `da[0]` bits 0-6 | `lcdTheme` | `lcd_theme` | 100 % |
-| `da[1]` | `themeDownloadState` | `theme_download_state` | constant 0 |
-| `da[2:6]` | `networkThemeID` | `network_theme_id` | constant 0 |
-| `da[6:10]` | `networkThemeCRC` | `network_theme_crc` | constant 0 |
+| `da[1]` | `themeDownloadState` | `theme_download_state` | constant 0; the position is the firmware's (`0x200064de`, set by `theme_download_done_cb`: `PiField/docs/re/a1783-control.md:475`, `:612`), after `screenSaverSwitch` / `lcdTheme` (`da[0]`) in the app's key=value dump (the dump's wire order: `PiField/docs/re/anker-crypto-and-negotiation.md:20`) |
+| `da[2:6]` | `networkThemeID` | `network_theme_id` | constant 0; the position is the firmware's (`4091 a3` → C[0x11]: `PiField/docs/re/a1783-control.md:476`), next in the dump |
+| `da[6:10]` | `networkThemeCRC` | `network_theme_crc` | constant 0; the position is the firmware's (`4091 a4` → C[0xc]: `PiField/docs/re/a1783-control.md:477`), next in the dump, before `lcdTimeFormat` (`da[10]`) |
 | `da[10]` | `lcdTimeFormat` | `lcd_time_format` | 100 % |
-| `da[11:13]` | `lcdStartTime`, `dayStartTime` | `lcd_start_time` | constant 480 |
+| `da[11:13]` | `lcdStartTime`, `dayStartTime` | `lcd_start_time` | constant 480; the position is the firmware's (`4091 a8` → C[2]: `PiField/docs/re/a1783-control.md:481`), the app's `action_set_screen_saver_params` sends `lcdStartTime` as `a8` (below), and the dump lists it between `lcdTimeFormat` and `lcdEndTime` (the dump's wire order: `PiField/docs/re/anker-crypto-and-negotiation.md:20`) |
 | `da[13:15]` | `lcdEndTime`, `dayEndTime` | `lcd_end_time` | 100 % |
 | `da[15]` | `lcdRepeatCycle` | `lcd_repeat_cycle` | 100 % |
 | `da[16]` | `dayNightSwitch` | `day_night_switch` | 100 % |
@@ -98,13 +97,13 @@ When the app has several names for one field, the first is the emulator name: th
 | `dc[1:5]` | `memorySwitchErrorTimestamp` | `memory_switch_error_timestamp` | not re-checked (0 and one epoch seen) |
 | `f9[0:4]` | `mcuVersion`, `version`, `deviceVersion`; `packageVersion` is the same 4 bytes read big-endian | `mcu_version` | 100 % |
 | `f9[4:8]` | `subMCUVersion` | `sub_mcu_version` | 100 % |
-| `f9[8:12]` | `MPPTVersion` | `mppt_version` | constant v0.0.0.0 |
+| `f9[8:12]` | `MPPTVersion` | `mppt_version` | constant v0.0.0.0; the firmware never writes the slot (`tlv_f9_DeviceVer`: `PiField/docs/re/a1783-telemetry.md:499`), between `subMCUVersion` and `INVVersion` in the app's key=value dump (the dump's wire order: `PiField/docs/re/anker-crypto-and-negotiation.md:20`) |
 | `f9[12:16]` | `INVVersion` | `inv_version` | 100 % |
 | `f9[16:20]` | `BMSVersion` | `bms_version` | 100 % |
 | `f9[20:24]` | none | `sub_package_version` (descriptive) | — |
 | `f9[24:28]` | `moduleVersion` | `module_version` | 100 % |
-| `fa[0]` … `fa[4]` | `supportACEnergyMode`, `supportCarChargeMode`, `supportParallelUpgrade`, `supportGetUpgradeInfo`, `stationProtocolVersion` | `support_ac_energy_mode`, `support_car_charge_mode`, `support_parallel_upgrade`, `support_get_upgrade_info`, `station_protocol_version` | constant |
-| `fa[5]` bits 7…0 | `supportSetCountryCode`, `supportChargingLimits`, `supportOutputStatus`, `supportScreenTimePeriod`, `supportUpgradeRecord`, `supportBackupDisaster`, `supportMemorySwitch`, `supportTransactionId` | `support_set_country_code` … `support_transaction_id` | constant |
+| `fa[0]` … `fa[4]` | `supportACEnergyMode`, `supportCarChargeMode`, `supportParallelUpgrade`, `supportGetUpgradeInfo`, `stationProtocolVersion` | `support_ac_energy_mode`, `support_car_charge_mode`, `support_parallel_upgrade`, `support_get_upgrade_info`, `station_protocol_version` | constant; the firmware writes them (`tlv_fa_configNegotiation`), named by the wire order of the app's key=value dump (`PiField/docs/re/a1783-telemetry.md:538`) |
+| `fa[5]` bits 7…0 | `supportSetCountryCode`, `supportChargingLimits`, `supportOutputStatus`, `supportScreenTimePeriod`, `supportUpgradeRecord`, `supportBackupDisaster`, `supportMemorySwitch`, `supportTransactionId` | `support_set_country_code` … `support_transaction_id` | constant; as `fa[0]`…`[4]`, bits LSB first (`PiField/docs/re/a1783-telemetry.md:538`, `:547`-`:548`) |
 | `fa[6]` bit 5 | none | `unknown_capability_6_5` (descriptive) | — |
 | `fa[6]` bits 4…0 | `supportAcInputDisable`, `supportOutageAlert`, `supportSilentRecharge`, `memorySwitchTwo`, `supportPPSTOU` | `support_ac_input_disable`, `support_outage_alert`, `support_silent_recharge`, `memory_switch_two`, `support_ppstou` | 100 %; `supportOutageAlert` 89 % (the misses are all in one firmware-update launch) |
 | `fd` | `transactionId` | `transaction_id` | 100 % |
