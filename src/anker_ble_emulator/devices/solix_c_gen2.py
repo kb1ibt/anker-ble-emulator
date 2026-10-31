@@ -1283,8 +1283,9 @@ CHARGE_RAMP_EVENT = "ac_charge_ramp"
 #: 6 s (2026-10-06 19:40:42) and 9 s (2026-10-26 16:34:10).
 BATTERY_ONLY_CHARGE_DELAY = 7.5
 #: The AC charge runs this far over the limit ``a4[4:6]``: the 1200 W limit's
-#: steady band (survey mode 1210 W); the modes at 800 / 1000 / 1100 / 1200 W are
-#: +8 / +13 / +22 / +10, and a second band runs at about +20.
+#: mode, 1210 W (a1783-telemetry.md "AC charge request"). The frame survey's
+#: ac_charge section (AC out 0, a4[20] 0) gives modes 808 / 1013 / 1122 / 1210 W
+#: at the 800 / 1000 / 1100 / 1200 W limits.
 CHARGE_OVER_LIMIT = 10
 AC_LIMIT = "ac_recharge_power"
 #: ``a3[4:6]`` ``maxInputPower``: ``max_input_power_get``, the AC input ceiling
@@ -1293,10 +1294,11 @@ MAX_INPUT = "max_input_power"
 AC_OUT = "ac_output_power"
 #: ``a4[20]``: Ultrafast Charge, which skips the limit.
 ULTRAFAST = "super_fast_charge_status"
-#: The recorded AC input with the limit skipped (AC out 0): the mode of the
-#: 1 808 frames at 1 553-1 673 W (p5-p95 1 624-1 648 W) in the Fast Charging
-#: Plan windows of 2026-09-18 and 2026-10-06. A recorded band, not a firmware
-#: value: the firmware requests ``maxInputPower`` less AC out.
+#: The recorded AC input with the limit skipped: the mode of the 1 808 frames
+#: at 1 553-1 673 W in the Fast Charging Plan windows (a1783-telemetry.md "AC
+#: charge request"), from the frame survey's ac_charge section (2026-09-18 and
+#: 2026-10-06, AC out 0; 1 450 BLE, 358 MQTT; p5-p95 1 624-1 648 W). A recorded
+#: band, not a firmware value: the firmware requests ``maxInputPower`` less AC out.
 PLAN_CHARGE_CAP = 1643
 #: What the charge request reads: a change of one moves a full charge. The
 #: backup window's type (``tou_setting_system_status``) is set by the window
