@@ -4,8 +4,8 @@
 import pytest
 from bleak import BleakClient
 
-from anker_ble_emulator import AS220, EmulatedBleakBackend, Outer
-from anker_ble_emulator.devices.as220 import AcOutput, Charger, Power
+from anker_ble_emulator import AS220, EmulatedBleakBackend, ManualClock, Outer
+from anker_ble_emulator.devices.as220 import AcOutput, AS220Settings, Charger, Power
 from anker_ble_emulator.devices.base import data_resource
 from anker_ble_emulator.devices.solix_c_gen2 import (
     Battery,
@@ -20,7 +20,9 @@ from anker_ble_emulator.devices.solix_c_gen2 import (
 from anker_ble_emulator.layouts import LayoutError, ui
 from anker_ble_emulator.mcu import REPLY
 from anker_ble_emulator.parameters import Parameters, decode_field
+from tests.fixtures.cgen2 import next_0421
 from tests.fixtures.client import SESSION, AppClient, BleakLink, settle
+from tests.fixtures.prime import advance, command, prime_client
 
 
 TOKEN = b"a5220000-5011-4000-b000-000000000001"
@@ -59,6 +61,60 @@ OVER_RATING = [
     pytest.param({"pv1_input_power": 401}, "solar", id="solar"),
     pytest.param({"ac_output_power": 3001}, "AC out", id="AC out peak"),
     pytest.param({"pd1_output_power": 119}, "USB", id="USB"),
+]
+#: Each ``4101``/``4103`` param as anker-solix-api#322 sent it, and what its
+#: next ``0421`` shows (PiField s2000-as220.md "Setters").
+SETTERS = [
+    pytest.param(
+        0x101,
+        [(0xA2, b"\x01\x00")],
+        {"ac_output_status": 0, "ac_pass_through_status": 0},
+        id="4101 a2 AC output",
+    ),
+    pytest.param(
+        0x101,
+        [(0xA4, b"\x02" + ui(2).build(1000))],
+        {"ac_recharge_power": 1000},
+        id="4101 a4 AC charge limit",
+    ),
+    pytest.param(
+        0x101, [(0xA7, b"\x01\x01")], {"super_fast_charge_status": 1}, id="4101 a7"
+    ),
+    pytest.param(
+        0x101,
+        [(0xAA, b"\x02" + ui(2).build(600))],
+        {"smart_ac_output_timeout": 600},
+        id="4101 aa Smart AC Output timeout",
+    ),
+    pytest.param(
+        0x103, [(0xA3, b"\x01\x03")], {"lcd_backlight_brightness": 3}, id="4103 a3"
+    ),
+    pytest.param(
+        0x103,
+        [(0xA4, b"\x02" + ui(2).build(300))],
+        {"screen_off_time": 300},
+        id="4103 a4",
+    ),
+    pytest.param(0x103, [(0xA5, b"\x01\x00")], {"temperature_unit": 0}, id="4103 a5"),
+    pytest.param(
+        0x103,
+        [(0xA6, b"\x02" + ui(2).build(1440))],
+        {"device_standby_time": 1440},
+        id="4103 a6",
+    ),
+    pytest.param(0x103, [(0xA8, b"\x01\x00")], {"memory_switch": 0}, id="4103 a8"),
+    pytest.param(
+        0x103,
+        [(0xAA, b"\x01\x5a"), (0xAB, b"\x01\x01")],
+        {"charging_limit_value": 90},
+        id="4103 aa max SoC",
+    ),
+    pytest.param(
+        0x103,
+        [(0xAA, b"\x01\x64"), (0xAB, b"\x01\x05")],
+        {"discharge_limit_value": 5},
+        id="4103 ab min SoC",
+    ),
 ]
 #: Input totals no AC in and solar could sum to, with what the refusal names.
 UNCARRIED_INPUT_TOTALS = [
@@ -135,7 +191,7 @@ def test_as220_shares_the_a1783_codecs_and_reads_f0_as_the_charger() -> None:
     versions = decode_field(fields, "f9", DeviceVersions)
     flags = decode_field(fields, "fa", Capabilities)
 
-    assert decode_field(fields, "f0", Charger).ac_input_status == 1
+    assert decode_field(fields, "f0", Charger).ac_pass_through_status == 1
     assert (
         tou.tou_reserve_power,
         tou.charging_limit_value,
@@ -188,8 +244,8 @@ def test_as220_named_values_reach_both_telemetry_frames() -> None:
         assert (power.total_input_power, power.total_output_power) == (1129, 7 + 12)
         assert ac.ac_output_power == 7
         assert decode_field(fields, "a5", Battery).charge_discharge_status == 2
-        # One app name, every tag that carries it.
-        assert (charger.ac_input_status, ac.ac_input_status) == (0, 0)
+        # f0[0] is the pass-through (AC out on, 1129 W in), apart from a7[3].
+        assert (charger.ac_pass_through_status, ac.ac_input_status) == (1, 0)
         assert (
             charger["_reserved"] == decode_field(recorded, "f0", Charger)["_reserved"]
         )
@@ -322,6 +378,94 @@ def test_as220_the_output_total_follows_ac_out_and_usb() -> None:
         device.set_values(total_output_power=121)
 
     assert module.values == before
+
+
+@pytest.mark.parametrize(("msgtype", "fields", "changes"), SETTERS)
+def test_as220_each_setter_param_shows_in_the_0421_after_its_ack(
+    msgtype: int, fields: list[tuple[int, bytes]], changes: dict[str, int]
+) -> None:
+    device = AS220()
+    client = prime_client(device, TOKEN)
+    layout = device.layout
+    assert layout is not None
+    before = next_0421(device)[0]
+
+    replies = command(device, client, msgtype, fields)
+
+    assert [cmd for cmd, _ in replies] == [f"4{msgtype | 0x800:03x}", "4421"]
+    assert replies[0][1] == "00a10131"
+    shown = layout.read(0x421, bytes.fromhex(replies[1][1]))
+    assert {name: shown[name] for name in changes} == changes
+    assert {name: before[name] for name in changes} != changes
+
+
+def test_as220_4103_a2_shows_in_the_0421_after_its_reply_s() -> None:
+    """The reply's ``0421`` still shows the old switch; its own ``0421`` follows."""
+    clock = ManualClock()
+    device = AS220(clock=clock)
+    client = prime_client(device, TOKEN)
+    layout = device.layout
+    assert layout is not None
+
+    replies = command(device, client, 0x103, [(0xA2, b"\x01\x01")])
+    early = advance(device, client, clock, 0.3)
+    command(device, client, 0x103, [(0xA2, b"\x01\x01")])
+    shown = advance(device, client, clock, 0.2)
+    off = command(device, client, 0x103, [(0xA2, b"\x01\x00")])
+    shown_off = advance(device, client, clock, 0.5)
+
+    assert layout.read(0x421, bytes.fromhex(replies[1][1]))["screen_switch"] == 0
+    assert early == []
+    assert [cmd for cmd, _ in shown] == ["4421"]
+    assert layout.read(0x421, bytes.fromhex(shown[0][1]))["screen_switch"] == 1
+    assert layout.read(0x421, bytes.fromhex(off[1][1]))["screen_switch"] == 1
+    assert layout.read(0x421, bytes.fromhex(shown_off[0][1]))["screen_switch"] == 0
+    assert "screen_switch_request" not in device.negotiated_module.values
+
+
+def test_as220_ac_pass_through_follows_the_ac_output_and_ac_in() -> None:
+    """``f0[0]`` is 1 with the AC output on and AC in over 0 W, apart from ``a7[3]``."""
+    device = AS220()
+
+    def passing() -> object:
+        return next_0421(device)[0]["ac_pass_through_status"]
+
+    recorded = passing()
+    device.set_values(ac_input_power=0)
+    no_input = passing()
+    device.set_values(ac_input_power=300)
+    charging = passing()
+    device.set_values(ac_output_status=0)
+    output_off = passing()
+    device.set_values(ac_input_status=0)
+    no_mains_flag = passing()
+    before = dict(device.negotiated_module.values)
+    with pytest.raises(TypeError, match="ac_pass_through_status follows"):
+        device.set_values(ac_pass_through_status=1)
+    after_refusal = dict(device.negotiated_module.values)
+    device.set_values(ac_pass_through_status=1, ac_output_status=1)
+
+    assert (recorded, no_input, charging, output_off, no_mains_flag) == (
+        1,
+        0,
+        1,
+        0,
+        0,
+    )
+    assert after_refusal == before
+    assert passing() == 1
+
+
+def test_as220_a4_carries_the_smart_ac_output_timeout_beside_the_country_code() -> None:
+    """``a4[26:28]`` is the app's ``countryCode``; ``a4[28:30]`` the timeout (min)."""
+    recorded = Parameters.parse(bytes.fromhex(data_resource("as220.json")["421"]))
+    settings = decode_field(recorded, "a4", AS220Settings)
+    short = AS220Settings.parse(bytes(26))
+
+    assert settings.smart_ac_output_timeout == 240
+    assert settings.tail.reserved[:2] == b"US"
+    assert (short.smart_ac_output_timeout, short.tail) == (0, None)
+    assert AS220Settings.build(short) == bytes(26)
 
 
 def test_as220_refuses_names_it_doesnt_carry() -> None:

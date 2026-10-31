@@ -10,32 +10,38 @@ and ``f8``.
 from __future__ import annotations
 
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from construct import Bytes, Struct
+from construct import Bytes, Container, ExprAdapter, Int16ul, Struct
 
 from anker_ble_emulator.layouts import TYPE_VAR, Value, ui
 from anker_ble_emulator.module import AuthMode
 from anker_ble_emulator.parameters import (
     FieldGroup,
     FieldSpec,
+    ParameterDict,
     TableLayout,
+    decode_request,
     leaf_zeros,
     one_field,
     struct_zeros,
 )
 from anker_ble_emulator.products import ModuleBuild, Outer, Path, Product
+from anker_ble_emulator.timed import Step, Timed
 
 from .base import Advert, ProductDevice, Profile, register
 from .solix_c_gen2 import (
+    AC_GROUP,
     AC_OUT,
     AC_OVER_CEILING,
     CAPABILITY_ZEROS,
     CHARGE_OVER_LIMIT,
+    LINE_COMMANDS,
     MSGTYPE_421,
     MSGTYPE_900,
     OUTPUT_FIELDS,
     SETTINGS_FIELDS,
+    TAIL_ZEROS,
     TOU_ZEROS,
     ULTRAFAST,
     VERSION_ZEROS,
@@ -76,15 +82,47 @@ AcOutput = Struct(
     "ac_input_power" / ui(2),
     "_reserved" / Bytes(5),
 )
-#: ``f0`` (4 B): ``[0]`` is 1 while the AC charger is plugged in (PR #65's
-#: unplug/replug test), the app's ``acInputStatus``; the rest isn't named.
-Charger = Struct("ac_input_status" / ui(1), "_reserved" / Bytes(3))
+#: ``f0`` (4 B): ``[0]`` is 1 while AC passes through, the AC output on with AC
+#: coming in (PiField s2000-as220.md "Telemetry"); no app name is known. The rest
+#: isn't named.
+PASSTHROUGH = "ac_pass_through_status"
+Charger = Struct(PASSTHROUGH / ui(1), "_reserved" / Bytes(3))
+#: ``a4[28:30]``, in the A1783 tail's reserved bytes: the Smart AC Output
+#: timeout in minutes (``4101 aa``); no app name is known. ``a4[26:28]``, the
+#: app's ``countryCode``, stays as recorded.
+SMART_AC_TIMEOUT = "smart_ac_output_timeout"
+TIMEOUT_IN_RESERVED = slice(2, 4)
+
+
+def _timeout_decode(obj: Container[Any], _: object) -> Container[Any]:
+    """Lift the Smart AC Output timeout out of the tail; 0 on the short block."""
+    out = Container(obj)
+    tail = out["tail"]
+    reserved = b"" if tail is None else tail.reserved[TIMEOUT_IN_RESERVED]
+    out[SMART_AC_TIMEOUT] = Int16ul.parse(reserved) if reserved else 0
+    return out
+
+
+def _timeout_encode(obj: Container[Any], _: object) -> Container[Any]:
+    """Put the timeout back in the tail; a short block has nowhere for it."""
+    out = Container(obj)
+    timeout = out.pop(SMART_AC_TIMEOUT)
+    tail = out.get("tail", TAIL_ZEROS)
+    if tail is not None:
+        reserved = bytearray(tail.reserved)
+        reserved[TIMEOUT_IN_RESERVED] = Int16ul.build(timeout)
+        out["tail"] = Container(tail, reserved=bytes(reserved))
+    return out
+
+
+#: ``a4``: the A1783's settings block, with the timeout named.
+AS220Settings = ExprAdapter(Settings, decoder=_timeout_decode, encoder=_timeout_encode)
 
 
 #: The typed tags. ``a4``/``a5``/``a8`` and ``d9``/``dc``/``f9``/``fa`` are
 #: the A1783's.
 TELEMETRY_FIELDS: dict[str, FieldSpec] = {
-    "a4": (Settings, 0x04, leaf_zeros(*SETTINGS_FIELDS)),
+    "a4": (AS220Settings, 0x04, leaf_zeros(*SETTINGS_FIELDS, SMART_AC_TIMEOUT)),
     "a5": (
         Battery,
         0x04,
@@ -181,9 +219,55 @@ def _tied_totals(
     return resolved
 
 
+#: ``4101``: the C Gen 2's AC group, and ``aa`` the Smart AC Output timeout
+#: (PiField s2000-as220.md "Setters").
+AC_PARAMS = {**AC_GROUP, "aa": (SMART_AC_TIMEOUT, ui(2))}
+SCREEN = "screen_switch"
+#: A ``4103 a2`` screen switch waiting to show.
+SCREEN_REQUEST = "screen_switch_request"
+#: ``4103 a2`` shows in the ``0421`` after its reply's, under a second on.
+SCREEN_DELAY = 0.5
+PASSTHROUGH_EVENT = "ac_pass_through"
+
+
+def _set_ac_params(request: ParameterDict) -> dict[str, Value] | None:
+    """Return the AC group's changed fields; any subset of its tags may be present."""
+    return decode_request(request, AC_PARAMS)
+
+
+def _set_system_params(request: ParameterDict) -> dict[str, Value] | None:
+    """Return the C Gen 2 system group's changes, the screen switch held back."""
+    changes = LINE_COMMANDS[0x103](request)
+    if changes is not None and SCREEN in changes:
+        changes[SCREEN_REQUEST] = changes.pop(SCREEN)
+    return changes
+
+
+def _screen_shown(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Show the held screen switch and push the ``0421`` that carries it."""
+    return Step(
+        values={SCREEN: state[SCREEN_REQUEST]},
+        unset=(SCREEN_REQUEST,),
+        pushes=(MSGTYPE_421,),
+    )
+
+
+def _passes_through(state: Mapping[str, Value]) -> int:
+    """Return ``f0[0]`` for ``state``: 1 with the AC output on and AC coming in."""
+    return int(bool(state["ac_output_status"]) and int(state[AC_IN]) > 0)
+
+
+def _pass_through_follows(
+    _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Set ``f0[0]`` from the AC output switch and AC in."""
+    return Step(values={PASSTHROUGH: _passes_through(state)})
+
+
 class AS220Layout(TableLayout):
     """The S2000's own telemetry code; satisfies ``LayoutProtocol``."""
 
+    COMMANDS = MappingProxyType({0x101: _set_ac_params, 0x103: _set_system_params})
     FIELDS = MappingProxyType(
         {MSGTYPE_421: TELEMETRY_FIELDS, MSGTYPE_900: TELEMETRY_FIELDS}
     )
@@ -217,7 +301,25 @@ class AS220Layout(TableLayout):
             if names & resolved.keys() and power > rating:
                 msg = f"{what} reads at most {rating} W on the S2000, not {power} W"
                 raise TypeError(msg)
+        passing = _passes_through(after)
+        if PASSTHROUGH in values and int(after[PASSTHROUGH]) != passing:
+            msg = f"{PASSTHROUGH} follows the AC output and AC in: {passing}"
+            raise TypeError(msg)
         return resolved
+
+    def timed(
+        self, before: Mapping[str, Value], after: Mapping[str, Value]
+    ) -> tuple[Timed, ...]:
+        """Return the screen switch a ``4103 a2`` holds and ``f0[0]``'s follow.
+
+        A request a pending one repeats keeps the pending one's time.
+        """
+        events = []
+        if before.get(SCREEN_REQUEST) != after.get(SCREEN_REQUEST):
+            events.append(Timed(SCREEN_DELAY, SCREEN_REQUEST, _screen_shown))
+        if int(after[PASSTHROUGH]) != _passes_through(after):
+            events.append(Timed(0.0, PASSTHROUGH_EVENT, _pass_through_follows))
+        return tuple(events)
 
 
 PROFILE = Profile(
@@ -235,8 +337,9 @@ PROFILE = Profile(
         0x090: (0x890,),
         0x093: (0x893,),
         0x100: (MSGTYPE_900, MSGTYPE_421),
-        0x101: (0x901,),
-        0x103: (0x903,),
+        # A 0421 follows each setter's ack (s2000-as220.md "Setters").
+        0x101: (0x901, MSGTYPE_421),
+        0x103: (0x903, MSGTYPE_421),
     },
     pushes=(MSGTYPE_421,),
     # No 0830 is recorded, so 0030 goes unanswered.
