@@ -1021,6 +1021,26 @@ C1000_SHARED_PORTS = ((("pd1", "usb1"), 20),)
 #: neither: AC in tops out at ``maxInputPower``, the charge at the request.
 BYPASS_POWER = "ac_bypass_power"
 ULTRAFAST_POWER = "ultrafast_charge_power"
+#: MainBMS's allowed charge current, ``+0xe0`` (0.1 A), from
+#: ``charge_current_limit_calc`` (MainBMS_0901 0x080213c8; firmware/
+#: pack-telemetry.md ``+0xe0``): 58.0 A, at most 245 760 / the pack voltage
+#: (0.1 V), i.e. 2 457.6 W, and 40.0 A while its TOU bit is set. Hidden and
+#: read-only, on the C2000 chassis only: the C1000's BMS isn't decoded.
+PACK_CHARGE_LIMIT = "pack_charge_current_limit"
+C2000_PACK_CHARGE_LIMIT = 580
+PACK_POWER_LIMIT = 245760
+TOU_CHARGE_LIMIT = 400
+#: 0.1 A to the pack current's 10 mA (the request's 0.01 A): x 10.
+PACK_CURRENT_STEPS = 10
+#: Hidden: MainBMS's TOU bit (u8 ``0x20000a48`` bit 7), MainMcu's op-0x006
+#: bit 0x80: a TOU period active (``tou_active_period_get``) and no backup
+#: window (firmware/mainbms-control-fsms.md "The op-0x006 byte"). MainMcu
+#: sends it every 500 ms; the emulator refreshes it every 10 s, and 0.5 s
+#: after a change of what it reads.
+TOU_BIT = "tou_status_bit"
+TOU_BIT_PASS = 10
+TOU_BIT_SEND = 0.5
+TOU_BIT_EVENT = "tou_status_bit"
 
 
 #: ``4057 a2``: 0 stops the realtime stream, 1 starts it.
@@ -1279,8 +1299,20 @@ ULTRAFAST = "super_fast_charge_status"
 #: value: the firmware requests ``maxInputPower`` less AC out.
 PLAN_CHARGE_CAP = 1643
 #: What the charge request reads: a change of one moves a full charge. The
-#: backup window's type (``tou_setting_system_status``) is set by the window pass.
-CHARGE_REQUEST_INPUTS = frozenset({AC_LIMIT, MAX_INPUT, AC_OUT, ULTRAFAST})
+#: backup window's type (``tou_setting_system_status``) is set by the window
+#: pass, the TOU bit by its own; the DC input and the pack voltages move the
+#: pack's headroom.
+CHARGE_REQUEST_INPUTS = frozenset(
+    {
+        AC_LIMIT,
+        MAX_INPUT,
+        AC_OUT,
+        ULTRAFAST,
+        "pv1_input_power",
+        "battery_voltage",
+        "sub_package_battery_voltage",
+    }
+)
 CHARGE_REQUEST_EVENT = "ac_charge_request"
 
 
@@ -1297,7 +1329,8 @@ def _ac_charge_power(state: Mapping[str, Value]) -> int:
     0x08009ae4). AC in carries the AC out too (survey: limit + out + 24 at
     54-59 W out), up to the AC-in ceiling (``_ac_in_top``); the on-bus pack
     feeds the outlets' rest. The limit skipped, the charge holds to the model's
-    UltraFast rating too, where it lists one.
+    UltraFast rating too, where it lists one. Its current holds to the pack's
+    headroom (``ac_charge_current_headroom?``, ``_charge_headroom``).
     """
     out = int(state[AC_OUT])
     inlet = int(state[MAX_INPUT])
@@ -1310,7 +1343,48 @@ def _ac_charge_power(state: Mapping[str, Value]) -> int:
         charge = min(request, PLAN_CHARGE_CAP, fastest)
     else:
         charge = min(request, int(state[AC_LIMIT])) + CHARGE_OVER_LIMIT
+    headroom = _charge_headroom(state)
+    if headroom is not None:
+        charge = max(0, min(charge, headroom))
     return min(charge + out, _ac_in_top(state))
+
+
+def _pack_charge_limit(state: Mapping[str, Value]) -> int | None:
+    """Return the on-bus pack's allowed charge current (0.1 A); None if uncapped.
+
+    The lowest of 58.0 A, 245 760 / the pack voltage (0.1 V) and, with the TOU
+    bit set, 40.0 A, on a decoded build of the C2000 chassis. Assumed: the
+    division truncates, and a pack reading 0 V has no power cap.
+    """
+    base = state.get(PACK_CHARGE_LIMIT)
+    if base is None or not _decoded_build(state):
+        return None
+    limit = int(base)
+    volts = _on_bus_volts(state)
+    if volts:
+        limit = min(limit, PACK_POWER_LIMIT // volts)
+    if int(state.get(TOU_BIT, 0)):
+        limit = min(limit, TOU_CHARGE_LIMIT)
+    return limit
+
+
+def _on_bus_volts(state: Mapping[str, Value]) -> int:
+    """Return the on-bus pack's voltage (0.1 V)."""
+    return int(state[PACK_CURRENTS[_bus_pack(state)][1]])
+
+
+def _charge_headroom(state: Mapping[str, Value]) -> int | None:
+    """Return the most W the AC charge takes under the pack's charge-current cap.
+
+    ``ac_charge_current_headroom?``: the limit x 10 (0.01 A) less the current
+    the other sources hold (``chg_source_current_sum?``), taken as the DC
+    input's; in W at the on-bus pack's voltage. None while uncapped or at 0 V.
+    """
+    limit, volts = _pack_charge_limit(state), _on_bus_volts(state)
+    if limit is None or not volts:
+        return None
+    capped = limit * PACK_CURRENT_STEPS * volts // WATTS_TO_CURRENT
+    return capped - int(state["pv1_input_power"])
 
 
 def _limit_skipped(state: Mapping[str, Value]) -> bool:
@@ -1356,8 +1430,9 @@ def _split_total(
 ) -> dict[str, Value]:
     """Return the AC and DC in that a ``.23.4`` set with at most one of them leaves.
 
-    Alone, AC in takes the full charge, at most the total, and DC in the rest;
-    with one input, the other is the rest. With both, none.
+    Alone, AC in takes the full charge with no DC beside it, at most the
+    total, and DC in the rest; with one input, the other is the rest. With
+    both, none.
     """
     total = int(values[INPUT_TOTAL])
     if "pv1_input_power" in values:
@@ -1366,8 +1441,10 @@ def _split_total(
         return {"ac_input_power": total - int(values["pv1_input_power"])}
     if "ac_input_power" in values:
         ac = int(values["ac_input_power"])
+    elif _ac_charges(state):
+        ac = min(total, _ac_charge_power({**state, "pv1_input_power": 0}))
     else:
-        ac = min(total, _ac_charge_power(state)) if _ac_charges(state) else 0
+        ac = 0
     return {"ac_input_power": ac, "pv1_input_power": total - ac}
 
 
@@ -2879,6 +2956,52 @@ def _backup_plan(
     return changes
 
 
+#: What MainBMS's TOU bit reads: the TOU conditions, the plan, the clock and
+#: the backup window.
+TOU_BIT_INPUTS = frozenset(
+    {
+        "backup_mode",
+        TOU_TABLE,
+        "ac_input_status",
+        DISABLE,
+        "mcu_version",
+        "external_device_product_code",
+        WINDOW_TYPE,
+        RTC,
+    }
+)
+
+
+def _tou_bit(state: Mapping[str, Value]) -> int:
+    """Return op-0x006 bit 0x80: a TOU period active and no backup window."""
+    plan = _tou_periods_of(_bytes_value(state, TOU_TABLE))
+    period = _period_of({**state, "tou_periods": plan})
+    window = int(state[WINDOW_TYPE]) != WINDOW_NONE
+    return int(period != TouPeriodType.NONE and not window)
+
+
+def _tou_bit_pass(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Send MainBMS the TOU bit; a full AC charge follows the cap it leaves.
+
+    Only where MainBMS caps the charge current (the C2000 chassis).
+    """
+    then = (Timed(TOU_BIT_PASS, TOU_BIT_EVENT, _tou_bit_pass),)
+    bit = _tou_bit(state)
+    if PACK_CHARGE_LIMIT not in state or bit == int(state.get(TOU_BIT, 0)):
+        return Step(then=then)
+    changes: dict[str, Value] = {TOU_BIT: bit}
+    if int(state["ac_input_power"]) == _ac_charge_power(state):
+        changes["ac_input_power"] = _ac_charge_power({**state, **changes})
+    return _flow_step(changes, state, then)
+
+
+def _tou_bit_sends(own: frozenset[str]) -> list[Timed]:
+    """Return the TOU bit's next send a change of what it reads draws."""
+    if own & TOU_BIT_INPUTS:
+        return [Timed(TOU_BIT_SEND, TOU_BIT_EVENT, _tou_bit_pass)]
+    return []
+
+
 def _backup_passes(own: frozenset[str], reports: bool) -> list[Timed]:  # noqa: FBT001  # the model's flag
     """Return the next window pass a change of a plan, a switch or the clock draws."""
     if own & BACKUP_NAMES:
@@ -3623,10 +3746,14 @@ class CGen2Layout(TableLayout):
         return resolved
 
     def started(self) -> tuple[Timed, ...]:
-        """Return the free-running timers: ``0490``, TOU, the subMCU dip, the pages."""
+        """Return the free-running timers: ``0490``, TOU, the subMCU dip, the pages.
+
+        TOU runs the usage pass and MainBMS's TOU bit.
+        """
         return (
             Timed(C490_PERIOD, C490_POST, partial(_c490_accumulation, 0)),
             Timed(USAGE_PASS, USAGE_EVENT, _usage_pass),
+            Timed(TOU_BIT_SEND, TOU_BIT_EVENT, _tou_bit_pass),
             Timed(SUB_MCU_PERIOD, SUB_MCU_EVENT, _sub_mcu_tick),
             Timed(COUNTER_PAGE_PERIOD, COUNTER_PAGE_EVENT, _counter_page_tick),
         )
@@ -3677,6 +3804,7 @@ class CGen2Layout(TableLayout):
             events += _floor_exits(before, after)
         events += _ota_prechecks(before, after, own)
         events += _backup_passes(own, self.EVENT_REPORTS)
+        events += _tou_bit_sends(own)
         events += _inv_version_events(before, after)
         return tuple(events)
 
@@ -3839,9 +3967,14 @@ class CGen2ExpansionLayout(CGen2Layout):
     EVENT_REPORTS = True
     #: The line's hidden-input defaults, without the C1000's ratings or its
     #: empty PD1: AC in tops out at ``maxInputPower``, and PD1 holds the
-    #: recording's 86 W device.
+    #: recording's 86 W device. MainBMS's 58.0 A charge-current cap rides
+    #: along, read-only.
     defaults = MappingProxyType(
-        {DC_INPUT_SOURCE: DcInputSource.CAR_SOCKET, CHARGE_SOURCE_2: 0}
+        {
+            DC_INPUT_SOURCE: DcInputSource.CAR_SOCKET,
+            CHARGE_SOURCE_2: 0,
+            PACK_CHARGE_LIMIT: C2000_PACK_CHARGE_LIMIT,
+        }
     )
     CHARGE_POWER = None
     DC_INPUT_LIMIT = C2000_DC_INPUT_LIMIT

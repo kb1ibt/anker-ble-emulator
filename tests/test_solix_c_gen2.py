@@ -6231,3 +6231,109 @@ def test_a_committed_return_posts_nothing() -> None:
     clock.advance(8)
 
     assert [p for p in pushed(client, [module.check_pushes()]) if p[0] == "4425"] == []
+
+
+#: A ``4090`` plan of one all-day Off-Peak record: AC charges in it, and
+#: MainBMS's TOU bit is set while it runs.
+OFF_PEAK_PLAN = bytes.fromhex("a10121a2020101a5020132a6020101a70404030018")
+#: The main pack on the bus, solar on the DC input.
+MAIN_ON_SOLAR = {"pack_on_bus": 1, "dc_input_source": SOLAR}
+
+
+@pytest.mark.parametrize(
+    ("volts", "change", "ac_in", "current"),
+    [
+        pytest.param(535, ULTRAFAST_ON, 1643, 4566, id="under-the-caps"),
+        pytest.param(550, {"ac_recharge_power": 1800}, 1653, 4460, id="2457.6-w"),
+        pytest.param(410, ULTRAFAST_ON, 1578, 5800, id="58-a"),
+    ],
+)
+def test_the_ac_charge_holds_the_pack_to_its_charge_current_cap(
+    volts: int, change: dict[str, Value], ac_in: int, current: int
+) -> None:
+    """``charge_current_limit_calc``: 58.0 A, at most 245 760 / the pack voltage.
+
+    With 800 W of solar the AC charge gives way: at 55.0 V the 44.6 A power cap
+    (2 453 W) leaves 1 653 W of the 1 810 W charge, at 41.0 V the 58.0 A cap
+    1 578 W of UltraFast's 1 643 W. At 53.5 V the 45.7 A is under both.
+    """
+    device = A1783(clock=ManualClock())
+    device.set_values(**{**FULL_CHARGE_1200, **MAIN_ON_SOLAR, "battery_voltage": volts})
+    device.set_values(**change)
+
+    device.set_values(pv1_input_power=800)
+
+    assert next_0421(device)[0]["ac_input_power"] == ac_in
+    assert next_0490(device)["pack_current"] == current
+
+
+def test_the_pack_charge_stops_at_40_a_while_tou_is_active() -> None:
+    """MainBMS caps the charge at 40.0 A while MainMcu's TOU bit is set.
+
+    UltraFast with 800 W of solar at 53.5 V: an Off-Peak period on the cloud
+    holds the AC charge to 1 340 W, 40.0 A; off the cloud, the full 1 643 W.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    layout = device.layout
+    assert layout is not None
+    module = device.negotiated_module
+    device.set_values(**{**FULL_CHARGE_1200, **MAIN_ON_SOLAR, "battery_voltage": 535})
+    device.set_values(**ULTRAFAST_ON)
+    device.set_values(pv1_input_power=800)
+    plan = layout.state_changes(0x090, OFF_PEAK_PLAN, module.mcu.state({}))
+    device.set_values(**plan)
+    clock.advance(10 * 3600)
+
+    device.set_cloud(True)
+    clock.advance(solix_c_gen2.TOU_BIT_PASS)
+    module.check_pushes()
+    held = (next_0421(device)[0]["ac_input_power"], next_0490(device)["pack_current"])
+    device.set_cloud(False)
+    clock.advance(solix_c_gen2.TOU_BIT_PASS)
+    module.check_pushes()
+
+    assert held == (1340, 4000)
+    assert next_0421(device)[0]["ac_input_power"] == 1643
+
+
+@pytest.mark.parametrize(
+    ("model", "unit"),
+    [
+        pytest.param(A1763, {}, id="c1000"),
+        pytest.param(A1783, {"mcu_version": V1126, "pack_on_bus": 1}, id="v1.1.2.6"),
+    ],
+)
+def test_the_cap_needs_mainbms_on_a_decoded_build(
+    model: Model, unit: dict[str, Value]
+) -> None:
+    """No cap on the C1000 Gen 2, its BMS undecoded, or before v1.2.1.1.
+
+    Its 1 210 W charge and 600 W of solar at 41.0 V run 44.2 A with TOU on.
+    """
+    clock = ManualClock()
+    device = model(clock=clock)
+    layout = device.layout
+    assert layout is not None
+    module = device.negotiated_module
+    device.set_values(
+        **{**FULL_CHARGE_1200, **unit, "dc_input_source": SOLAR, "battery_voltage": 410}
+    )
+    device.set_values(pv1_input_power=600)
+    plan = layout.state_changes(0x090, OFF_PEAK_PLAN, module.mcu.state({}))
+    device.set_values(**plan)
+    clock.advance(10 * 3600)
+
+    device.set_cloud(True)
+    clock.advance(solix_c_gen2.TOU_BIT_PASS)
+    module.check_pushes()
+
+    assert next_0421(device)[0]["ac_input_power"] == 1210
+    assert next_0490(device)["pack_current"] == 4415
+
+
+def test_the_mainbms_cap_is_read_only() -> None:
+    """The 58.0 A and the TOU bit ride the state; no value sets them."""
+    for name in (solix_c_gen2.PACK_CHARGE_LIMIT, solix_c_gen2.TOU_BIT):
+        with pytest.raises(LayoutError, match=name):
+            A1783().set_values(**{name: 1})
