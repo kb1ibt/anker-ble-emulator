@@ -28,6 +28,9 @@ RTC = "rtc"
 #: The state name a reply, a push or a timed event finds the UTC epoch under:
 #: the unit's clock, its ``fe``.
 EPOCH = "epoch"
+#: The state name a timed event or side effect finds the device-clock instant
+#: under, in seconds: what a firmware tick grid is laid on.
+CLOCK = "device_clock"
 
 
 class LayoutProtocol(Protocol):

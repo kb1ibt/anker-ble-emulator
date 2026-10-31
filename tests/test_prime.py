@@ -18,7 +18,11 @@ from anker_ble_emulator.devices import COMPANY_ID
 from anker_ble_emulator.devices.a91b2 import A91B2Layout, Display, Timer
 from anker_ble_emulator.devices.a91b2 import ClockTheme as A91B2ClockTheme
 from anker_ble_emulator.devices.a2345 import (
+    DISPLAY,
+    DISPLAY_TICK,
+    SCREEN_REPORT_DEBOUNCE,
     SCREENSAVER_FIELDS,
+    WINDOW_PHASE,
     A2345Layout,
     Schedule,
     Screensaver,
@@ -27,8 +31,8 @@ from anker_ble_emulator.devices.a2345 import (
     stored_bytes,
 )
 from anker_ble_emulator.devices.base import data_resource
-from anker_ble_emulator.devices.prime import OutputPort
-from anker_ble_emulator.layouts import ui
+from anker_ble_emulator.devices.prime import SWITCH_REPORT_DEBOUNCE, OutputPort
+from anker_ble_emulator.layouts import Value, ui
 from anker_ble_emulator.parameters import Parameter, Parameters, decode_field
 from tests.fixtures.client import (
     SESSION,
@@ -53,11 +57,13 @@ from tests.fixtures.prime import (
     command,
     device_clock,
     holiday_schedule,
+    into_screensaver,
     local_datetime,
     prime_client,
     published,
     pushed_by,
     screensaver,
+    screensaver_window,
     snapshot,
     theme_select,
     unit_change,
@@ -234,7 +240,8 @@ async def test_a2345_factory_reset_acks_then_drops_the_link_and_forgets_the_owne
     assert reset[0].plaintext == bytes.fromhex("00a10131")
     assert during_debounce
     assert not after_debounce
-    assert device.negotiated_module.values == {}
+    # The settings are gone; the window's first evaluation (RAM) lands after.
+    assert set(device.negotiated_module.values) == {WINDOW_PHASE}
     assert replies[0x827].status == NEEDS_AUTHENTICATION
 
 
@@ -609,18 +616,19 @@ async def test_a2345_screen_timeout_brightness_and_theme_commands_validate() -> 
             0x203, [(0xA1, b"\x21"), (0xA2, b"\x01\x05")], SESSION
         )
         brightness = await link.send(
-            0x204, [(0xA1, b"\x21"), (0xA2, b"\x01\x96")], SESSION
+            0x204, [(0xA1, b"\x21"), (0xA2, b"\x01\x5a")], SESSION
         )
         theme = await link.send(0x205, [(0xA1, b"\x21"), (0xA2, b"\x01\x82")], SESSION)
 
     assert timeout[0].plaintext == bytes.fromhex("00a10131")
-    assert bad_timeout[0].plaintext == bytes.fromhex("04a10131")
+    # Acked 00; screen_timeout_set's range check ignores it (cmd203 0x00043ec0).
+    assert bad_timeout[0].plaintext == bytes.fromhex("00a10131")
     assert brightness[0].plaintext == bytes.fromhex("00a10131")
     assert theme[0].plaintext == bytes.fromhex("00a10131")
     snapshot = device.mcu.respond(0x200, values=device.negotiated_module.values)[0]
     params = Parameters.parse(snapshot.payload)
     assert decode_field(params, "b0", ui(1)) == 4
-    assert decode_field(params, "b3", ui(1)) == 0x96
+    assert decode_field(params, "b3", ui(1)) == 0x5A
     theme_byte = decode_field(params, "af", Theme)
     assert theme_byte.screen_saver_switch
     assert theme_byte.screen_saver_theme == 2
@@ -766,13 +774,16 @@ async def test_a2345_port_switch_schedule_and_countdown_cover_all_five_slots() -
 
     clock = device_clock(0)
     assert switch[0].plaintext.hex() == "00a10131a2020104" + clock
-    assert bad_port[0].plaintext == bytes.fromhex("04a10131")
+    # Acked and ignored: port_switch_set stores only index <= 4 (doc 4207 row).
+    assert bad_port[0].plaintext.hex() == "00a10131a2020105" + clock
     assert on_time[0].plaintext.hex() == "00a10131a2020100a3020101" + clock
     assert bad_schedule_port[0].plaintext == bytes.fromhex("04a10131")
-    assert bad_slot[0].plaintext == bytes.fromhex("04a10131")
+    # Acked and dropped: cmd208's setter takes only a3 0 / 1.
+    assert bad_slot[0].plaintext.hex() == "00a10131a2020100a3020102" + clock
     assert countdown[0].plaintext.hex() == "00a10131a2020100" + clock
     assert disarm[0].plaintext.hex() == "00a10131a2020101" + clock
-    assert bad_countdown_port[0].plaintext == bytes.fromhex("04a10131")
+    # Acked with the port: countdown_set? drops a port past 4 (doc 0307 row).
+    assert bad_countdown_port[0].plaintext.hex() == "00a10131a2020105" + clock
     snapshot = device.mcu.respond(0x200, values=device.negotiated_module.values)[0]
     params = Parameters.parse(snapshot.payload)
     assert not decode_field(params, "ae", Schedule).relay_switch  # both USB-A
@@ -828,15 +839,28 @@ def test_a_prime_mcu_answers_what_nothing_records_as_its_firmware_does(
         ),
         pytest.param(0x20D, "a2020200", [(0xA0D, "00a10131")], id="420d zero acks"),
         pytest.param(
-            0x20D,
-            "a203020001",
-            [(0xA0D, "00a10131")],
-            id="420d reads only its first value byte",
+            0x20D, "a203020001", [(0xA0D, "04a10131")], id="420d a2 length 3 refused"
         ),
         pytest.param(
-            0x20D, "a2020101", [(0xA0D, "04a10131")], id="420d a2 typed 01 refused"
+            0x20D, "a2020101", [(0xA0D, "00a10131")], id="420d a2 typed 01 acks"
         ),
         pytest.param(0x20D, "", [(0xA0D, "04a10131")], id="420d without a2 refused"),
+        pytest.param(
+            0x203, "a2020105", [(0xA03, "00a10131")], id="4203 out of range acks"
+        ),
+        pytest.param(0x203, "a20105", [(0xA03, "04a10131")], id="4203 a2 length 1"),
+        pytest.param(0x203, "a203010001", [(0xA03, "04a10131")], id="4203 a2 length 3"),
+        pytest.param(0x203, "", [(0xA03, "04a10131")], id="4203 without a2 refused"),
+        pytest.param(
+            0x204, "a2020265", [(0xA04, "00a10131")], id="4204 typed 02, over 100"
+        ),
+        pytest.param(0x204, "a203010001", [(0xA04, "04a10131")], id="4204 a2 length 3"),
+        pytest.param(0x204, "", [(0xA04, "04a10131")], id="4204 without a2 refused"),
+        pytest.param(
+            0x20E, "a2020102", [(0xA0E, "00a10131")], id="420e out of range acks"
+        ),
+        pytest.param(0x20E, "a203010001", [(0xA0E, "04a10131")], id="420e a2 length 3"),
+        pytest.param(0x20E, "", [(0xA0E, "04a10131")], id="420e without a2 refused"),
         pytest.param(0x222, "a2020101", [], id="4222 set silently"),
         pytest.param(0x222, "a2020105", [], id="4222 other value silently"),
         pytest.param(0x222, "", [(0xA22, "04a10131")], id="4222 without a2 refused"),
@@ -847,7 +871,9 @@ def test_an_a2345_handler_answers_by_its_firmware_branch(
 ) -> None:
     """``420d`` 0x00043938 (its ``0305`` 0x0001475c) and ``4222`` 0x0004ff84.
 
-    prime-a2345-a91b2.md "Commands".
+    prime-a2345-a91b2.md "Commands" and "Source-byte order": ``4203`` / ``4204``
+    / ``420e`` / ``420d`` answer ``04`` only for an ``a2`` missing or of TLV
+    length other than 2, any type byte; the setters range-check after the ack.
     """
     request = bytes.fromhex("a10121" + request_fields)
 
@@ -1079,33 +1105,315 @@ def test_an_a91b2_port_switch_is_followed_by_its_0302_push() -> None:
     ]
 
 
-async def test_a2345_pushes_0302_only_when_a_port_switch_changes() -> None:
-    """The A2345's switch watcher (``port_switch_push_0302``) sends on a change."""
+def test_a2345_an_app_port_switch_draws_no_0302() -> None:
+    """``cmd207`` writes ``0302``'s source byte 1, so its change is dropped.
+
+    prime-a2345-a91b2.md push table ``0302``: no A2345 ``0302`` is recorded,
+    the app's ``4207``s draw none.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x00")
+
+    off = command(device, client, 0x207, [port, (0xA3, b"\x01\x00")])
+    after_off = advance(device, client, clock, 1)
+    usb = command(device, client, 0x207, [(0xA2, b"\x01\x04"), (0xA3, b"\x01\x00")])
+    after_usb = advance(device, client, clock, 1)
+
+    assert off == [("4a07", "00a10131a2020100" + device_clock(0))]
+    assert [cmd for cmd, _ in usb] == ["4a07"]
+    assert after_off == after_usb == []
+    assert not decode_field(snapshot(device), "aa", Timer).relay_switch
+
+
+def test_a2345_two_app_switches_in_one_0302_pass_report_the_second() -> None:
+    """The byte's 1 drops only the pass's first pending port; the next one sends.
+
+    prime-a2345-a91b2.md push table ``0302``: ``port_switch_push_0302``.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+
+    command(device, client, 0x207, [(0xA2, b"\x01\x00"), (0xA3, b"\x01\x00")])
+    command(device, client, 0x207, [(0xA2, b"\x01\x04"), (0xA3, b"\x01\x00")])
+    sent = advance(device, client, clock, SWITCH_REPORT_DEBOUNCE + DISPLAY_TICK)
+
+    assert sent == [("4302", "a10131a2020104a3020100" + device_clock(0))]
+
+
+@pytest.mark.parametrize(
+    ("fields", "status"),
+    [
+        pytest.param([(0xA2, b"\x01\x05"), (0xA3, b"\x01\x00")], "00", id="port 5"),
+        pytest.param([(0xA2, b"\x01\x00"), (0xA3, b"\x01\x02")], "00", id="state 2"),
+        pytest.param(
+            [(0xA2, b"\x01\x00"), (0xA3, b"\x01\x00\x00")], "04", id="a3 length 3"
+        ),
+        pytest.param([(0xA2, b"\x01\x00")], "04", id="no a3"),
+    ],
+)
+def test_a2345_4207_acks_a_dropped_change_and_refuses_a_bad_tlv(
+    fields: list[tuple[int, bytes]], status: str
+) -> None:
+    """``cmd207``: ``04`` unless ``a2`` / ``a3`` are type + 1 byte.
+
+    ``port_switch_set`` stores only index <= 4 and state <= 1, else acked and
+    ignored (prime-a2345-a91b2.md ``4207`` row).
+    """
     device = A2345(clock=ManualClock())
-    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
-        link = BleakLink(client, AppClient())
-        await link.start()
-        await link.negotiate(TOKEN)
-        device.press_button()
-        await settle()
+    client = prime_client(device, TOKEN)
 
-        port = [(0xA1, b"\x21"), (0xA2, b"\x01\x00")]
-        already_on = await link.send(
-            0x207, [*port, (0xA3, b"\x01\x01"), CLOCK], SESSION
-        )
-        off = await link.send(0x207, [*port, (0xA3, b"\x01\x00"), CLOCK], SESSION)
-        again = await link.send(0x207, [*port, (0xA3, b"\x01\x00"), CLOCK], SESSION)
-        usb = await link.send(
-            0x207, [(0xA1, b"\x21"), (0xA2, b"\x01\x04"), (0xA3, b"\x01\x00")], SESSION
-        )
+    replies = command(device, client, 0x207, fields)
 
-    assert [cmd_hex(reply.frame) for reply in already_on] == ["4a07"]
-    assert [(cmd_hex(reply.frame), reply.plaintext.hex()) for reply in off] == [
-        ("4a07", "00a10131a2020100" + device_clock(0)),
-        ("4302", "a10131a2020100a3020100" + device_clock(0)),
+    assert [(cmd, payload[:2]) for cmd, payload in replies] == [("4a07", status)]
+    assert decode_field(snapshot(device), "aa", Timer).relay_switch
+
+
+#: Mode 5's profile: ``a3`` the 7-byte ``b8``, ``a4`` 12 bytes of port records.
+PROFILE_A3 = (0xA3, b"\x04" + bytes(7))
+PROFILE_A4 = (0xA4, b"\x04" + bytes(12))
+
+
+@pytest.mark.parametrize(
+    ("fields", "mode"),
+    [
+        pytest.param([(0xA2, b"\x01\x05")], 1, id="no a3 a4"),
+        pytest.param(
+            [(0xA2, b"\x01\x05"), PROFILE_A3, (0xA4, b"\x04" + bytes(11))],
+            1,
+            id="short a4",
+        ),
+        pytest.param([(0xA2, b"\x01\x05"), PROFILE_A3, PROFILE_A4], 5, id="whole"),
+    ],
+)
+def test_a2345_4206_mode_5_needs_its_profile(
+    fields: list[tuple[int, bytes]], mode: int
+) -> None:
+    """Mode 5 needs ``a3`` (7 B) and ``a4`` (12 B); without them it's acked, dropped."""
+    device = A2345(clock=ManualClock())
+    client = prime_client(device, TOKEN)
+    device.set_values(charging_mode=1)
+
+    replies = command(device, client, 0x206, fields)
+
+    assert [(cmd, payload[:2]) for cmd, payload in replies] == [("4a06", "00")]
+    assert decode_field(snapshot(device), "b1", ui(1)) == mode
+
+
+def test_a2345_4208_a_slot_other_than_0_or_1_is_acked_and_dropped() -> None:
+    """``cmd208``: an ``a3`` other than 0 / 1 is acked ``00``; nothing is written."""
+    device = A2345(clock=ManualClock())
+    client = prime_client(device, TOKEN)
+    before = decode_field(snapshot(device), "aa", Timer)
+
+    replies = command(
+        device, client, 0x208, [(0xA2, b"\x01\x00"), (0xA3, b"\x01\x02"), SUNDAY_2326]
+    )
+
+    assert [(cmd, payload[:2]) for cmd, payload in replies] == [("4a08", "00")]
+    assert decode_field(snapshot(device), "aa", Timer) == before
+
+
+def test_a2345_an_app_port_switch_inside_the_debounce_drops_a_timer_0302() -> None:
+    """One source byte: ``cmd207``'s 1 drops the pending expiry ``0302`` at send.
+
+    prime-a2345-a91b2.md push table ``0302``, "as with the screen reports".
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    command(device, client, 0x209, [(0xA2, b"\x01\x00"), arm(1)])
+    expired = advance(device, client, clock, 1)
+
+    advance(device, client, clock, 0.2)
+    command(device, client, 0x207, [(0xA2, b"\x01\x01"), (0xA3, b"\x01\x01")])
+    later = advance(device, client, clock, 1)
+
+    assert [cmd for cmd, _ in expired] == ["4307"]
+    assert later == []
+
+
+def test_a2345_one_0302_pass_drops_only_the_first_pending_port() -> None:
+    """``port_switch_push_0302``: one byte, one pass over the ports in order.
+
+    pd1 and pd2 expire 0.1 s apart (byte 2), a ``4207`` writes 1 before the
+    pass; the pass drops pd1's (resetting the byte to 0) and sends pd2's.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    command(device, client, 0x209, [(0xA2, b"\x01\x00"), arm(1)])
+    advance(device, client, clock, 0.1)
+    command(device, client, 0x209, [(0xA2, b"\x01\x01"), arm(1)])
+    advance(device, client, clock, 1)
+
+    command(device, client, 0x207, [(0xA2, b"\x01\x02"), (0xA3, b"\x01\x01")])
+    sent = advance(device, client, clock, 1)
+
+    assert [(cmd, payload[:22]) for cmd, payload in sent if cmd == "4302"] == [
+        ("4302", "a10131a2020101a3020100")
     ]
-    assert [cmd_hex(reply.frame) for reply in again] == ["4a07"]
-    assert usb[1].plaintext.hex() == "a10131a2020104a3020100" + device_clock(0)
+
+
+def test_a2345_a_firmware_change_after_a_4207_has_both_reported() -> None:
+    """The last writer wins: an expiry's 2 after a ``4207``'s 1 sends both ports."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    command(device, client, 0x209, [(0xA2, b"\x01\x01"), arm(1)])
+    advance(device, client, clock, 0.8)
+
+    command(device, client, 0x207, [(0xA2, b"\x01\x00"), (0xA3, b"\x01\x00")])
+    sent = advance(device, client, clock, 1)
+
+    assert [payload[:22] for cmd, payload in sent if cmd == "4302"] == [
+        "a10131a2020100a3020100",
+        "a10131a2020101a3020100",
+    ]
+
+
+def test_a2345_each_port_reports_0302_after_its_own_last_change() -> None:
+    """``port_switch_change_mark?``: a change restarts only its own port's count.
+
+    prime-a2345-a91b2.md "``0302`` timing": pd1 on at 0 s and pd2 at 0.3 s
+    report at ~0.5 s and ~0.8 s.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(pd1_relay_switch=False, pd2_relay_switch=False)
+    advance(device, client, clock, 1)
+
+    device.set_values(pd1_relay_switch=True)
+    advance(device, client, clock, 0.3)
+    device.set_values(pd2_relay_switch=True)
+    first = advance(device, client, clock, 0.25)
+    second = advance(device, client, clock, 0.3)
+
+    assert [payload[:22] for _, payload in first] == ["a10131a2020100a3020101"]
+    assert [payload[:22] for _, payload in second] == ["a10131a2020101a3020101"]
+
+
+def test_a2345_ports_due_on_one_tick_go_in_port_order() -> None:
+    """``port_switch_tick`` on ``tick_100ms_group``: one tick's pass walks 0-4.
+
+    pd3 marked at 1.42 s and pd1 at 1.45 s are both due on the 2.0 s tick; a
+    ``4207``'s 1 drops the walk's first, pd1, and pd3 sends.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(pd1_relay_switch=False, pd3_relay_switch=False)
+    advance(device, client, clock, 1.42)
+
+    device.set_values(pd3_relay_switch=True)
+    advance(device, client, clock, 0.03)
+    device.set_values(pd1_relay_switch=True)
+    advance(device, client, clock, 0.05)
+    command(device, client, 0x207, [(0xA2, b"\x01\x01"), (0xA3, b"\x01\x01")])
+    early = advance(device, client, clock, 0.45)
+    due = advance(device, client, clock, 0.1)
+
+    assert early == []
+    assert [payload[:22] for _, payload in due] == ["a10131a2020102a3020101"]
+
+
+def test_a2345_the_switch_tick_phase_shifts_the_0302_grid() -> None:
+    """The hidden ``switch_tick_phase`` (0-0.1 s) places the 100 ms ticks."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(pd1_relay_switch=False, switch_tick_phase=0.05)
+    advance(device, client, clock, 1)
+
+    device.set_values(pd1_relay_switch=True)
+    early = advance(device, client, clock, 0.52)
+    due = advance(device, client, clock, 0.05)
+
+    assert early == []
+    assert [cmd for cmd, _ in due] == ["4302"]
+    with pytest.raises(TypeError, match=r"switch_tick_phase is 0 to 0\.1 s"):
+        device.set_values(switch_tick_phase=0.2)
+
+
+def test_a2345_a_port_switched_on_on_the_unit_is_the_power_on_tap() -> None:
+    """``screen_port_on_click?`` 0x00018f84: source 2, its ``0302`` after the pass.
+
+    The tap only turns a port on, so switching one off on the unit reports nothing.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+
+    device.set_values(pd1_relay_switch=False)
+    off = advance(device, client, clock, 1)
+    device.set_values(pd1_relay_switch=True)
+    early = advance(device, client, clock, 0.4)
+    on = advance(device, client, clock, 0.2)
+
+    assert (off, early) == ([], [])
+    assert on == [("4302", "a10131a2020100a3020101" + device_clock(1))]
+
+
+@pytest.mark.parametrize(
+    ("fields", "record", "expected"),
+    [
+        pytest.param(
+            [(0xA2, b"\x01\x04"), (0xA3, b"\x04\x02\x00\x00\x00\x00")],
+            "ae",
+            (True, 0, 0),
+            id="port 4, en 2 as 1, seconds 0",
+        ),
+        pytest.param(
+            [(0xA2, b"\x01\x00"), (0xA3, b"\x04\x00\x2c\x01\x00\x00")],
+            "aa",
+            (False, 300, 0),
+            id="disarm writes its seconds",
+        ),
+    ],
+)
+def test_a2345_4209_writes_its_seconds_unchecked(
+    fields: list[tuple[int, bytes]], record: str, expected: tuple[bool, int, int]
+) -> None:
+    """``countdown_set?``: any nonzero en is 1, the seconds go in unchecked.
+
+    prime-a2345-a91b2.md ``0307`` row: into both set and remaining, the
+    remaining forced to 0 on a disarm; ports 0-4 all take a countdown.
+    """
+    device = A2345(clock=ManualClock())
+    client = prime_client(device, TOKEN)
+
+    replies = command(device, client, 0x209, fields)
+
+    timer = decode_field(snapshot(device), record, Timer)
+    assert (replies[0][0], replies[0][1][:2]) == ("4a09", "00")
+    assert (
+        timer.countdown_task_switch,
+        timer.countdown_task_seconds,
+        timer.countdown_task_remaining_seconds,
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param([(0xA2, b"\x01\x00\x00"), arm(1)], id="a2 length 3"),
+        pytest.param([(0xA2, b"\x01\x00"), (0xA3, b"\x04\x01\x00")], id="a3 short"),
+        pytest.param([(0xA2, b"\x01\x00")], id="no a3"),
+    ],
+)
+def test_a2345_4209_refuses_an_a2_or_a3_of_another_length(
+    fields: list[tuple[int, bytes]],
+) -> None:
+    """``cmd209`` answers ``04`` only for ``a2`` / ``a3`` lengths other than 2 / 6."""
+    device = A2345(clock=ManualClock())
+    client = prime_client(device, TOKEN)
+
+    replies = command(device, client, 0x209, fields)
+
+    assert replies == [("4a09", "04a10131")]
 
 
 @pytest.mark.parametrize(
@@ -1115,16 +1423,16 @@ async def test_a2345_pushes_0302_only_when_a_port_switch_changes() -> None:
             A2345,
             AppClient(),
             0,
-            "00201c000000000000",
-            ("aa", 0),
-            id="A2345 zeroes the remaining time",
+            "000000000000000000",
+            ("aa", 0, 0),
+            id="A2345 writes the disarm's seconds and zeroes the remaining time",
         ),
         pytest.param(
             A91B2,
             AppClient(encrypted_outer=False),
             0,
             "00201c0000201c0000",
-            ("aa", 7200),
+            ("aa", 7200, 7200),
             id="A91B2 AC keeps it",
         ),
         pytest.param(
@@ -1132,7 +1440,7 @@ async def test_a2345_pushes_0302_only_when_a_port_switch_changes() -> None:
             AppClient(encrypted_outer=False),
             3,
             "0000000000201c0000",
-            ("b1", 0),
+            ("b1", 7200, 0),
             id="A91B2 USB-C zeroes it and reports it first",
         ),
     ],
@@ -1142,12 +1450,13 @@ async def test_a_prime_pushes_0307_when_a_countdown_arms_or_disarms(
     client: AppClient,
     select: int,
     disarmed: str,
-    kept: tuple[str, int],
+    kept: tuple[str, int, int],
 ) -> None:
     """Re-arming an armed countdown draws no 0307.
 
     prime-a2345-a91b2.md's "MCU pushes" ``0307`` rows, the A2345's and the
-    A91B2's: the push fires on the enable edge, a re-arm 1 -> 1 silent.
+    A91B2's: the push fires on the enable edge, a re-arm 1 -> 1 silent. The
+    A2345's ``countdown_set?`` writes every ``4209``'s seconds, a disarm's too.
     """
     device = model(clock=ManualClock())
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as ble:
@@ -1173,13 +1482,13 @@ async def test_a_prime_pushes_0307_when_a_countdown_arms_or_disarms(
     assert (
         disarming[1].plaintext.hex() == f"a10131{a2}a30a04{disarmed}{device_clock(0)}"
     )
-    record, remaining = kept
+    record, seconds, remaining = kept
     snapshot = device.mcu.respond(0x200, values=device.negotiated_module.values)[0]
     countdown = decode_field(Parameters.parse(snapshot.payload), record, Timer)
     assert (
         countdown.countdown_task_seconds,
         countdown.countdown_task_remaining_seconds,
-    ) == (7200, remaining)
+    ) == (seconds, remaining)
 
 
 @pytest.mark.parametrize(
@@ -1219,21 +1528,21 @@ def test_a_prime_countdown_runs_down_then_switches_the_port_off(
 
     armed = command(device, client, 0x209, [port, arm(3)])
     timeline = [(countdown(), advance(device, client, clock, 1)) for _ in range(3)]
+    debounced = advance(device, client, clock, SWITCH_REPORT_DEBOUNCE)
 
     a2 = f"a20201{select:02x}"
     stamp = device_clock(3)
+    off = ("4302", f"a10131{a2}a3020100{stamp}")
+    disarm = ("4307", f"a10131{a2}a30a04{expired}{stamp}")
+    # The A2345's switch watcher reports after its ~5-tick debounce.
+    at_expiry, after = ([disarm], [off]) if model is A2345 else ([off, disarm], [])
     assert [cmd for cmd, _ in armed] == ["4a09", "4307"]
     assert timeline == [
         ((True, True, 3), []),
         ((True, True, 2), []),
-        (
-            (True, True, 1),
-            [
-                ("4302", f"a10131{a2}a3020100{stamp}"),
-                ("4307", f"a10131{a2}a30a04{expired}{stamp}"),
-            ],
-        ),
+        ((True, True, 1), at_expiry),
     ]
+    assert debounced == after
     assert countdown() == (False, False, left)
 
 
@@ -1295,13 +1604,14 @@ def test_a_countdown_rearm_counts_down_again_from_its_seconds() -> None:
     restarted = decode_field(snapshot(device), "aa", Timer)
     early = advance(device, client, clock, 4)
     expired = advance(device, client, clock, 1)
+    expired += advance(device, client, clock, SWITCH_REPORT_DEBOUNCE)
 
     assert [cmd for cmd, _ in rearm] == ["4a09"]
     assert restarted.countdown_task_remaining_seconds == 5
     assert early == []
     assert [(cmd, payload[-14:]) for cmd, payload in expired] == [
-        ("4302", device_clock(8)),
         ("4307", device_clock(8)),
+        ("4302", device_clock(8)),
     ]
 
 
@@ -1314,9 +1624,10 @@ def test_a_countdown_remaining_set_by_a_test_counts_down_from_there() -> None:
     device.set_values(pd1_countdown_task_remaining_seconds=2)
     early = advance(device, client, clock, 1)
     expired = advance(device, client, clock, 1)
+    expired += advance(device, client, clock, SWITCH_REPORT_DEBOUNCE)
 
     assert early == []
-    assert [cmd for cmd, _ in expired] == ["4302", "4307"]
+    assert [cmd for cmd, _ in expired] == ["4307", "4302"]
 
 
 @pytest.mark.parametrize(
@@ -1343,10 +1654,12 @@ def test_a_prime_timed_task_switches_its_port_at_its_time_each_week(
     write = command(device, client, 0x208, [port, (0xA3, b"\x01\x00"), sunday_2326])
     early = advance(device, client, clock, 44)
     fired = advance(device, client, clock, 1)
+    fired += advance(device, client, clock, SWITCH_REPORT_DEBOUNCE)
     timer = decode_field(snapshot(device), record, Timer)
     command(device, client, 0x207, [port, (0xA3, b"\x01\x01")])
     week_early = advance(device, client, clock, 7 * 86400 - 1)
     week = advance(device, client, clock, 1)
+    week += advance(device, client, clock, SWITCH_REPORT_DEBOUNCE)
 
     off = f"a10131a20201{select:02x}a3020100"
     assert [cmd for cmd, _ in write] == ["4a08"]
@@ -1376,12 +1689,13 @@ def test_a_once_timed_task_fires_at_its_next_time_then_disables_itself() -> None
         [port, (0xA3, b"\x01\x01"), (0xA4, b"\x03\x01\x17\x1a\x00")],
     )
     fired = advance(device, client, clock, 45)
+    fired += advance(device, client, clock, SWITCH_REPORT_DEBOUNCE)
     week = advance(device, client, clock, 7 * 86400)
 
     clock_field = device_clock(45)
     assert fired == [
-        ("4302", f"a10131a2020100a3020101{clock_field}"),
         ("4308", f"a10131a2020100a3020101a4050400171a00{clock_field}"),
+        ("4302", f"a10131a2020100a3020101{clock_field}"),
     ]
     assert week == []
     timer = decode_field(snapshot(device), "aa", Timer)
@@ -1454,6 +1768,7 @@ def test_a_clock_set_re_times_a_queued_timed_task(shift: int, due: int) -> None:
     )
     early = advance(device, client, clock, due - 1)
     fired = advance(device, client, clock, 1)
+    fired += advance(device, client, clock, SWITCH_REPORT_DEBOUNCE)
 
     assert early == []
     assert fired == [("4302", f"a10131a2020100a3020100{device_clock(shift + due)}")]
@@ -1757,7 +2072,8 @@ async def test_a2345_knob_time_format_screensaver_and_switches_validate() -> Non
         )
 
     assert knob[0].plaintext == bytes.fromhex("00a10131")
-    assert bad_knob[0].plaintext == bytes.fromhex("04a10131")
+    # Acked 00; knob_direction_set's range check ignores it (cmd20e 0x000439f4).
+    assert bad_knob[0].plaintext == bytes.fromhex("00a10131")
     assert time_format[0].plaintext == bytes.fromhex("00a10131")
     assert bad_time_format[0].plaintext == bytes.fromhex("04a10131")
     assert screensaver[0].plaintext == bytes.fromhex("00a10131")
@@ -1871,23 +2187,188 @@ def test_a2345_reports_a_screen_setting_changed_on_the_unit() -> None:
     clock = ManualClock()
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
-    fe = device_clock(0)
     theme_id = "a305048eb81a0e"
 
-    assert unit_change(device, client, screen_brightness=40) == [
-        ("430a", f"a10131a2020128{fe}")
+    def settled(**values: Value) -> list[tuple[str, str]]:
+        device.set_values(**values)
+        return advance(device, client, clock, SCREEN_REPORT_DEBOUNCE)
+
+    assert settled(screen_brightness=40) == [
+        ("430a", f"a10131a2020128{device_clock(0)}")
     ]
-    assert unit_change(device, client, screen_timeout=2, button_rotate_direction=1) == [
-        ("4309", f"a10131a2020102{fe}"),
-        ("4310", f"a10131a2020101{fe}"),
+    assert settled(screen_timeout=2, button_rotate_direction=1) == [
+        ("4309", f"a10131a2020102{device_clock(1)}"),
+        ("4310", f"a10131a2020101{device_clock(1)}"),
     ]
-    assert unit_change(
-        device, client, screen_saver_theme=0, screen_saver_theme_id=0x0E1AB88E
-    ) == [("430b", f"a10131a20201c0{theme_id}{fe}")]
-    assert unit_change(
-        device, client, screen_saver_switch=False, holiday_screensaver_switch=False
-    ) == [("430b", f"a10131a2020100{theme_id}{fe}")]
-    assert unit_change(device, client, screen_brightness=40) == []
+    assert settled(screen_saver_theme=0, screen_saver_theme_id=0x0E1AB88E) == [
+        ("430b", f"a10131a20201c0{theme_id}{device_clock(1)}")
+    ]
+    assert settled(screen_saver_switch=False, holiday_screensaver_switch=False) == [
+        ("430b", f"a10131a2020100{theme_id}{device_clock(2)}")
+    ]
+    assert settled(screen_timeout=2) == []
+
+
+def test_a2345_screen_report_waits_out_the_debounce() -> None:
+    """``screen_report_dirty_debounce``: a report goes > 4 ticks (~500 ms) after.
+
+    prime-a2345-a91b2.md "Screen reports", "Senders".
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+
+    early = unit_change(device, client, screen_brightness=40)
+    still = advance(device, client, clock, 0.4)
+    due = advance(device, client, clock, 0.1)
+
+    assert (early, still) == ([], [])
+    assert [cmd for cmd, _ in due] == ["430a"]
+
+
+def test_a2345_brightness_set_unchanged_on_the_unit_still_reports() -> None:
+    """``screen_brightness_set`` marks ``030a`` pending even when unchanged.
+
+    The other settings report only a change (prime-a2345-a91b2.md "Senders").
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(screen_brightness=40, screen_timeout=2)
+    advance(device, client, clock, SCREEN_REPORT_DEBOUNCE)
+
+    device.set_values(screen_brightness=40, screen_timeout=2)
+    again = advance(device, client, clock, SCREEN_REPORT_DEBOUNCE)
+
+    assert [cmd for cmd, _ in again] == ["430a"]
+
+
+def test_a2345_repeated_brightness_writes_keep_pushing_030a_out() -> None:
+    """Each ``*_mark_pending`` is pending 1, count 0: a write restarts its count.
+
+    prime-a2345-a91b2.md "Senders": writes at 0, 0.3 and 0.6 s, the same value,
+    send one ``030a`` 0.5 s after the last.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    held = []
+
+    for _ in range(3):
+        device.set_values(screen_brightness=40)
+        held += advance(device, client, clock, 0.3)
+    due = advance(device, client, clock, 0.3)
+
+    assert held == []
+    assert [cmd for cmd, _ in due] == ["430a"]
+
+
+#: An on-unit change, and the app setter of the same report's setting.
+APP_WRITES_IN_THE_DEBOUNCE = [
+    pytest.param({"screen_brightness": 40}, 0x204, b"\x01\x32", id="030a 4204"),
+    pytest.param({"screen_timeout": 2}, 0x203, b"\x01\x01", id="0309 4203"),
+    pytest.param({"button_rotate_direction": 1}, 0x20E, b"\x01\x00", id="0310 420e"),
+    pytest.param({"screen_saver_theme": 1}, 0x205, b"\x01\x82", id="030b 4205"),
+    # Acked, then ignored by the setter's range check: the byte is still written.
+    pytest.param({"screen_timeout": 2}, 0x203, b"\x01\x05", id="0309 4203 range"),
+    pytest.param(
+        {"button_rotate_direction": 1}, 0x20E, b"\x01\x02", id="0310 420e range"
+    ),
+    pytest.param({"screen_saver_theme": 1}, 0x205, b"\x01\x00", id="030b clock off"),
+]
+#: An on-unit change, and an app command that writes no source byte: ``04`` for
+#: ``a2``'s length, or a network ``4205`` missing ``a3``-``a7``.
+APP_COMMANDS_THAT_KEEP_THE_REPORT = [
+    pytest.param({"screen_timeout": 2}, 0x203, [], "4309", id="4203 no a2"),
+    pytest.param(
+        {"screen_timeout": 2}, 0x203, [(0xA2, b"\x01\x00\x01")], "4309", id="len 3"
+    ),
+    pytest.param(
+        {"screen_saver_theme": 1}, 0x205, [(0xA2, b"\x01\x83")], "430b", id="bare 83"
+    ),
+]
+
+
+@pytest.mark.parametrize(("unit", "msgtype", "a2"), APP_WRITES_IN_THE_DEBOUNCE)
+def test_a2345_an_app_write_inside_the_debounce_drops_the_unit_report(
+    unit: dict[str, Value], msgtype: int, a2: bytes
+) -> None:
+    """The app's handler sets the report's source byte to 1; 1 drops it at send.
+
+    prime-a2345-a91b2.md "Screen reports": an on-unit change, then the app's
+    setter 0.2 s on, sends no ``03xx`` at 0.5 s or after.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+
+    device.set_values(**unit)
+    advance(device, client, clock, 0.2)
+    replies = command(device, client, msgtype, [(0xA2, a2)])
+    later = advance(device, client, clock, 0.3) + advance(device, client, clock, 1)
+
+    assert [cmd for cmd, _ in replies] == [f"4a{msgtype & 0xFF:02x}"]
+    assert later == []
+
+
+def test_a2345_an_unit_change_after_an_app_write_still_reports() -> None:
+    """The on-unit change writes the source byte 2 last, so its report goes."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+
+    command(device, client, 0x204, [(0xA2, b"\x01\x32")])
+    advance(device, client, clock, 0.2)
+    device.set_values(screen_brightness=40)
+    reports = advance(device, client, clock, SCREEN_REPORT_DEBOUNCE)
+
+    assert [cmd for cmd, _ in reports] == ["430a"]
+
+
+@pytest.mark.parametrize(
+    ("unit", "msgtype", "fields", "report"), APP_COMMANDS_THAT_KEEP_THE_REPORT
+)
+def test_a2345_an_app_command_writing_no_source_byte_keeps_the_report(
+    unit: dict[str, Value],
+    msgtype: int,
+    fields: list[tuple[int, bytes]],
+    report: str,
+) -> None:
+    """prime-a2345-a91b2.md "Source-byte order": these leave the byte alone.
+
+    A ``04`` for ``a2``'s length, or a network ``4205`` missing ``a3``-``a7``
+    (acked ``00``, logged ``0x41c``-``0x41f``), so the on-unit report goes.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+
+    device.set_values(**unit)
+    advance(device, client, clock, 0.2)
+    command(device, client, msgtype, fields)
+    reports = advance(device, client, clock, 0.3)
+
+    assert [cmd for cmd, _ in reports] == [report]
+
+
+@pytest.mark.parametrize(
+    ("value", "stored"),
+    [
+        pytest.param(100, 100, id="100 stored"),
+        pytest.param(101, 40, id="101 ignored"),
+        pytest.param(255, 40, id="255 ignored"),
+    ],
+)
+def test_a2345_4204_over_100_is_acked_and_ignored(value: int, stored: int) -> None:
+    """``screen_brightness_set`` 0x00023f54: a value over 100 is ignored, acked 00."""
+    device = A2345(clock=ManualClock())
+    client = prime_client(device, TOKEN)
+    device.set_values(screen_brightness=40)
+
+    replies = command(device, client, 0x204, [(0xA2, b"\x01" + bytes([value]))])
+
+    assert [(cmd, payload[:2]) for cmd, payload in replies] == [("4a04", "00")]
+    assert decode_field(snapshot(device), "b3", ui(1)) == stored
 
 
 def test_a2345_app_screen_settings_draw_no_report() -> None:
@@ -2679,11 +3160,10 @@ def test_a_prime_push_leaves_ble_for_mqtt_while_wifi_is_up() -> None:
     assert [cmd for cmd, _ in switched] == ["4a07"]
     assert expired == []
     assert ([cmd for cmd, _ in stream[0]], stream[1]) == (["4a0b"], [])
-    assert [cmd for cmd, _ in back] == ["4a07", "4302"]
+    assert [cmd for cmd, _ in back] == ["4a07"]
     assert published(device) == while_up
     assert [(msgtype, payload[:6]) for msgtype, payload in while_up] == [
         (0x301, "a10164"),
-        (0x302, "a10164"),
         (0x307, "a10164"),
         (0x307, "a10164"),
         *[(0x303, "a10134")] * 6,
@@ -3011,12 +3491,14 @@ def test_a2345_holiday_theme_shows_inside_its_window_on_the_local_rtc() -> None:
     """``4a02``: ``a4`` the fetch URL and ``a5 01`` from start to end, inclusive.
 
     Shown with the holiday switch on and the record's country the stored one
-    (doc "``4a02`` screensaver reply", ``holiday_window_active``).
+    (doc "``4a02`` screensaver reply", ``holiday_window_active``), as the
+    screensaver evaluates the flag each tick (doc "Display state").
     """
     clock = ManualClock()
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
     module = device.negotiated_module
+    into_screensaver(device, client, clock)
     command(device, client, 0x20A, [(0xA2, b"\x04us"), (0xA3, b"\x04" + ACCOUNT)])
     device.set_wifi(True)
     start = module.rtc + 10
@@ -3043,6 +3525,7 @@ def test_a2345_holiday_theme_reply_carries_a5_after_a4() -> None:
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
     module = device.negotiated_module
+    into_screensaver(device, client, clock)
     command(device, client, 0x20A, [(0xA2, b"\x04us"), (0xA3, b"\x04" + ACCOUNT)])
     device.set_wifi(True)
     window = holiday_schedule(1, module.rtc - 600, module.rtc + 600)
@@ -3055,6 +3538,43 @@ def test_a2345_holiday_theme_reply_carries_a5_after_a4() -> None:
     assert (fields["a2"]["value"].hex(), fields["a5"]["value"].hex()) == ("c3", "01")
 
 
+def test_a2345_theme_report_carries_the_holiday_record_while_it_shows() -> None:
+    """``030b`` adds ``a4 ... 04 <holiday theme record>`` while the holiday shows.
+
+    prime-a2345-a91b2.md "Screen reports" (``push_030b`` 0x00023194): the
+    record is the holiday slot's (``0xfffe00``), the string ``4a02``'s ``a4``
+    carries; outside the window ``030b`` keeps ``a2`` / ``a3`` only.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    into_screensaver(device, client, clock)
+    command(device, client, 0x20A, [(0xA2, b"\x04us"), (0xA3, b"\x04" + ACCOUNT)])
+    device.set_wifi(True)
+    window = holiday_schedule(1, module.rtc - 600, module.rtc + 600)
+    command(device, client, 0x212, window)
+    advance(device, client, clock, 9)
+    device.set_wifi(False)
+
+    device.set_values(screen_saver_theme=1)
+    shown = advance(device, client, clock, SCREEN_REPORT_DEBOUNCE)
+    advance(device, client, clock, 600)
+    device.set_values(screen_saver_theme=2)
+    after = advance(device, client, clock, SCREEN_REPORT_DEBOUNCE)
+
+    fields = Parameters.parse(bytes.fromhex(shown[0][1]))
+    assert [cmd for cmd, _ in shown] == ["430b"]
+    assert list(fields) == ["a1", "a2", "a3", "a4", "fe"]
+    assert (fields["a4"]["type"], fields["a4"]["value"]) == (0x04, HOLIDAY_URL)
+    assert list(Parameters.parse(bytes.fromhex(after[0][1]))) == [
+        "a1",
+        "a2",
+        "a3",
+        "fe",
+    ]
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -3064,11 +3584,15 @@ def test_a2345_holiday_theme_reply_carries_a5_after_a4() -> None:
     ],
 )
 def test_a2345_holiday_theme_hides(change: str) -> None:
-    """A later ``420a`` country, the holiday switch off, or the erase hides it."""
+    """A later ``420a`` country, the holiday switch off, or the erase hides it.
+
+    At the screensaver's next evaluation, one display tick on.
+    """
     clock = ManualClock()
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
     module = device.negotiated_module
+    into_screensaver(device, client, clock)
     command(device, client, 0x20A, [(0xA2, b"\x04us"), (0xA3, b"\x04" + ACCOUNT)])
     device.set_wifi(True)
     window = holiday_schedule(1, module.rtc - 600, module.rtc + 600)
@@ -3082,8 +3606,400 @@ def test_a2345_holiday_theme_hides(change: str) -> None:
         device.set_values(holiday_screensaver_switch=False)
     else:
         command(device, client, 0x212, [(0xA2, b"\x03" + ui(4).build(0))])
+    still = "a5" in screensaver(device)
+    advance(device, client, clock, DISPLAY_TICK)
 
-    assert (before, "a5" in screensaver(device)) == (True, False)
+    assert (before, still, "a5" in screensaver(device)) == (True, True, False)
+
+
+def test_a2345_display_blanks_at_its_b0_timeout_then_shows_the_screensaver() -> None:
+    """Display state 0 -> 2 at the ``b0`` timeout, then 1 at the next tick.
+
+    prime-a2345-a91b2.md "Display state": ``b0`` 1 = 300 ticks (30 s); the
+    recorded window (every day) and clock switch let black move on.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(screen_timeout=1)
+    states = []
+
+    for seconds in (29.9, 0.1, DISPLAY_TICK):
+        advance(device, client, clock, seconds)
+        states.append(module.values.get(DISPLAY, 0))
+
+    assert states == [0, 2, 1]
+
+
+@pytest.mark.parametrize(
+    "written", [pytest.param(1, id="unchanged"), pytest.param(2, id="changed")]
+)
+def test_a2345_any_b0_write_on_the_unit_restarts_the_count(written: int) -> None:
+    """``screen_timeout_set`` zeroes the blank counter on any valid ``b0`` (< 5).
+
+    prime-a2345-a91b2.md "Display state", state 0: even an unchanged write.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(screen_timeout=1)
+    advance(device, client, clock, 20)
+
+    device.set_values(screen_timeout=written)
+    advance(device, client, clock, 29.9)
+
+    assert module.values.get(DISPLAY, 0) == 0
+
+
+def test_a2345_a_b0_of_0_never_blanks() -> None:
+    """``b0`` 0 is never: the display stays on."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(screen_timeout=0)
+
+    advance(device, client, clock, 86400)
+
+    assert device.negotiated_module.values.get(DISPLAY, 0) == 0
+
+
+#: App setting commands acked ``00`` whose handlers call ``display_wake_to_active?``
+#: (prime-a2345-a91b2.md): ``4206``-``4209`` also on a change their setter drops.
+#: An off-time half, Sunday 23:26.
+SUNDAY_2326 = (0xA4, b"\x03\x01\x17\x1a\x40")
+WAKING_COMMANDS = [
+    pytest.param(0x203, [(0xA2, b"\x01\x01")], id="4203"),
+    pytest.param(0x204, [(0xA2, b"\x01\x32")], id="4204"),
+    pytest.param(0x206, [(0xA2, b"\x01\x01")], id="4206"),
+    pytest.param(0x206, [(0xA2, b"\x01\x05")], id="4206 mode 5 without a3 a4"),
+    pytest.param(0x207, [(0xA2, b"\x01\x00"), (0xA3, b"\x01\x00")], id="4207"),
+    pytest.param(0x207, [(0xA2, b"\x01\x05"), (0xA3, b"\x01\x00")], id="4207 port 5"),
+    pytest.param(
+        0x208, [(0xA2, b"\x01\x00"), (0xA3, b"\x01\x00"), SUNDAY_2326], id="4208"
+    ),
+    pytest.param(
+        0x208, [(0xA2, b"\x01\x00"), (0xA3, b"\x01\x02"), SUNDAY_2326], id="4208 a3 2"
+    ),
+    pytest.param(0x209, [(0xA2, b"\x01\x00"), arm(600)], id="4209"),
+    pytest.param(0x209, [(0xA2, b"\x01\x05"), arm(600)], id="4209 unknown port"),
+    pytest.param(0x20E, [(0xA2, b"\x01\x00")], id="420e"),
+    pytest.param(0x213, screensaver_window((0, 0), (0, 0), 0x7F), id="4213"),
+    pytest.param(0x223, [(0xA2, b"\x01\x01")], id="4223"),
+]
+
+
+@pytest.mark.parametrize(("msgtype", "fields"), WAKING_COMMANDS)
+def test_a2345_an_app_setting_command_wakes_the_display_and_restarts_b0(
+    msgtype: int, fields: list[tuple[int, bytes]]
+) -> None:
+    """From the screensaver to 0, and the ``b0`` count starts over there."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    into_screensaver(device, client, clock)
+
+    command(device, client, msgtype, fields)
+    woken = module.values[DISPLAY]
+    advance(device, client, clock, 29.8)
+    still_on = module.values[DISPLAY]
+    advance(device, client, clock, 0.5)
+
+    assert (woken, still_on, module.values[DISPLAY]) == (0, 0, 1)
+
+
+@pytest.mark.parametrize(
+    ("msgtype", "fields"),
+    [
+        pytest.param(0x203, [], id="4203 refused 04"),
+        pytest.param(0x207, [(0xA2, b"\x01\x00")], id="4207 refused 04"),
+        pytest.param(0x205, [(0xA2, b"\x01\x82")], id="4205 with the inhibit 0"),
+        pytest.param(0x20F, [(0xA2, b"\x01\x01")], id="420f"),
+        pytest.param(0x202, [], id="4202 read"),
+    ],
+)
+def test_a2345_other_commands_and_unit_changes_leave_the_screensaver(
+    msgtype: int, fields: list[tuple[int, bytes]]
+) -> None:
+    """A ``04``, a handler that doesn't call the wake, and an on-unit setting.
+
+    ``cmd205`` wakes only on a clock-on ``a2`` while the screen-off inhibit is 1,
+    which no input sets.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    into_screensaver(device, client, clock)
+
+    command(device, client, msgtype, fields)
+    device.set_values(screen_brightness=40)
+    advance(device, client, clock, 1)
+
+    assert module.values[DISPLAY] == 1
+
+
+def test_a2345_the_clock_switch_moves_the_screensaver_to_black_and_back() -> None:
+    """Clock switch off in 1 -> 2; on again, black meets the gate -> 1."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    into_screensaver(device, client, clock)
+
+    device.set_values(screen_saver_switch=False)
+    advance(device, client, clock, DISPLAY_TICK)
+    off = module.values[DISPLAY]
+    device.set_values(screen_saver_switch=True)
+    advance(device, client, clock, DISPLAY_TICK)
+
+    assert (off, module.values[DISPLAY]) == (2, 1)
+
+
+def test_a2345_a_clock_switch_back_on_before_the_tick_keeps_the_screensaver() -> None:
+    """The move to black reads the switch at its tick: on again, it stays 1."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    into_screensaver(device, client, clock)
+
+    device.set_values(screen_saver_switch=False)
+    device.set_values(screen_saver_switch=True)
+    advance(device, client, clock, DISPLAY_TICK)
+
+    assert module.values[DISPLAY] == 1
+
+
+def test_a2345_the_window_phase_is_first_evaluated_a_second_after_the_rtc() -> None:
+    """``DAT_2000b489`` reads 0 until 10 passes after the RTC is valid."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    prime_client(device, TOKEN)
+    module = device.negotiated_module
+
+    clock.advance(0.9)
+    module.check_pushes()
+    early = module.values.get(WINDOW_PHASE, 0)
+    clock.advance(0.2)
+    module.check_pushes()
+
+    assert (early, module.values[WINDOW_PHASE]) == (0, 2)
+
+
+#: 4213 windows against the RTC (Sunday 23:25:15, then Monday 00:25:15 an hour
+#: on), and the phase each reads: 2 inside, 1 outside. Weekdays bit 0 Monday,
+#: bit 6 Sunday.
+WINDOW_PHASES = [
+    pytest.param((23, 0), (23, 30), 0x40, 0, 2, id="inside Sunday"),
+    pytest.param((23, 0), (23, 25), 0x40, 0, 1, id="end exclusive"),
+    pytest.param((23, 25), (23, 30), 0x40, 0, 2, id="start inclusive"),
+    pytest.param((23, 0), (23, 30), 0x3F, 0, 1, id="Sunday unset"),
+    pytest.param((22, 0), (2, 0), 0x40, 0, 2, id="wrap, before midnight"),
+    pytest.param((22, 0), (2, 0), 0x20, 0, 1, id="wrap, today's bit unset"),
+    pytest.param((22, 0), (2, 0), 0x40, 3600, 2, id="wrap, after midnight"),
+    pytest.param((22, 0), (2, 0), 0x01, 3600, 1, id="wrap, yesterday's bit unset"),
+    pytest.param((22, 0), (0, 25), 0x40, 3600, 2, id="wrap, end minute included"),
+    pytest.param((22, 0), (0, 24), 0x40, 3600, 1, id="wrap, a minute past the end"),
+    pytest.param((0, 0), (0, 0), 0x7F, 0, 2, id="start = end, all day"),
+    pytest.param((23, 0), (23, 30), 0, 0, 2, id="once, inside"),
+    pytest.param((23, 30), (23, 40), 0, 0, 1, id="once, ahead"),
+    pytest.param((23, 30), (23, 40), 0, 300, 2, id="once, reached"),
+    pytest.param((23, 0), (23, 30), 0, 86400, 1, id="once, past"),
+    pytest.param((23, 0), (23, 20), 0, 0, 1, id="once, ended today"),
+    pytest.param((23, 0), (23, 20), 0, 84905, 2, id="once, dated tomorrow"),
+]
+
+
+@pytest.mark.parametrize(("start", "end", "weekdays", "later", "phase"), WINDOW_PHASES)
+def test_a2345_the_4213_window_phase(
+    start: tuple[int, int],
+    end: tuple[int, int],
+    weekdays: int,
+    later: int,
+    phase: int,
+) -> None:
+    """prime-a2345-a91b2.md "``4213`` window": minute resolution, start inclusive.
+
+    End exclusive, wrapping past midnight; a once window (weekdays 0) is dated.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    advance(device, client, clock, 1.1)
+
+    command(device, client, 0x213, screensaver_window(start, end, weekdays))
+    advance(device, client, clock, later)
+
+    assert device.negotiated_module.values[WINDOW_PHASE] == phase
+
+
+def test_a2345_a_once_window_whose_start_a_clock_set_passes_is_skipped() -> None:
+    """``DAT_2000b49e``: a start found passed is latched as handled, never entered.
+
+    prime-a2345-a91b2.md "``4213`` inside rule": a clock set past the start.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    advance(device, client, clock, 1.1)
+    command(device, client, 0x213, screensaver_window((23, 30), (23, 40), 0))
+
+    moved = ui(4).build(ui(4).parse(TIMESTAMP) + 360)
+    exchange(module, client, 0x022, [(0xA1, moved), (0xA3, UTC_OFFSET), (0xA5, TZ)])
+    skipped = module.values[WINDOW_PHASE]
+    advance(device, client, clock, 600)
+
+    assert (skipped, module.values[WINDOW_PHASE]) == (1, 1)
+
+
+def test_a2345_a_once_window_end_turns_the_clock_off() -> None:
+    """At the exact end minute: outside, the clock off (``af[0]`` bit 7), ``030b``.
+
+    ``screen_target_set(0, theme)`` with source 2, so the screensaver goes to
+    black and the report goes out after its debounce.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    advance(device, client, clock, 1.1)
+    command(device, client, 0x213, screensaver_window((23, 25), (23, 27), 0))
+    into_screensaver(device, client, clock)
+
+    advance(device, client, clock, 72)
+    shown = (module.values[WINDOW_PHASE], module.values[DISPLAY])
+    pushes = advance(device, client, clock, 3)
+
+    reports = [
+        Parameters.parse(bytes.fromhex(payload))["a2"]["value"][0]
+        for cmd, payload in pushes
+        if cmd == "430b"
+    ]
+    assert shown == (2, 1)
+    assert (module.values[WINDOW_PHASE], module.values[DISPLAY]) == (1, 2)
+    assert module.values["screen_saver_switch"] is False
+    assert [value & 0x80 for value in reports] == [0]
+
+
+def test_a2345_a_once_window_end_with_the_clock_already_off_reports_nothing() -> None:
+    """The screen target doesn't change, so no ``030b`` and no move."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    advance(device, client, clock, 1.1)
+    command(device, client, 0x213, screensaver_window((23, 25), (23, 27), 0))
+    device.set_values(screen_saver_switch=False)
+    advance(device, client, clock, SCREEN_REPORT_DEBOUNCE)
+
+    pushes = advance(device, client, clock, 106)
+
+    assert module.values[WINDOW_PHASE] == 1
+    assert [cmd for cmd, _ in pushes if cmd == "430b"] == []
+
+
+def test_a2345_a_once_window_end_passed_by_a_clock_set_turns_the_clock_off() -> None:
+    """``DAT_2000b4a8`` latched past the end: the clock off, the phase left inside.
+
+    ``clock_holiday_autoscreen?``: only the exact end minute sets the phase to 1.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    advance(device, client, clock, 1.1)
+    command(device, client, 0x213, screensaver_window((23, 25), (23, 27), 0))
+
+    moved = ui(4).build(ui(4).parse(TIMESTAMP) + 300)
+    exchange(module, client, 0x022, [(0xA1, moved), (0xA3, UTC_OFFSET), (0xA5, TZ)])
+    advance(device, client, clock, DISPLAY_TICK)
+
+    assert module.values[WINDOW_PHASE] == 2
+    assert module.values["screen_saver_switch"] is False
+
+
+def test_a2345_black_waits_outside_the_window_and_moves_at_its_start() -> None:
+    """Black stays black outside the ``4213`` window; its start minute moves it."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(screen_timeout=1)
+    command(device, client, 0x213, screensaver_window((23, 27), (23, 40), 0x7F))
+
+    advance(device, client, clock, 104)
+    waiting = module.values[DISPLAY]
+    advance(device, client, clock, 1.5)
+
+    assert (waiting, module.values[DISPLAY]) == (2, 1)
+
+
+def test_a2345_the_holiday_window_pushes_030b_at_its_edges_in_the_screensaver() -> None:
+    """``holiday_theme_change_push_030b``: 2 -> 1 at start, 1 -> 2 past the end.
+
+    Pushed directly, with no source gate or debounce: ``a4`` the holiday
+    record at start, none past the end (prime-a2345-a91b2.md "Holiday ``030b``").
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    into_screensaver(device, client, clock)
+    command(device, client, 0x20A, [(0xA2, b"\x04us"), (0xA3, b"\x04" + ACCOUNT)])
+    device.set_wifi(True)
+    start = module.rtc + 20
+    command(device, client, 0x212, holiday_schedule(1, start, start + 20))
+    advance(device, client, clock, 9)
+    device.set_wifi(False)
+
+    landed = advance(device, client, clock, 10)
+    started = advance(device, client, clock, 2)
+    ended = advance(device, client, clock, 21)
+
+    def reports(pushes: list[tuple[str, str]]) -> list[list[str]]:
+        return [
+            list(Parameters.parse(bytes.fromhex(payload)))
+            for cmd, payload in pushes
+            if cmd == "430b"
+        ]
+
+    assert reports(landed) == []
+    assert reports(started) == [["a1", "a2", "a3", "a4", "fe"]]
+    assert reports(ended) == [["a1", "a2", "a3", "fe"]]
+
+
+def test_a2345_a_holiday_edge_crossed_on_shows_at_the_next_evaluation() -> None:
+    """The first evaluation pushes nothing; an edge crossed in 0 at the next one.
+
+    ``4a02`` reads the last evaluated flag, so it doesn't show the holiday
+    before the screensaver has evaluated it.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    command(device, client, 0x20A, [(0xA2, b"\x04us"), (0xA3, b"\x04" + ACCOUNT)])
+    device.set_wifi(True)
+    window = holiday_schedule(1, module.rtc, module.rtc + 60)
+    command(device, client, 0x212, window)
+    advance(device, client, clock, 9)
+    device.set_wifi(False)
+    unevaluated = "a5" in screensaver(device)
+
+    first = into_screensaver(device, client, clock)
+    shown = "a5" in screensaver(device)
+    command(device, client, 0x223, [(0xA2, b"\x01\x01")])
+    advance(device, client, clock, 25)
+    again = into_screensaver(device, client, clock)
+
+    assert (unevaluated, shown) == (False, True)
+    assert [cmd for cmd, _ in first if cmd == "430b"] == []
+    assert [cmd for cmd, _ in again if cmd == "430b"] == ["430b"]
+    assert "a5" not in screensaver(device)
 
 
 def test_a2345_420a_stores_the_country_uppercased() -> None:

@@ -255,3 +255,59 @@ def test_a_prepare_crc_off_the_photo_ends_11_and_the_repeat_uploads_again() -> N
     assert replies[-1] == [("4a21", f"11a10131a20302{COUNT:02x}00")]
     assert decode_field(snapshot(device), "af", Theme) == had
     assert repeat[1] == ("4311", f"{PHOTO_4311}a3020104a4020105")
+
+
+@pytest.mark.parametrize(
+    ("before_change", "crc", "reports"),
+    [
+        pytest.param(COUNT - 1, PHOTO_ID, [], id="last chunk stored"),
+        pytest.param(COUNT - 1, PHOTO_ID ^ 1, ["430b"], id="last chunk bad CRC"),
+        pytest.param(COUNT - 2, PHOTO_ID, ["430b"], id="ordinary chunk"),
+    ],
+)
+def test_only_the_stored_last_chunk_drops_a_pending_theme_report(
+    before_change: int, crc: int, reports: list[str]
+) -> None:
+    """``cmd221_upload_chunk`` writes ``030b``'s source byte 1 only on CRC OK.
+
+    prime-a2345-a91b2.md "Source-byte order": an on-unit theme change, then one
+    chunk 0.2 s on; only the last chunk's stored path drops its ``030b``.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    command(device, client, 0x205, CUSTOM_SELECT)
+    prepare = [
+        (tag, b"\x03" + crc.to_bytes(4, "little") if tag == 0xA4 else field)
+        for tag, field in CUSTOM_PREPARE
+    ]
+    command(device, client, 0x220, prepare)
+    for i in range(before_change):
+        command(device, client, 0x221, upload_chunk(CUSTOM_PHOTO, i, CHUNK, pad=True))
+
+    device.set_values(screen_saver_theme=1)
+    advance(device, client, clock, 0.2)
+    chunk = upload_chunk(CUSTOM_PHOTO, before_change, CHUNK, pad=True)
+    command(device, client, 0x221, chunk)
+    later = advance(device, client, clock, 0.3) + advance(device, client, clock, 1)
+
+    assert [cmd for cmd, _ in later if cmd == "430b"] == reports
+
+
+def test_a_stored_custom_theme_selected_drops_a_pending_theme_report() -> None:
+    """``cmd205_set_theme`` writes the byte when it shows an already-stored image."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    command(device, client, 0x205, CUSTOM_SELECT)
+    command(device, client, 0x220, CUSTOM_PREPARE)
+    for i in range(COUNT):
+        command(device, client, 0x221, upload_chunk(CUSTOM_PHOTO, i, CHUNK, pad=True))
+    advance(device, client, clock, 1)
+
+    device.set_values(screen_saver_theme=1)
+    advance(device, client, clock, 0.2)
+    command(device, client, 0x205, CUSTOM_SELECT)
+    later = advance(device, client, clock, 0.3) + advance(device, client, clock, 1)
+
+    assert [cmd for cmd, _ in later if cmd == "430b"] == []

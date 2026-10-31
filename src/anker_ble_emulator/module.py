@@ -42,7 +42,7 @@ from .frame import (
     make_frame,
     reply_frame,
 )
-from .layouts import EPOCH, RTC
+from .layouts import CLOCK, EPOCH, RTC
 from .mcu import CLOUD, COMMAND, GIVEN, LINK, UNIT_EVENT, given, mcu_frame
 from .messages import (
     AUTH_PENDING_REPLY,
@@ -557,6 +557,7 @@ class Module:
             **self.mcu.state(self.values),
             RTC: self._rtc_at(now),
             EPOCH: self._epoch_at(now),
+            CLOCK: now,
             CLOUD: int(self.cloud),
             LINK: int(self.authorized),
         }

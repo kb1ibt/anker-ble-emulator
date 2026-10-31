@@ -10,13 +10,22 @@ handler names (``setACPortTimedTask``, ``setACPortCountdownTask``,
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from functools import partial
 from typing import TYPE_CHECKING
 
 from construct import Array, Flag, If, Int8sl, Int8ul, Int16ul, Struct, this
 
-from anker_ble_emulator.layouts import EPOCH, RTC, TYPE_BIN, TYPE_SILE, TYPE_UI, ui
+from anker_ble_emulator.layouts import (
+    CLOCK,
+    EPOCH,
+    RTC,
+    TYPE_BIN,
+    TYPE_SILE,
+    TYPE_UI,
+    ui,
+)
 from anker_ble_emulator.mcu import Burst
 from anker_ble_emulator.messages import BLE_REPLY_ROUTE
 from anker_ble_emulator.parameters import (
@@ -418,19 +427,21 @@ def ac_port_countdown_task(
     return set_ac_port_countdown_task
 
 
-def countdown_timers(
+def countdown_timers(  # noqa: PLR0913  # the change and the device's countdown rules
     port_by_select: Mapping[int, str],
     before: Mapping[str, Value],
     after: Mapping[str, Value],
     *,
     disarm_clears: Collection[str],
     remaining_first: bool,
+    switch_watch: SwitchWatch | None = None,
 ) -> tuple[Timed, ...]:
     """Return the countdown events a change starts, one ``<port>_countdown`` each.
 
     A port armed, re-armed or given a new remaining time counts down from it,
     once a second; a disarmed one's pending expiry is dropped. The remaining
-    time is ticked live, so every frame reads it as it stands.
+    time is ticked live, so every frame reads it as it stands. With
+    ``switch_watch`` an expiry's ``0302`` waits for its pass; else it goes at once.
     """
     events = []
     for select, port in port_by_select.items():
@@ -440,7 +451,8 @@ def countdown_timers(
         if after[switch] and (
             not before[switch] or before[remaining] != after[remaining]
         ):
-            tick = _Countdown(port, select, port in disarm_clears, remaining_first)
+            clears = port in disarm_clears
+            tick = _Countdown(port, select, clears, remaining_first, switch_watch)
             events.append(Timed(COUNTDOWN_TICK, key, tick))
         elif before[switch] and not after[switch]:
             events.append(Timed(0, key, drop_queued))
@@ -451,12 +463,15 @@ def schedule_timers(
     port_by_select: Mapping[int, str],
     before: Mapping[str, Value],
     after: Mapping[str, Value],
+    *,
+    switch_watch: SwitchWatch | None = None,
 ) -> tuple[Timed, ...]:
     """Return the timed-task events a change starts, one ``<port>_timed_task_<half>``.
 
     An enabled half (switch 1; the unset ``ff`` never fires) is timed to its
     next hh:mm on one of its weekdays by the RTC, again when a clock set moves
-    the RTC; one disabled or changed drops what was queued.
+    the RTC; one disabled or changed drops what was queued. With
+    ``switch_watch`` a firing's ``0302`` waits for its pass; else it goes at once.
     """
     clock_set = before[RTC] != after[RTC]
     events = []
@@ -466,7 +481,8 @@ def schedule_timers(
             key = f"{port}_timed_task_{half}"
             if now["switch"] == 1 and (was != now or clock_set):
                 delay, weekday = _next_firing(int(after[RTC]), now)
-                task = _TimedTask(port, select, half, int(now["weekdays"]), weekday)
+                weekdays = int(now["weekdays"])
+                task = _TimedTask(port, select, half, weekdays, weekday, switch_watch)
                 events.append(Timed(delay, key, task))
             elif was != now:
                 events.append(Timed(0, key, drop_queued))
@@ -514,6 +530,7 @@ class _TimedTask:
     half: str
     weekdays: int
     weekday: int
+    switch_watch: SwitchWatch | None = None
 
     def __call__(
         self,
@@ -524,10 +541,13 @@ class _TimedTask:
         on = self.half == "start"
         relay = f"{self.port}_relay_switch"
         port = container("a2", TYPE_UI, ui(1).build(self.select))
-        frames = []
+        frames: list[tuple[int, bytes]] = []
+        reports: tuple[Timed, ...] = ()
+        source: dict[str, Value] = {}
         if bool(state[relay]) != on:
-            switch = container("a3", TYPE_UI, ui(1).build(on))
-            frames.append(timed_push(0x302, {"a2": port, "a3": switch}, state))
+            frames, reports, source = _switch_reported(
+                self.select, state, on=on, watch=self.switch_watch
+            )
         if not self.weekdays & EVERY_DAY:
             enable = f"{self.port}_timed_task_{self.half}_switch"
             record = _half(state, self.port, self.half) | {"switch": 0}
@@ -537,7 +557,11 @@ class _TimedTask:
                 "a4": container("a4", TYPE_BIN, ScheduleHalf.build(record)),
             }
             frames.append(timed_push(0x308, fields, state))
-            return Step(values={relay: on, enable: 0}, frames=tuple(frames))
+            return Step(
+                values={relay: on, enable: 0, **source},
+                frames=tuple(frames),
+                then=reports,
+            )
         ahead = next(
             ahead
             for ahead in range(1, WEEK + 1)
@@ -546,10 +570,121 @@ class _TimedTask:
         then = replace(self, weekday=(self.weekday + ahead) % WEEK)
         key = f"{self.port}_timed_task_{self.half}"
         return Step(
-            values={relay: on},
+            values={relay: on, **source},
             frames=tuple(frames),
-            then=(Timed(ahead * DAY, key, then),),
+            then=(Timed(ahead * DAY, key, then), *reports),
         )
+
+
+#: The A2345's switch watcher (``port_switch_tick``, on ``tick_100ms_group``)
+#: reports switch changes after its ~5-tick debounce (doc push table ``0302``).
+SWITCH_REPORT_DEBOUNCE = 0.5
+#: ``0302``'s one source byte (``DAT_2000a7ce``) for all ports, in no frame. An
+#: app ``4207`` writes it 1, a firmware switch change 2.
+SWITCH_SOURCE = "_switch_report_source"
+SOURCE_APP = 1
+SOURCE_UNIT = 2
+
+
+#: ``tick_100ms_group``: the grid ``port_switch_tick`` runs on, and its phase on
+#: the device clock, a hidden per-run input (0-0.1 s, default 0).
+SWITCH_TICK = 0.1
+SWITCH_TICK_PHASE = "switch_tick_phase"
+#: The float slack a tick instant is matched with.
+TICK_SLACK = 1e-9
+
+
+@dataclass(frozen=True)
+class SwitchWatch:
+    """A switch watcher: each port's ``0302`` a debounce after its own last change.
+
+    ``port_switch_change_mark?`` marks the port and zeroes its count, so a
+    change restarts only that port's; the port is due on the first 100 ms
+    tick at or after its mark plus the debounce. Each tick's pass walks the
+    due ports in order: a source byte of 1 drops one and resets the byte to
+    0; 0 or 2 sends it, with the switch as it then stands (doc "``0302``
+    timing").
+
+    Attributes:
+        ports: The ports, as (select, name), in select order.
+        debounce: The seconds from a port's last change to its send.
+
+    """
+
+    ports: tuple[tuple[int, str], ...]
+    debounce: float = SWITCH_REPORT_DEBOUNCE
+
+    def mark(self, select: int, state: Mapping[str, Value]) -> dict[str, Value]:
+        """Return a change of port ``select`` marked: the tick it's due on."""
+        at = float(state[CLOCK]) + self.debounce
+        phase = float(state.get(SWITCH_TICK_PHASE, 0.0))
+        ticks = math.ceil((at - phase) / SWITCH_TICK - TICK_SLACK)
+        return {self._due(select): phase + ticks * SWITCH_TICK}
+
+    def marked(
+        self, before: Mapping[str, Value], after: Mapping[str, Value]
+    ) -> tuple[Timed, ...]:
+        """Return the send of each port a change marked anew."""
+        return tuple(
+            self.report(select, after)
+            for select, _ in self.ports
+            if before.get(self._due(select)) != after.get(self._due(select))
+        )
+
+    def report(self, select: int, after: Mapping[str, Value]) -> Timed:
+        """Return port ``select``'s send on its due tick, ``after`` its mark."""
+        port = dict(self.ports)[select]
+        delay = max(float(after[self._due(select)]) - float(after[CLOCK]), 0.0)
+        return Timed(delay, f"{port}_switch_report", self.send)
+
+    def send(
+        self,
+        values: Mapping[str, Value],  # noqa: ARG002  # reads the whole state
+        state: Mapping[str, Value],
+    ) -> Step:
+        """Walk the ports due on this tick, in order; the source byte decides each."""
+        now = float(state[CLOCK])
+        source = state.get(SWITCH_SOURCE, 0)
+        frames, walked = [], []
+        for select, port in self.ports:
+            due = state.get(self._due(select))
+            if due is None or float(due) > now + TICK_SLACK:
+                continue
+            walked.append(self._due(select))
+            if source == SOURCE_APP:
+                source = 0
+                continue
+            a2 = container("a2", TYPE_UI, ui(1).build(select))
+            a3 = container("a3", TYPE_UI, ui(1).build(state[f"{port}_relay_switch"]))
+            frames.append(timed_push(0x302, {"a2": a2, "a3": a3}, state))
+        if not walked:
+            return Step()
+        return Step(
+            values={SWITCH_SOURCE: source}, unset=tuple(walked), frames=tuple(frames)
+        )
+
+    def _due(self, select: int) -> str:
+        """Return the hidden tick instant port ``select`` is due on."""
+        return f"_{dict(self.ports)[select]}_switch_due"
+
+
+def _switch_reported(
+    select: int,
+    state: Mapping[str, Value],
+    *,
+    on: bool,
+    watch: SwitchWatch | None,
+) -> tuple[list[tuple[int, bytes]], tuple[Timed, ...], dict[str, Value]]:
+    """Return a firmware switch change's ``0302``: at once, or marked for its send.
+
+    A marked one writes the source byte 2.
+    """
+    if watch is None:
+        a2 = container("a2", TYPE_UI, ui(1).build(select))
+        a3 = container("a3", TYPE_UI, ui(1).build(on))
+        return [timed_push(0x302, {"a2": a2, "a3": a3}, state)], (), {}
+    changes = {**watch.mark(select, state), SWITCH_SOURCE: SOURCE_UNIT}
+    return [], (watch.report(select, {**state, **changes}),), changes
 
 
 def drop_queued(
@@ -581,6 +716,7 @@ class _Countdown:
     select: int
     clears: bool
     remaining_first: bool
+    switch_watch: SwitchWatch | None = None
 
     def __call__(
         self,
@@ -603,18 +739,23 @@ class _Countdown:
         }
         relay = f"{self.port}_relay_switch"
         port = container("a2", TYPE_UI, ui(1).build(self.select))
-        frames = []
+        frames: list[tuple[int, bytes]] = []
+        reports: tuple[Timed, ...] = ()
+        source: dict[str, Value] = {}
         if state[relay]:
-            off = container("a3", TYPE_UI, ui(1).build(0))
-            frames.append(timed_push(0x302, {"a2": port, "a3": off}, state))
+            frames, reports, source = _switch_reported(
+                self.select, state, on=False, watch=self.switch_watch
+            )
         codec = (
             CountdownRecordRemainingFirst if self.remaining_first else CountdownRecord
         )
         a3 = container("a3", TYPE_BIN, codec.build(record))
         frames.append(timed_push(0x307, {"a2": port, "a3": a3}, state))
+        changes = {f"{self.port}_{n}": v for n, v in record.items()}
         return Step(
-            values={relay: False} | {f"{self.port}_{n}": v for n, v in record.items()},
+            values={relay: False, **changes, **source},
             frames=tuple(frames),
+            then=reports,
         )
 
 

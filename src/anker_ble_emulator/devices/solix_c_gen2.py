@@ -65,7 +65,7 @@ from anker_ble_emulator.layouts import (
     fitted,
     ui,
 )
-from anker_ble_emulator.mcu import CLOUD, COMMAND, GIVEN, LINK
+from anker_ble_emulator.mcu import CLOUD, COMMAND, GIVEN, LINK, name_set
 from anker_ble_emulator.messages import (
     ROUTE_APP,
     ROUTE_BLE,
@@ -1819,12 +1819,6 @@ def _statuses(state: Mapping[str, Value]) -> dict[str, Value]:
     holder = _bus_pack(state)
     main = _pack_status(state, BUS_MAIN) if holder == BUS_MAIN else FLOW_IDLE
     return {"work_status": main, ON_BUS_STATUS: _pack_status(state, holder)}
-
-
-def name_set(state: Mapping[str, Value], name: str) -> frozenset[str]:
-    """Return the names newline-joined under ``name``; none if it's unset."""
-    joined = _bytes_value({name: b"", **state}, name)
-    return frozenset(part.decode() for part in joined.split(b"\n") if part)
 
 
 def _flow_follows(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:

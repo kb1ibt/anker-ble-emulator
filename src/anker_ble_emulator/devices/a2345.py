@@ -35,7 +35,7 @@ from anker_ble_emulator.layouts import (
     ui,
 )
 from anker_ble_emulator.live import LiveSource
-from anker_ble_emulator.mcu import COMMAND, UNIT_EVENT
+from anker_ble_emulator.mcu import COMMAND, GIVEN, UNIT_EVENT, name_set
 from anker_ble_emulator.module import AuthMode
 from anker_ble_emulator.parameters import (
     FieldGroup,
@@ -57,6 +57,8 @@ from anker_ble_emulator.validators import OptionsValidator
 from .base import Advert, ProductDevice, Profile, register
 from .prime import (
     COUNTRY_PERIOD,
+    DAY,
+    HALF_BY_SLOT,
     MSGTYPE_303,
     MSGTYPE_A00,
     PORT_CLOCKED,
@@ -64,12 +66,20 @@ from .prime import (
     PORT_GROUPS,
     PUSH_ROUTES,
     REALTIME_BURST,
+    RTC_DAY0_WEEKDAY,
     SCHEDULE_HEAD,
     SCHEDULE_HEAD_FIELDS,
+    SOURCE_APP,
+    SOURCE_UNIT,
     STATS_PERIOD,
     SWITCH,
+    SWITCH_SOURCE,
+    SWITCH_TICK,
+    SWITCH_TICK_PHASE,
     TIMED_TASK_LEADS,
+    WEEK,
     WIFI_UP,
+    SwitchWatch,
     ac_port_countdown_task,
     ac_port_timed_task,
     countdown_push,
@@ -79,7 +89,6 @@ from .prime import (
     mqtt_routed,
     reaches_ble,
     schedule_timers,
-    set_screen_timeout,
     stats_push,
     timed_push,
     timed_task_conflict,
@@ -91,9 +100,10 @@ from .prime import (
 
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from anker_ble_emulator.layouts import Value
+    from anker_ble_emulator.parameters import SideEffect
 
 
 # --- Telemetry: 0303 and 0a00 ------------------------------------------------
@@ -257,16 +267,23 @@ SNAPSHOT_FIELDS: dict[str, FieldSpec] = {
 # 36 slots)": every command below has a captured or firmware-documented
 # payload shape. 4201 (factory reset) and 4202 (a read) have no handler here:
 # a recording or the command table answers them, and the profile's
-# factory_reset runs 4201's reset. 4206 mode 5 (custom charge profile) isn't
+# factory_reset runs 4201's reset. 4206 mode 5's per-port a4 records aren't
 # modeled.
 
 #: Port index 0-3 = pd1-pd4; 4 = usb (combined, per the doc's own "open" note
 #: on that mapping) -- shared by 4207/4208/4209's port selector.
 PORT_BY_SELECT = {0: "pd1", 1: "pd2", 2: "pd3", 3: "pd4", 4: "usb"}
 PORT_SELECT = OptionsValidator(ui(1), *PORT_BY_SELECT)
+#: The switch watcher: each port's ``0302`` a debounce after its own last change.
+SWITCH_WATCH = SwitchWatch(tuple(PORT_BY_SELECT.items()))
 #: The ports whose countdown disarm (or expiry) zeroes the remaining time: all.
 DISARM_CLEARS = frozenset(PORT_BY_SELECT.values())
-CHARGING_MODE = OptionsValidator(ui(1), 0, 1, 2, 3, 4)
+CHARGING_MODE = OptionsValidator(ui(1), 0, 1, 2, 3, 4, 5)
+#: Mode 5's profile (doc ``4206``): ``a3`` 7 B (``b8``), ``a4`` 12 B port records.
+PROFILE_SIZES = {"a3": 7, "a4": 12}
+#: ``port_switch_set``: index <= 4, state <= 1, else acked and ignored.
+PORT_MAX = 4
+SWITCH_MAX = 1
 #: ``4205 a2``: the screensaver switch (bit 7) over the theme (bits 0-5).
 ScreensaverRequest = BitStruct(
     "screen_saver_switch" / Flag, Padding(1), "screen_saver_theme" / BitsInteger(6)
@@ -363,9 +380,48 @@ NORMAL = 1
 DESIGNATED = 2
 
 
-def _set_screen_brightness(request: ParameterDict) -> dict[str, Value] | None:
-    """Return the screen brightness: no confirmed clamp, stores raw."""
-    return decode_request(request, {"a2": ("screen_brightness", ui(1))})
+#: The value setters' range checks, run after the ack (doc "Source-byte order"):
+#: ``screen_timeout_set`` < 5, ``screen_brightness_set`` <= 100 (``b3``
+#: percent), ``knob_direction_set`` < 2. A value past one is ignored.
+SCREEN_TIMEOUT_MAX = 4
+BRIGHTNESS_MAX = 100
+KNOB_MAX = 1
+#: ``tlv_field_get``'s length: the type byte, then one value byte.
+ONE_BYTE_LENGTH = 2
+
+
+def _tlv_length(request: ParameterDict, tag: str) -> int | None:
+    """Return ``tag``'s TLV length (``tlv_field_get``'s): type byte and value."""
+    field = request.get(tag)
+    if field is None:
+        return None
+    return (1 if field.get("type") is not None else 0) + len(field.get("value") or b"")
+
+
+def _one_byte(request: ParameterDict, tag: str = "a2") -> int | None:
+    """Return ``tag``'s value byte if its TLV length is 2, any type; else None.
+
+    ``cmd203`` / ``cmd204`` / ``cmd20e`` / ``cmd20d`` / ``cmd207`` answer ``04``
+    otherwise.
+    """
+    if _tlv_length(request, tag) != ONE_BYTE_LENGTH:
+        return None
+    return int(request[tag]["value"][-1])
+
+
+def _screen_setter(
+    name: str, maximum: int
+) -> Callable[[ParameterDict], dict[str, Value] | None]:
+    """Return the validator of a screen setting checked as ``cmd203`` does."""
+
+    def setter(request: ParameterDict) -> dict[str, Value] | None:
+        """Return the setting, nothing past its range, or None for a bad ``a2``."""
+        value = _one_byte(request)
+        if value is None:
+            return None
+        return {name: value} if value <= maximum else {}
+
+    return setter
 
 
 def _set_screensaver(request: ParameterDict) -> dict[str, Value] | None:
@@ -659,6 +715,7 @@ def _upload_step(
         | slot
         | _shown(THEME_BY_KIND[kind], theme_id)
         | _draw_asked(state)
+        | _source_write(0x30B, request, state)
         | {UPLOAD_STATUS: UPLOAD_DONE, UPLOAD_ANSWER_INDEX: count}
     )
 
@@ -924,7 +981,11 @@ def _holiday_landed(
     fetch = stored_bytes(state, HOLIDAY_FETCH)
     record = decode_request(Parameters.parse(fetch), HOLIDAY_FIELDS)
     country = state.get(STORED_COUNTRY, b"")
-    return Step(values={**record, HOLIDAY_COUNTRY: country}, unset=(HOLIDAY_FETCH,))
+    return Step(
+        values={**record, HOLIDAY_COUNTRY: country},
+        unset=(HOLIDAY_FETCH,),
+        then=(_holiday_check(),),
+    )
 
 
 def stored_bytes(values: Mapping[str, Value], name: str) -> bytes:
@@ -950,10 +1011,11 @@ def _holiday_time(values: Mapping[str, Value], name: str) -> tuple[int, ...]:
 
 
 def _holiday_showing(switch: bool, values: Mapping[str, Value]) -> bool:  # noqa: FBT001
-    """Whether the holiday theme shows (``holiday_theme_active``).
+    """Whether the holiday window is active (``holiday_window_active``).
 
     The holiday ``switch`` on, a record whose country is the current ``420a``
-    one, and the local RTC inside [start, end].
+    one, and the local RTC inside [start, end]; a year before 2000 sorts before
+    any start.
     """
     if not switch or not values.get(HOLIDAY_ID):
         return False
@@ -1030,16 +1092,111 @@ def _remember_mode(
     return Step(values={LAST_MODE: mode})
 
 
-def _set_charging_mode(request: ParameterDict) -> dict[str, Value] | None:
-    """Return the charging mode for modes 0-4; mode 5's profile is unmodeled."""
+def _mode_set(request: ParameterDict) -> int | None:
+    """Return the mode a ``4206`` applies; None for one acked and dropped.
+
+    ``a2`` 0 is ignored; mode 5 needs its profile, ``a3`` and ``a4`` whole.
+    """
     mode = decode_field(request, "a2", CHARGING_MODE)
-    return {"charging_mode": mode} if mode else {}
+    whole = all(
+        tag in request and len(request[tag].get("value") or b"") == size
+        for tag, size in PROFILE_SIZES.items()
+    )
+    if mode == CUSTOM_MODE and not whole:
+        return None
+    return mode or None
+
+
+def _set_charging_mode(request: ParameterDict) -> dict[str, Value] | None:
+    """Return the charging mode, and mode 5's ``b8`` from its ``a3``."""
+    mode = _mode_set(request)
+    if mode is None:
+        return {}
+    if mode == CUSTOM_MODE:
+        profile = decode_field(request, "a3", GreedyBytes)
+        return {"charging_mode": mode, "custom_charge_profile": profile}
+    return {"charging_mode": mode}
 
 
 def _set_dc_relay_switch(request: ParameterDict) -> dict[str, Value] | None:
-    """Return a port's switch (its record's ``[0]``), if ``a2`` and ``a3`` fit."""
-    name = PORT_BY_SELECT[decode_field(request, "a2", PORT_SELECT)]
-    return {f"{name}_relay_switch": bool(decode_field(request, "a3", SWITCH))}
+    """Return a port's switch (its record's ``[0]``); ``a2`` / ``a3`` type + 1 byte.
+
+    A port past 4 or a state past 1 is acked and ignored (``port_switch_set``).
+    """
+    port = _one_byte(request, "a2")
+    state = _one_byte(request, "a3")
+    if port is None or state is None:
+        return None
+    if port > PORT_MAX or state > SWITCH_MAX:
+        return {}
+    return {f"{PORT_BY_SELECT[port]}_relay_switch": bool(state)}
+
+
+#: ``4209``: the Prime countdown validator and ``0307`` builder; ``cmd209``
+#: takes an ``a2`` of TLV length 2 and an ``a3`` of 6 (en + u32 seconds).
+COUNTDOWN = ac_port_countdown_task(PORT_BY_SELECT, disarm_clears=DISARM_CLEARS)
+COUNTDOWN_PUSH = countdown_push(PORT_BY_SELECT, remaining_first=False)
+COUNTDOWN_A3_LENGTH = 6
+
+
+def _countdown_port_unknown(request: ParameterDict) -> bool:
+    """Whether a ``4209``'s port has no countdown record: acked, nothing written."""
+    return _one_byte(request) not in PORT_BY_SELECT
+
+
+def _set_countdown(request: ParameterDict) -> dict[str, Value] | None:
+    """Return a port's countdown; ``04`` only for an ``a2`` / ``a3`` length off.
+
+    ``countdown_set?`` writes the seconds unchecked for every ``4209``, a
+    disarm included (its remaining forced to 0).
+    """
+    select = _one_byte(request)
+    if select is None or _tlv_length(request, "a3") != COUNTDOWN_A3_LENGTH:
+        return None
+    if select not in PORT_BY_SELECT:
+        return {}
+    seconds = ui(4).parse(request["a3"]["value"][1:])
+    name = f"{PORT_BY_SELECT[select]}_countdown_task_seconds"
+    return {**(COUNTDOWN(request) or {}), name: seconds}
+
+
+def _countdown_push(
+    request: ParameterDict, before: Mapping[str, Value], after: Mapping[str, Value]
+) -> ParameterDict | None:
+    """``0307``: a port's countdown arming or disarming; none for an unknown port."""
+    if _countdown_port_unknown(request):
+        return None
+    return COUNTDOWN_PUSH(request, before, after)
+
+
+#: ``4208``: the Prime timed-task validator, side effect and ``0308`` builder.
+TIMED_TASK = ac_port_timed_task(PORT_BY_SELECT)
+TIMED_TASK_CONFLICT = timed_task_conflict(PORT_BY_SELECT)
+TIMED_TASK_PUSH = timed_task_push(PORT_BY_SELECT)
+
+
+def _slot_dropped(request: ParameterDict) -> bool:
+    """Whether a ``4208``'s ``a3`` is neither 0 nor 1: ``cmd208`` acks and drops it."""
+    return "a3" in request and decode_field(request, "a3", ui(1)) not in HALF_BY_SLOT
+
+
+def _set_timed_task(request: ParameterDict) -> dict[str, Value] | None:
+    """Return a port's timed-task half; one for a slot other than 0 / 1 is dropped."""
+    return {} if _slot_dropped(request) else TIMED_TASK(request)
+
+
+def _timed_task_conflict(
+    request: ParameterDict, state: Mapping[str, Value]
+) -> dict[str, Value]:
+    """Clear the colliding half of a ``4208`` write; none for a dropped one."""
+    return {} if _slot_dropped(request) else TIMED_TASK_CONFLICT(request, state)
+
+
+def _timed_task_push(
+    request: ParameterDict, before: Mapping[str, Value], after: Mapping[str, Value]
+) -> ParameterDict | None:
+    """``0308``: the half a ``4208`` collision disabled; none for a dropped one."""
+    return None if _slot_dropped(request) else TIMED_TASK_PUSH(request, before, after)
 
 
 def _set_port_priority(request: ParameterDict) -> dict[str, Value] | None:
@@ -1055,8 +1212,9 @@ def _leave_port_priority(
     request: ParameterDict, state: Mapping[str, Value]
 ) -> dict[str, Value]:
     """Clear every pd port's priority byte when a ``4206`` leaves Port Priority."""
-    mode = decode_field(request, "a2", CHARGING_MODE)
-    if state["charging_mode"] != PORT_PRIORITY_MODE or mode in {0, PORT_PRIORITY_MODE}:
+    mode = _mode_set(request)
+    leaving = mode is not None and mode != PORT_PRIORITY_MODE
+    if state["charging_mode"] != PORT_PRIORITY_MODE or not leaving:
         return {}
     return {f"pd{i + 1}_port_priority": UNSET for i in range(4)}
 
@@ -1066,16 +1224,6 @@ def _designated_ports(state: Mapping[str, Value]) -> int:
     return sum(
         1 << i for i in range(4) if state[f"pd{i + 1}_port_priority"] == DESIGNATED
     )
-
-
-def _switch_change(
-    request: ParameterDict, before: Mapping[str, Value], after: Mapping[str, Value]
-) -> ParameterDict | None:
-    """``0302``: a port's switch, when a ``4207`` changed it (doc "MCU pushes")."""
-    name = f"{PORT_BY_SELECT[decode_field(request, 'a2', PORT_SELECT)]}_relay_switch"
-    if before[name] == after[name]:
-        return None
-    return ParameterDict({"a2": request["a2"], "a3": request["a3"]})
 
 
 #: ``030d`` follows a mode change by the fixed mode-apply settle counter, on
@@ -1116,6 +1264,11 @@ SCREEN_REPORTS = {
     0x309: "screen_timeout",
     0x310: "button_rotate_direction",
 }
+#: ``screen_report_dirty_debounce`` 0x00016e38: a report goes > 4 ticks (~500 ms)
+#: after its setting changes; a change inside that restarts it.
+SCREEN_REPORT_DEBOUNCE = 0.5
+#: ``screen_brightness_set`` marks ``030a`` pending even when unchanged.
+REPORTED_WHEN_SET = frozenset({"screen_brightness"})
 #: What ``030b`` reports: ``af[0]`` (switch, holiday, theme) and the theme id.
 THEME_FIELDS = (
     "screen_saver_switch",
@@ -1123,6 +1276,89 @@ THEME_FIELDS = (
     "screen_saver_theme",
     "screen_saver_theme_id",
 )
+#: The reports with a source byte (``report_src_*_set``): the app's handler
+#: writes it 1 (doc "Source-byte order"), and 1 drops the report at send time.
+REPORT_SOURCES = (0x309, 0x30A, 0x310, 0x30B)
+
+
+def _source_name(report: int) -> str:
+    """Return the hidden count of the app's writes of ``report``'s source byte."""
+    return f"_report_source_{report:03x}"
+
+
+def _source_write(
+    report: int,
+    request: ParameterDict,  # noqa: ARG001  # every accepted request writes it
+    state: Mapping[str, Value],
+) -> dict[str, Value]:
+    """Return the app's write of ``report``'s source byte: its count, one up."""
+    name = _source_name(report)
+    return {name: int(state.get(name, 0)) + 1}
+
+
+def _theme_set(request: ParameterDict, state: Mapping[str, Value]) -> dict[str, Value]:
+    """``4205``: stage or show the theme; the source byte where it applies a change.
+
+    ``cmd205_set_theme`` writes it for a preset, clock off, or an already-stored
+    network or custom theme, not for one it stages, fetches or drops.
+    """
+    staging = _theme_staging(request, state)
+    packed = decode_field(request, "a2", ScreensaverRequest)
+    preset = packed.screen_saver_theme not in IMAGE_THEMES
+    if not packed.screen_saver_switch or preset or "screen_saver_theme" in staging:
+        return staging | _source_write(0x30B, request, state)
+    return staging
+
+
+def _report_key(msgtype: int) -> str:
+    """Return the timed-event key of report ``msgtype``."""
+    return f"screen_report_{msgtype:03x}"
+
+
+def _app_port_switch(
+    request: ParameterDict, state: Mapping[str, Value]
+) -> dict[str, Value]:
+    """Return ``cmd207``'s write of ``0302``'s source byte 1, and its port marked.
+
+    ``port_switch_tick`` marks the change, if it makes one; the byte decides at
+    the port's send.
+    """
+    changes: dict[str, Value] = {SWITCH_SOURCE: SOURCE_APP}
+    switched = _set_dc_relay_switch(request) or {}
+    for select, port in PORT_BY_SELECT.items():
+        name = f"{port}_relay_switch"
+        if name in switched and bool(state[name]) != switched[name]:
+            changes |= SWITCH_WATCH.mark(select, state)
+    return changes
+
+
+def _switch_watch(
+    before: Mapping[str, Value], after: Mapping[str, Value]
+) -> tuple[Timed, ...]:
+    """Return the send of each port a change marked, and an on-unit tap.
+
+    A port switched on on the unit is the port screen's power-on tap
+    (``screen_port_on_click?`` 0x00018f84): source 2, its ``0302`` marked.
+    """
+    events = list(SWITCH_WATCH.marked(before, after))
+    if COMMAND not in after:
+        for select, port in PORT_BY_SELECT.items():
+            name = f"{port}_relay_switch"
+            if after[name] and not before[name]:
+                tap = partial(_port_tapped_on, select)
+                events.append(Timed(0, f"{port}_tapped_on", tap))
+    return tuple(events)
+
+
+def _port_tapped_on(
+    select: int,
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Mark the power-on tap's ``0302``: source 2, the port's send timed."""
+    changes = {**SWITCH_WATCH.mark(select, state), SWITCH_SOURCE: SOURCE_UNIT}
+    report = SWITCH_WATCH.report(select, {**state, **changes})
+    return Step(values=changes, then=(report,))
 
 
 def _screen_reports(
@@ -1131,19 +1367,27 @@ def _screen_reports(
     """Return a report of each screen setting changed on the unit.
 
     A change from an app command reports nothing (doc "Screen reports": "sent
-    when a setting changes on the unit").
+    when a setting changes on the unit"): its setter's source byte drops the
+    report pending at send time, an on-unit one inside the debounce included.
     """
     if COMMAND in after:
-        return ()
+        return tuple(
+            Timed(SCREEN_REPORT_DEBOUNCE, _report_key(report), drop_queued)
+            for report in REPORT_SOURCES
+            if before.get(_source_name(report)) != after.get(_source_name(report))
+        )
+    marked = REPORTED_WHEN_SET & name_set(after, GIVEN)
     events = [
         Timed(
-            0, f"screen_report_{msgtype:03x}", partial(_setting_report, msgtype, name)
+            SCREEN_REPORT_DEBOUNCE,
+            _report_key(msgtype),
+            partial(_setting_report, msgtype, name),
         )
         for msgtype, name in SCREEN_REPORTS.items()
-        if before[name] != after[name]
+        if before[name] != after[name] or name in marked
     ]
     if any(before[name] != after[name] for name in THEME_FIELDS):
-        events.append(Timed(0, "screen_report_30b", _theme_report))
+        events.append(Timed(SCREEN_REPORT_DEBOUNCE, _report_key(0x30B), _theme_report))
     return tuple(events)
 
 
@@ -1162,13 +1406,381 @@ def _theme_report(
     values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
     state: Mapping[str, Value],
 ) -> Step:
-    """``030b``: ``af[0]`` in ``a2``, the theme id in ``a3``, as recorded."""
+    """``030b``: ``af[0]`` in ``a2``, the theme id in ``a3``, as recorded.
+
+    While the holiday theme shows, ``a4`` (type 04) carries its record, the
+    holiday slot's string that ``4a02``'s ``a4`` carries (``push_030b``
+    0x00023194); no ``030b`` with ``a4`` is recorded.
+    """
     packed = ScreensaverRead.build({name: state[name] for name in THEME_FIELDS[:3]})
     fields = {
         "a2": container("a2", TYPE_UI, packed),
         "a3": container("a3", TYPE_BIN, ui(4).build(state["screen_saver_theme_id"])),
     }
+    if state.get(HOLIDAY_FLAG) == HOLIDAY_SHOWN:
+        fields["a4"] = container("a4", TYPE_BIN, stored_bytes(state, HOLIDAY_URL))
     return Step(frames=(timed_push(0x30B, fields, state),))
+
+
+# --- Display state -------------------------------------------------------------
+
+#: The display state (doc "Display state", ``DAT_20001aec``), 0 at boot: 0 on,
+#: 2 black, 1 the screensaver. The wake steps 3 and 4 need a knob click or an
+#: OTA apply, which no input makes, and the screen-off inhibit (set by the
+#: knob's > 2 s hold) stays unset, so it never holds black.
+DISPLAY = "_display_state"
+DISPLAY_ON = 0
+DISPLAY_SCREENSAVER = 1
+DISPLAY_BLACK = 2
+DISPLAY_TICK = 0.1
+#: ``b0`` 1-4: the seconds on before black (0 never), counted only while on.
+BLANK_AFTER = {1: 30, 2: 60, 3: 300, 4: 1800}
+#: The wakes to 0, counted in no frame: each starts the ``b0`` count over.
+DISPLAY_WAKES = "_display_wakes"
+#: The handlers that call ``display_wake_to_active?`` once they accept a request.
+WAKING_COMMANDS = frozenset({0x203, 0x204, *range(0x206, 0x20A), 0x20E, 0x213, 0x223})
+#: ``DAT_20001af1``, ``af[0]`` bit 7.
+CLOCK_SWITCH = "screen_saver_switch"
+#: The ``4213`` window's phase (``DAT_2000b489``): 0 until its first evaluation,
+#: 10 passes after the RTC is valid, then 1 outside and 2 inside.
+WINDOW_PHASE = "_screensaver_window_phase"
+WINDOW_OUTSIDE = 1
+WINDOW_INSIDE = 2
+WINDOW_FIRST = 1.0
+#: A once window's (weekdays 0) dated bounds, as RTC seconds, and its latches,
+#: its start (``DAT_2000b49e``) and end (``DAT_2000b4a8``) handled. In no frame.
+WINDOW_START_AT = "_screensaver_window_start_at"
+WINDOW_END_AT = "_screensaver_window_end_at"
+WINDOW_START_DONE = "_screensaver_window_start_done"
+WINDOW_END_DONE = "_screensaver_window_end_done"
+MINUTE = 60
+#: ``holiday_theme_flag``: 0 until first evaluated, then 1 the holiday, 2 not.
+HOLIDAY_FLAG = "_holiday_theme_flag"
+HOLIDAY_SHOWN = 1
+HOLIDAY_NOT_SHOWN = 2
+#: What the holiday flag reads besides the clock.
+HOLIDAY_INPUTS = ("holiday_screensaver_switch", STORED_COUNTRY, *HOLIDAY_ERASED)
+
+
+def _display(state: Mapping[str, Value]) -> int:
+    """Return the display state; 0 from boot."""
+    return int(state.get(DISPLAY, DISPLAY_ON))
+
+
+def _display_started(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Boot: the display on (state 0, its default), the ``b0`` count started."""
+    return Step(then=(_blank_timer(state),))
+
+
+def _blank_timer(state: Mapping[str, Value]) -> Timed:
+    """Return the ``b0`` count from now: black at its timeout, none for 0.
+
+    A script that carries no ``b0`` never blanks.
+    """
+    seconds = BLANK_AFTER.get(int(state.get("screen_timeout", 0)))
+    if seconds is None:
+        return Timed(0, "display_blank", drop_queued)
+    return Timed(seconds, "display_blank", _display_blank)
+
+
+def _display_blank(_values: Mapping[str, Value], _state: Mapping[str, Value]) -> Step:
+    """Go from on to black at the ``b0`` timeout, then check the screensaver gate.
+
+    The count runs only while on: every wake times it again.
+    """
+    return Step(values={DISPLAY: DISPLAY_BLACK}, then=(_screensaver_check(),))
+
+
+def _screensaver_check() -> Timed:
+    """Return black's gate check at the next display tick."""
+    return Timed(DISPLAY_TICK, "display_screensaver", _screensaver_move)
+
+
+def _screensaver_move(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Black to the screensaver: the clock switch on, the RTC valid, the window in.
+
+    The holiday flag is evaluated once at the move.
+    """
+    allowed = (
+        state[CLOCK_SWITCH]
+        and int(state[RTC]) > CLOCK_FLOOR
+        and state.get(WINDOW_PHASE) == WINDOW_INSIDE
+    )
+    if _display(state) != DISPLAY_BLACK or not allowed:
+        return Step()
+    return _holiday_evaluated(state, {DISPLAY: DISPLAY_SCREENSAVER})
+
+
+def _screensaver_left(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Go from the screensaver to black once the clock switch is off."""
+    if _display(state) != DISPLAY_SCREENSAVER or state[CLOCK_SWITCH]:
+        return Step()
+    return Step(values={DISPLAY: DISPLAY_BLACK})
+
+
+def _woken(effect: SideEffect | None) -> SideEffect:
+    """Return ``effect`` with ``display_wake_to_active?`` after it: the display on."""
+
+    def woken(request: ParameterDict, state: Mapping[str, Value]) -> dict[str, Value]:
+        """Apply the command's own effect, then wake the display."""
+        changes = {} if effect is None else effect(request, state)
+        wakes = int(state.get(DISPLAY_WAKES, 0)) + 1
+        return changes | {DISPLAY: DISPLAY_ON, DISPLAY_WAKES: wakes}
+
+    return woken
+
+
+def _at_rtc(
+    bound: int,
+    key: str,
+    action: Callable[[Mapping[str, Value], Mapping[str, Value]], Step],
+    state: Mapping[str, Value],
+) -> Timed:
+    """Return ``action`` on the display tick that first sees the RTC at ``bound``.
+
+    The RTC counts whole seconds, so the event lands in the second before and
+    runs each tick until the RTC reads ``bound``.
+    """
+    ahead = bound - int(state[RTC])
+    reached = partial(_rtc_reached, bound, key, action)
+    return Timed(ahead - 1 if ahead > 1 else DISPLAY_TICK, key, reached)
+
+
+def _rtc_reached(
+    bound: int,
+    key: str,
+    action: Callable[[Mapping[str, Value], Mapping[str, Value]], Step],
+    values: Mapping[str, Value],
+    state: Mapping[str, Value],
+) -> Step:
+    """Run ``action`` if the RTC reads ``bound``; else wait a tick more."""
+    if int(state[RTC]) < bound:
+        return Step(then=(_at_rtc(bound, key, action, state),))
+    return action(values, state)
+
+
+def _window(state: Mapping[str, Value]) -> tuple[int, int, int]:
+    """Return the ``4213`` window: start and end minute of the day, weekdays."""
+    start = int(state["screensaver_start_hour"]) * MINUTE
+    end = int(state["screensaver_end_hour"]) * MINUTE
+    start += int(state["screensaver_start_minute"])
+    end += int(state["screensaver_end_minute"])
+    return start, end, int(state["screensaver_weekdays"])
+
+
+def _weekly_inside(state: Mapping[str, Value]) -> bool:
+    """Whether the RTC is inside a weekly ``4213`` window (doc "``4213`` inside rule").
+
+    Minute resolution. Start < end: start <= now < end on today's bit. Start
+    >= end wraps midnight: now >= start on today's bit, or now <= end (the end
+    minute included) on the day before's; bit 0 is Monday.
+    """
+    start, end, weekdays = _window(state)
+    day, second = divmod(int(state[RTC]), DAY)
+    minute = second // MINUTE
+    today = (day + RTC_DAY0_WEEKDAY) % WEEK
+    if start < end:
+        return bool(weekdays >> today & 1) and start <= minute < end
+    yesterday = (today - 1) % WEEK
+    return bool(weekdays >> today & 1 and minute >= start) or bool(
+        weekdays >> yesterday & 1 and minute <= end
+    )
+
+
+def _weekly_bound(state: Mapping[str, Value]) -> int:
+    """Return the RTC of a weekly window's next start or end minute.
+
+    A wrapped window's end minute is inside, so it ends a minute later.
+    """
+    rtc = int(state[RTC])
+    start, end, _ = _window(state)
+    edges = (start, end if start < end else end + 1)
+    return min(rtc + (edge * MINUTE - rtc % DAY - 1) % DAY + 1 for edge in edges)
+
+
+def _once_tick(state: Mapping[str, Value]) -> tuple[dict[str, Value], list[Timed]]:
+    """Return a once window's tick: its changes and the next tick it needs.
+
+    Inside only at the exact start minute, outside at the exact end minute; a
+    start or end found passed is latched as handled with no move. The end turns
+    the clock off (``screen_target_set(0, theme)``, source 2), which reports
+    ``030b`` and moves the screensaver to black.
+    """
+    rtc = int(state[RTC])
+    phase = state.get(WINDOW_PHASE)
+    if phase == WINDOW_OUTSIDE and not state.get(WINDOW_START_DONE):
+        start_at = int(state[WINDOW_START_AT])
+        if rtc < start_at:
+            return {}, [_at_rtc(start_at, "screensaver_window", _window_eval, state)]
+        changes: dict[str, Value] = {WINDOW_START_DONE: 1}
+        if rtc < start_at + MINUTE:
+            changes[WINDOW_PHASE] = WINDOW_INSIDE
+        more, then = _once_tick({**state, **changes})
+        return {**changes, **more}, then
+    if phase == WINDOW_INSIDE and not state.get(WINDOW_END_DONE):
+        end_at = int(state[WINDOW_END_AT])
+        if rtc < end_at:
+            return {}, [_at_rtc(end_at, "screensaver_window", _window_eval, state)]
+        changes = {WINDOW_END_DONE: 1, CLOCK_SWITCH: False}
+        if rtc < end_at + MINUTE:
+            changes[WINDOW_PHASE] = WINDOW_OUTSIDE
+        if not state[CLOCK_SWITCH]:
+            return changes, []
+        report = Timed(SCREEN_REPORT_DEBOUNCE, _report_key(0x30B), _theme_report)
+        black = Timed(DISPLAY_TICK, "display_black", _screensaver_left)
+        return changes, [report, black]
+    return {}, []
+
+
+def _once_dates(state: Mapping[str, Value]) -> dict[str, Value]:
+    """Return a once window's bounds: its first occurrence ending after now.
+
+    ``screensaver_window_store``'s next-occurrence dates.
+    """
+    rtc = int(state[RTC])
+    start, end, _ = _window(state)
+    midnight = rtc - rtc % DAY
+    start_at = midnight + start * MINUTE
+    end_at = midnight + end * MINUTE + (DAY if end <= start else 0)
+    if end_at <= rtc:
+        start_at, end_at = start_at + DAY, end_at + DAY
+    return {WINDOW_START_AT: start_at, WINDOW_END_AT: end_at}
+
+
+def _window_evaluated(state: Mapping[str, Value], changes: Mapping[str, Value]) -> Step:
+    """Evaluate the window, time its next evaluation, and check black's gate."""
+    after = {**state, **changes}
+    if _window(after)[2]:
+        phase = WINDOW_INSIDE if _weekly_inside(after) else WINDOW_OUTSIDE
+        values = {**changes, WINDOW_PHASE: phase}
+        then = [
+            _at_rtc(_weekly_bound(after), "screensaver_window", _window_eval, after)
+        ]
+    else:
+        once, then = _once_tick(after)
+        values = {**changes, **once}
+    if _display({**after, **values}) == DISPLAY_BLACK:
+        then.append(_screensaver_check())
+    return Step(values=values, then=tuple(then))
+
+
+def _window_eval(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Re-evaluate the window phase at a minute bound or a clock set."""
+    return _window_evaluated(state, {})
+
+
+def _window_store(state: Mapping[str, Value], *, first: bool) -> Step:
+    """``screensaver_window_store``, and the first evaluation, which stores again.
+
+    A once window gets its dates, its latches cleared and its phase at once
+    (inside from the start's occurrence to the end's); a weekly one is
+    evaluated on the next tick, once a first evaluation has run.
+    """
+    if _window(state)[2]:
+        if not first and not state.get(WINDOW_PHASE):
+            return Step()
+        return _window_evaluated(state, {})
+    dates = _once_dates(state)
+    rtc = int(state[RTC])
+    inside = int(dates[WINDOW_START_AT]) <= rtc < int(dates[WINDOW_END_AT])
+    stored = {
+        **dates,
+        WINDOW_START_DONE: 0,
+        WINDOW_END_DONE: 0,
+        WINDOW_PHASE: WINDOW_INSIDE if inside else WINDOW_OUTSIDE,
+    }
+    return _window_evaluated(state, stored)
+
+
+def _window_first(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Evaluate the window the first time, 10 passes after the RTC is valid."""
+    return _window_store(state, first=True)
+
+
+def _window_stored(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Store a changed window (``4213`` or ``b9``)."""
+    return _window_store(state, first=False)
+
+
+def _holiday_bound(at: tuple[int, ...]) -> int:
+    """Return a holiday window bound, local, as RTC seconds."""
+    year, month, day, hour, minute, second = at
+    when = datetime(YEAR_BASE + year, month, day, hour, minute, second, tzinfo=UTC)
+    return int(when.timestamp())
+
+
+def _holiday_evaluated(
+    state: Mapping[str, Value], changes: Mapping[str, Value]
+) -> Step:
+    """Evaluate the holiday flag; push ``030b`` on a change from a nonzero flag.
+
+    ``holiday_theme_change_push_030b`` pushes it directly, with no source gate.
+    The next evaluation is timed to the window's next bound.
+    """
+    after = {**state, **changes}
+    switch = bool(after["holiday_screensaver_switch"])
+    shown = _holiday_showing(switch, after)
+    flag = HOLIDAY_SHOWN if shown else HOLIDAY_NOT_SHOWN
+    prior = int(state.get(HOLIDAY_FLAG, 0))
+    after[HOLIDAY_FLAG] = flag
+    frames = _theme_report({}, after).frames if prior and prior != flag else ()
+    then: tuple[Timed, ...] = ()
+    if switch and after.get(HOLIDAY_ID):
+        start = _holiday_bound(_holiday_time(after, HOLIDAY_START))
+        end = _holiday_bound(_holiday_time(after, HOLIDAY_END)) + 1
+        ahead = [bound for bound in (start, end) if bound > int(after[RTC])]
+        if ahead:
+            then = (_at_rtc(min(ahead), "holiday_eval", _holiday_eval, after),)
+    return Step(values={**changes, HOLIDAY_FLAG: flag}, frames=frames, then=then)
+
+
+def _holiday_check() -> Timed:
+    """Return the screensaver's holiday evaluation at the next display tick."""
+    return Timed(DISPLAY_TICK, "holiday_eval", _holiday_eval)
+
+
+def _holiday_eval(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Evaluate the holiday flag in the screensaver; in another state, nothing."""
+    if _display(state) != DISPLAY_SCREENSAVER:
+        return Step()
+    return _holiday_evaluated(state, {})
+
+
+def _display_events(
+    before: Mapping[str, Value], after: Mapping[str, Value]
+) -> tuple[Timed, ...]:
+    """Return what a change does to the display (doc "Display state").
+
+    A wake, or any valid ``b0`` write while on (``screen_timeout_set`` zeroes
+    the count before its unchanged check), starts the count over; a clock set
+    evaluates the window (its first, a second on) and the holiday flag; a
+    window change stores it; the clock switch moves black and the screensaver.
+    """
+    events = []
+    shown = _display(after)
+    woken = before.get(DISPLAY_WAKES) != after.get(DISPLAY_WAKES)
+    written = "screen_timeout" in name_set(after, GIVEN)
+    written = written or before["screen_timeout"] != after["screen_timeout"]
+    timeout_set = written and int(after["screen_timeout"]) <= SCREEN_TIMEOUT_MAX
+    if woken or (shown == DISPLAY_ON and timeout_set):
+        events.append(_blank_timer(after))
+    clock_set = before[RTC] != after[RTC]
+    if clock_set and int(after[RTC]) > CLOCK_FLOOR:
+        if after.get(WINDOW_PHASE):
+            events.append(Timed(0, "screensaver_window", _window_eval))
+        else:
+            events.append(Timed(WINDOW_FIRST, "screensaver_window", _window_first))
+    if any(before[name] != after[name] for name in SCREENSAVER_FIELDS):
+        events.append(Timed(0, "screensaver_window_store", _window_stored))
+    switched = before[CLOCK_SWITCH] != after[CLOCK_SWITCH]
+    if shown == DISPLAY_BLACK and (switched or clock_set):
+        events.append(_screensaver_check())
+    if shown == DISPLAY_SCREENSAVER and switched and not after[CLOCK_SWITCH]:
+        events.append(Timed(DISPLAY_TICK, "display_black", _screensaver_left))
+    holiday = any(before.get(name) != after.get(name) for name in HOLIDAY_INPUTS)
+    if shown == DISPLAY_SCREENSAVER and (holiday or clock_set):
+        events.append(_holiday_check())
+    return tuple(events)
 
 
 #: The ports ``0304``'s bitmask covers, bit 0 first: assumed the ``0300``
@@ -1612,11 +2224,6 @@ def _designated_ports_change(
     return ParameterDict({"a3": container("a3", TYPE_UI, ui(1).build(mask))})
 
 
-def _set_button_rotate_direction(request: ParameterDict) -> dict[str, Value] | None:
-    """Return the knob direction if ``a2`` is 0 or 1."""
-    return decode_request(request, {"a2": ("button_rotate_direction", SWITCH)})
-
-
 def _set_time_format(request: ParameterDict) -> dict[str, Value] | None:
     """Return the clock time format if ``a2`` is 0 or 1."""
     return decode_request(request, {"a2": ("time_format", SWITCH)})
@@ -1647,11 +2254,8 @@ def _set_equipment_identification_switch(
 
 
 def _set_easter_egg(request: ParameterDict) -> dict[str, Value] | None:
-    """Accept an ``a2`` typed ``02`` with a value; refuse anything else (0x00043938)."""
-    field = request.get("a2")
-    if field is None or field.get("type") != TYPE_SILE or not field.get("value"):
-        return None
-    return {}
+    """Accept an ``a2`` of TLV length 2, any type; refuse anything else (0x00043938)."""
+    return None if _one_byte(request) is None else {}
 
 
 def _secret_prompt(
@@ -1761,22 +2365,41 @@ COMMAND_TABLE: dict[int, int | None] = {
 }
 
 
+#: Each command's own side effect; an accepted waking one then wakes the display.
+COMMAND_EFFECTS: dict[int, SideEffect] = {
+    0x203: partial(_source_write, 0x309),
+    0x204: partial(_source_write, 0x30A),
+    0x20E: partial(_source_write, 0x310),
+    0x205: _theme_set,
+    0x206: _leave_port_priority,
+    0x207: _app_port_switch,
+    0x208: _timed_task_conflict,
+    0x20A: _owner_change,
+    0x20D: _secret_prompt,
+    0x211: _custom_mode_switch_off,
+    0x212: _holiday_schedule,
+    0x221: _upload_step,
+    0x222: _time_display_redraw,
+}
+WAKING = sorted(WAKING_COMMANDS)
+
+
 class A2345Layout(TableLayout):
     """A2345's own command/telemetry code; satisfies ``LayoutProtocol``."""
 
     COMMANDS = MappingProxyType(
         {
-            0x203: set_screen_timeout,
-            0x204: _set_screen_brightness,
+            0x203: _screen_setter("screen_timeout", SCREEN_TIMEOUT_MAX),
+            0x204: _screen_setter("screen_brightness", BRIGHTNESS_MAX),
             0x205: _set_screensaver,
             0x206: _set_charging_mode,
             0x207: _set_dc_relay_switch,
-            0x208: ac_port_timed_task(PORT_BY_SELECT),
-            0x209: ac_port_countdown_task(PORT_BY_SELECT, disarm_clears=DISARM_CLEARS),
+            0x208: _set_timed_task,
+            0x209: _set_countdown,
             0x20A: _set_region_owner,
             0x20C: _set_port_priority,
             0x20D: _set_easter_egg,
-            0x20E: _set_button_rotate_direction,
+            0x20E: _screen_setter("button_rotate_direction", KNOB_MAX),
             0x20F: _set_holiday_screensaver,
             0x212: _holiday_schedule_taken,
             0x210: _set_time_format,
@@ -1807,15 +2430,8 @@ class A2345Layout(TableLayout):
     )
     SIDE_EFFECTS = MappingProxyType(
         {
-            0x205: _theme_staging,
-            0x206: _leave_port_priority,
-            0x208: timed_task_conflict(PORT_BY_SELECT),
-            0x20A: _owner_change,
-            0x20D: _secret_prompt,
-            0x211: _custom_mode_switch_off,
-            0x212: _holiday_schedule,
-            0x221: _upload_step,
-            0x222: _time_display_redraw,
+            **COMMAND_EFFECTS,
+            **{msgtype: _woken(COMMAND_EFFECTS.get(msgtype)) for msgtype in WAKING},
         }
     )
     #: The MCU's change watchers, by the commands that can trip them (doc "MCU
@@ -1827,9 +2443,8 @@ class A2345Layout(TableLayout):
         {
             0x205: ((0x311, _theme_selected),),
             0x206: ((0x30F, _designated_ports_change),),
-            0x207: ((0x302, _switch_change),),
-            0x208: ((0x308, timed_task_push(PORT_BY_SELECT)),),
-            0x209: ((0x307, countdown_push(PORT_BY_SELECT, remaining_first=False)),),
+            0x208: ((0x308, _timed_task_push),),
+            0x209: ((0x307, _countdown_push),),
             0x20C: ((0x30F, _designated_ports_change),),
             0x221: ((0x311, _upload_done),),
         }
@@ -1852,23 +2467,44 @@ class A2345Layout(TableLayout):
     )
 
     def names(self, msgtype: int) -> frozenset[str]:
-        """Return the names a frame reads; ``4a02`` adds the holiday record's."""
+        """Return the names a frame reads.
+
+        ``4a02`` adds the holiday record's; the snapshot the hidden switch tick
+        phase.
+        """
         names = super().names(msgtype)
         if msgtype == MSGTYPE_A02:
-            return names | {*HOLIDAY_ERASED, STORED_COUNTRY}
+            return names | {*HOLIDAY_ERASED, STORED_COUNTRY, HOLIDAY_FLAG}
+        if msgtype == MSGTYPE_A00:
+            return names | {SWITCH_TICK_PHASE}
         return names
+
+    def resolve(
+        self, values: Mapping[str, Value], state: Mapping[str, Value]
+    ) -> dict[str, Value]:
+        """Return what ``values`` set, the switch tick phase checked.
+
+        Raises:
+            TypeError: If the switch tick phase is outside 0-0.1 s or not a number.
+
+        """
+        phase = values.get(SWITCH_TICK_PHASE)
+        if phase is not None and (
+            isinstance(phase, bytes) or not 0 <= phase <= SWITCH_TICK
+        ):
+            msg = f"{SWITCH_TICK_PHASE} is 0 to {SWITCH_TICK} s"
+            raise TypeError(msg)
+        return super().resolve(values, state)
 
     def finish(
         self, msgtype: int, params: ParameterDict, values: Mapping[str, Value]
     ) -> None:
-        """``4a02`` with the holiday theme showing: ``a4`` its URL, then ``a5 01``.
+        """``4a02`` with the holiday flag at 1: ``a4`` the record's URL, then ``a5 01``.
 
         doc "``4a02`` screensaver reply": ``a5 02 01 01``, type ``01``, value 1.
+        ``holiday_theme_active`` reads the flag as last evaluated.
         """
-        if msgtype != MSGTYPE_A02:
-            return
-        switch = decode_field(params, "a2", ScreensaverRead).holiday_screensaver_switch
-        if not _holiday_showing(switch, values):
+        if msgtype != MSGTYPE_A02 or values.get(HOLIDAY_FLAG) != HOLIDAY_SHOWN:
             return
         url = stored_bytes(values, HOLIDAY_URL)
         fields = dict(params)
@@ -1879,6 +2515,10 @@ class A2345Layout(TableLayout):
                 params["a5"] = container("a5", TYPE_UI, b"\x01")
             else:
                 params[tag] = field
+
+    def started(self) -> tuple[Timed, ...]:
+        """Return the display's boot: on, its ``b0`` count started."""
+        return (Timed(0, "display_on", _display_started),)
 
     def sends(self, msgtype: int, values: Mapping[str, Value]) -> bool:
         """Whether a push reaches the BLE link: with WiFi up, most go to MQTT."""
@@ -1908,9 +2548,11 @@ class A2345Layout(TableLayout):
                 after,
                 disarm_clears=DISARM_CLEARS,
                 remaining_first=False,
+                switch_watch=SWITCH_WATCH,
             ),
-            *schedule_timers(PORT_BY_SELECT, before, after),
+            *schedule_timers(PORT_BY_SELECT, before, after, switch_watch=SWITCH_WATCH),
             *_screen_reports(before, after),
+            *_switch_watch(before, after),
             *_attach_events(before, after),
             *_secret_features(before, after),
             *_power_expert(before, after),
@@ -1918,6 +2560,7 @@ class A2345Layout(TableLayout):
             *_holiday_fetch(before, after),
             *_draw_events(before, after),
             *wifi_events(before, after, PERIODICS),
+            *_display_events(before, after),
         )
         if before["charging_mode"] == after["charging_mode"]:
             return events

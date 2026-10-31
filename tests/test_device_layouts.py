@@ -29,7 +29,7 @@ from anker_ble_emulator.c_g2_490 import MSGTYPE_490
 from anker_ble_emulator.devices import EmulatedDevice
 from anker_ble_emulator.devices.solix_c_gen2 import AcOutput, Battery, Settings
 from anker_ble_emulator.layouts import LayoutError
-from anker_ble_emulator.mcu import McuScript
+from anker_ble_emulator.mcu import GIVEN, McuScript, given, name_set
 from anker_ble_emulator.parameters import (
     ParameterDict,
     Parameters,
@@ -182,7 +182,7 @@ def test_a_layout_starts_its_timers_with_the_mcu_and_again_on_a_new_script() -> 
     clock = ManualClock()
     device = A2345(clock=clock)
     module = device.negotiated_module
-    default = module.mcu.layout is not None and not module.mcu.layout.started()
+    default = not TableLayout().started()
 
     device.use_mcu(McuScript(layout=Ticking()))
     clock.advance(5.0)
@@ -268,10 +268,10 @@ async def test_a_mapped_command_without_a_recording_gets_a_checked_ack() -> None
         await settle()
         port = [(0xA1, b"\x21"), (0xA2, b"\x01\x00")]
         off = await link.send(0x207, [*port, (0xA3, b"\x01\x00")], SESSION)
-        bad = await link.send(0x207, [*port, (0xA3, b"\x01\x05")], SESSION)
+        bad = await link.send(0x207, [*port, (0xA3, b"\x01\x00\x00")], SESSION)
         unmapped = await link.send(0x215, [(0xA1, b"\x21")], SESSION)
 
-    assert [cmd_hex(reply.frame) for reply in off] == ["4a07", "4302"]
+    assert [cmd_hex(reply.frame) for reply in off] == ["4a07"]
     assert off[0].plaintext.hex() == "00a10131a2020100" + device_clock(0)
     assert bad[0].plaintext == bytes.fromhex("04a10131")
     assert unmapped == []
@@ -498,3 +498,13 @@ def test_the_clock_stamp_moves_only_the_fe_value_bytes(
         payload[:start] + epoch + payload[start + 4 :]
         for payload, start in zip(recorded, at, strict=True)
     ]
+
+
+def test_name_set_reads_back_what_given_joins() -> None:
+    """``name_set`` is ``given``'s inverse: none unset, a non-bytes value refused."""
+    joined = {GIVEN: given(["screen_brightness", "ac_input_power"])}
+
+    assert name_set(joined, GIVEN) == {"screen_brightness", "ac_input_power"}
+    assert name_set({}, GIVEN) == frozenset()
+    with pytest.raises(TypeError, match="given is a bytes value"):
+        name_set({GIVEN: 1}, GIVEN)

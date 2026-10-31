@@ -299,3 +299,25 @@ def holiday_schedule(
 def device_clock(seconds: int) -> str:
     """Return the ``fe`` a push carries ``seconds`` after the handshake, as hex."""
     return "fe0503" + ui(4).build(PRIME_EPOCH + seconds).hex()
+
+
+#: The ``b0`` 30 s timeout, and the tick past it that moves black to the screensaver.
+SCREENSAVER_AFTER = 30.2
+
+
+def into_screensaver(
+    device: EmulatedDevice, client: AppClient, clock: ManualClock
+) -> list[tuple[str, str]]:
+    """Blank the A2345 at a 30 s ``b0`` timeout into the screensaver; its pushes.
+
+    The recorded window (00:00-00:00, every day) and clock switch let it move.
+    """
+    device.set_values(screen_timeout=1)
+    return advance(device, client, clock, SCREENSAVER_AFTER)
+
+
+def screensaver_window(
+    start: tuple[int, int], end: tuple[int, int], weekdays: int
+) -> list[tuple[int, bytes]]:
+    """Return ``4213``'s ``a2``: start and end (hour, minute), weekdays bit 0 Monday."""
+    return [(0xA2, b"\x04" + bytes((*start, *end, weekdays)))]

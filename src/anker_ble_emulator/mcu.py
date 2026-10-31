@@ -55,6 +55,22 @@ def given(names: Iterable[str]) -> bytes:
     return b"\n".join(sorted(name.encode() for name in names))
 
 
+def name_set(state: Mapping[str, Value], name: str) -> frozenset[str]:
+    """Return the names newline-joined under ``name``, as ``given`` joins them.
+
+    None if it's unset.
+
+    Raises:
+        TypeError: If the value isn't bytes.
+
+    """
+    joined = state.get(name, b"")
+    if not isinstance(joined, bytes):
+        msg = f"{name} is a bytes value"
+        raise TypeError(msg)
+    return frozenset(part.decode() for part in joined.split(b"\n") if part)
+
+
 #: The state name a frame built for MQTT finds set: the unit is bound and on
 #: WiFi to the cloud, where it has no BLE link.
 CLOUD = "cloud"

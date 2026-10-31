@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from construct import Bytes, Container, ExprAdapter, Int16ul, Struct
 
 from anker_ble_emulator.layouts import TYPE_VAR, Value, ui
-from anker_ble_emulator.mcu import GIVEN
+from anker_ble_emulator.mcu import GIVEN, name_set
 from anker_ble_emulator.module import AuthMode
 from anker_ble_emulator.parameters import (
     FieldGroup,
@@ -56,7 +56,6 @@ from .solix_c_gen2 import (
     Tou,
     ac_output_off,
     ac_output_switched,
-    name_set,
 )
 
 
