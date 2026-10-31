@@ -47,7 +47,7 @@ from tests.fixtures.client import (
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from anker_ble_emulator import EmulatedDevice
     from anker_ble_emulator.layouts import Value
@@ -90,6 +90,15 @@ TOU_UNIT = {
     "ac_input_status": 1,
     "ac_input_power": 1290,
     "ac_input_disable_switch": 0,
+}
+#: The C1000 Gen 2's: its full charge at the 1200 W limit, inside its 1200 W
+#: charging rating.
+C1000_TOU_UNIT = {**TOU_UNIT, "ac_input_power": 1210}
+TOU_UNITS: dict[Model, Mapping[str, Value]] = {
+    A1763: C1000_TOU_UNIT,
+    A1765: C1000_TOU_UNIT,
+    A1783: TOU_UNIT,
+    A1785: TOU_UNIT,
 }
 #: (``4090`` mode and record, the ``0022`` UTC, values over ``TOU_UNIT``) ->
 #: the cloud ``0421``'s (``d9[0]``, ``a7`` AC input power, ``a1``). The plan's
@@ -412,6 +421,22 @@ async def test_a1783_version_read_matches_the_recorded_reply() -> None:
     assert version[0].plaintext == A1783_VERSIONS
 
 
+@pytest.mark.parametrize("model", MODELS)
+def test_the_version_read_reports_the_0421_mainmcu_build(model: Model) -> None:
+    """``0830``'s device version is the MainMcu build ``f9`` carries, last digit first.
+
+    The A1783's recorded ``0830`` pairs v1.2.1.6 with its ``f9``; the A1763 /
+    A1765 record v1.1.2.6, the A1785 v1.2.1.1.
+    """
+    device = model()
+    versions = device.negotiated_module.config.versions
+    mcu = next_0421(device)[0]["mcu_version"]
+
+    assert versions is not None
+    assert isinstance(mcu, bytes)
+    assert versions.device.decode() == "v" + ".".join(map(str, reversed(mcu)))
+
+
 @pytest.mark.parametrize("build", list(ModuleBuild))
 def test_version_read_reports_the_chosen_module_build(build: ModuleBuild) -> None:
     versions = A1785(module=build).negotiated_module.config.versions
@@ -630,14 +655,14 @@ async def test_a1783_system_group_applies_the_soc_firmware_clamp() -> None:
 async def test_a1783_ports_are_settable_by_their_app_names() -> None:
     device = A1783()
 
-    device.set_values(pd2_output_power=500, usb1_output_status=1, pv1_input_power=42)
+    device.set_values(pd2_output_power=140, usb1_output_status=1, pv1_input_power=42)
 
     push = device.negotiated_module.mcu.push(
         0x421, values=device.negotiated_module.values
     )
     status = Parameters.parse(push.payload)
     pd2 = decode_field(status, "ab", solix_c_gen2.OutputPort)
-    assert (pd2.output_status, pd2.output_power) == (1, 500)
+    assert (pd2.output_status, pd2.output_power) == (1, 140)
     assert decode_field(status, "ae", solix_c_gen2.OutputPort).output_status == 1
     assert decode_field(status, "a8", solix_c_gen2.DcInput).pv1_input_power == 42
 
@@ -1484,13 +1509,13 @@ async def test_the_active_period_and_its_charge_hold(
 
 
 def test_the_c1000_gen_2_shares_the_peak_hold() -> None:
-    """The A1763 (no ``ce``, MainMcu v1.2.1.1) runs the line's own TOU check."""
+    """The A1763 (no ``ce``, MainMcu v1.1.2.6) runs the line's own TOU check."""
     clock = ManualClock()
     device = A1763(clock=clock)
     layout = device.layout
     assert layout is not None
     module = device.negotiated_module
-    device.set_values(**TOU_UNIT)
+    device.set_values(**C1000_TOU_UNIT)
     state = module.mcu.state(module.values)
     peak = layout.state_changes(
         0x090,
@@ -1559,7 +1584,7 @@ def test_no_ble_frame_carries_a_cloud_route_or_message(model: Model) -> None:
     layout = device.layout
     assert layout is not None
     module = device.negotiated_module
-    device.set_values(**TOU_UNIT)
+    device.set_values(**TOU_UNITS[model])
     plan = bytes.fromhex("a10121a2020101a5020132a6020101a70404010018")
     device.set_values(**layout.state_changes(0x090, plan, module.mcu.state({})))
     clock.advance(10 * 3600)
@@ -1642,7 +1667,7 @@ def test_the_0503_totals_are_the_doc_example_and_settable(model: Model) -> None:
     layout = device.layout
     assert layout is not None
     module = device.negotiated_module
-    device.set_values(**TOU_UNIT)
+    device.set_values(**TOU_UNITS[model])
     plan = bytes.fromhex(f"a10121a2020101a5020132a6020101a70404{TOU_ALL_DAY}")
     device.set_values(**layout.state_changes(0x090, plan, module.mcu.state({})))
     clock.advance(10 * 3600)
@@ -1686,7 +1711,7 @@ def test_no_0503_outside_an_active_tou_period(
     layout = device.layout
     assert layout is not None
     module = device.negotiated_module
-    device.set_values(**TOU_UNIT)
+    device.set_values(**TOU_UNITS[model])
     plan = bytes.fromhex(f"a10121a20201{mode}a5020132a6020101a70404{record}")
     device.set_values(**layout.state_changes(0x090, plan, module.mcu.state({})))
     clock.advance(10 * 3600)
@@ -5654,15 +5679,397 @@ def test_the_floor_reads_50_w_with_no_pack_voltage() -> None:
     assert next_0421(device)[0]["ac_input_power"] == 1830
 
 
-def test_the_c1000_gen_2_dc_input_has_no_recorded_limit() -> None:
-    """Its input ratings aren't recorded: 2150 W at 1200 W leaves 940 W of DC."""
-    device = A1763(clock=ManualClock())
-    device.set_values(**{**FULL_CHARGE_1200, "dc_input_source": SOLAR})
+C1000S = [A1763, A1765]
+#: ``f9`` ``mcu_version``, last digit first: the decoded v1.2.1.6, the first
+#: decoded v1.2.1.1, the undecoded v1.2.1.0 and the C1000's recorded v1.1.2.6.
+V1216 = bytes.fromhex("06010201")
+V1211 = bytes.fromhex("01010201")
+V1210 = bytes.fromhex("00010201")
+V1126 = bytes.fromhex("06020101")
+#: The C1000 on the decoded build at the shared default ``maxInputPower``.
+C1000_ON_1216 = {"mcu_version": V1216, "max_input_power": 1800}
+#: USB-A's 12 W rating used up, beside the port sharing its 20 W.
+USB_A_12 = {"usb1_output_status": 1, "usb1_output_power": 12}
+#: The C1000's car socket, USB-C2 and USB-A each at its rating; USB-C1 at the
+#: 8 W USB-A leaves of their shared 20 W.
+C1000_PORTS_AT_RATING = {
+    "car_charge1_output_power": 120,
+    "pd2_output_power": 140,
+    "pd1_output_power": 8,
+    **USB_A_12,
+}
+#: The C2000's ports each at its rating; USB-C3 at the 8 W USB-A leaves.
+C2000_PORTS_AT_RATING = {
+    "car_charge1_output_power": 120,
+    "pd1_output_power": 140,
+    "pd2_output_power": 140,
+    "pd3_output_power": 8,
+    **USB_A_12,
+}
 
-    device.set_values(total_input_power=2150)
+
+@pytest.mark.parametrize("model", C1000S)
+@pytest.mark.parametrize(
+    ("unit", "change", "shown"),
+    [
+        pytest.param(
+            {"dc_input_source": SOLAR},
+            {"pv1_input_power": 600},
+            {"pv1_input_power": 600},
+            id="solar-600",
+        ),
+        pytest.param(
+            {"dc_input_source": SOLAR},
+            {"total_input_power": 1810},
+            {"ac_input_power": 1210, "pv1_input_power": 600},
+            id="total-1810-leaves-600-dc",
+        ),
+        pytest.param(
+            {}, {"ac_output_power": 3000}, {"ac_output_power": 3000}, id="ac-out-3000"
+        ),
+        pytest.param({}, C1000_PORTS_AT_RATING, C1000_PORTS_AT_RATING, id="ports"),
+        pytest.param(
+            {}, {"ac_input_power": 1233}, {"ac_input_power": 1233}, id="charge-1233"
+        ),
+        pytest.param(
+            {"super_fast_charge_status": 1},
+            {"ac_input_power": 1633},
+            {"ac_input_power": 1633},
+            id="ultrafast-charge-1633",
+        ),
+        pytest.param(
+            {"ac_output_power": 600},
+            {"ac_input_power": 1833},
+            {"ac_input_power": 1833},
+            id="bypass-1833",
+        ),
+        pytest.param(
+            {},
+            {"ac_recharge_power": 1200},
+            {"ac_recharge_power": 1200},
+            id="limit-1200",
+        ),
+        pytest.param(
+            {}, {"max_input_power": 2000}, {"max_input_power": 2000}, id="v1126-max-any"
+        ),
+        pytest.param(
+            {"mcu_version": V1216},
+            {"max_input_power": 1500},
+            {"max_input_power": 1500},
+            id="v1216-max-jp",
+        ),
+    ],
+)
+def test_the_c1000_gen_2_takes_its_ratings(
+    model: Model,
+    unit: dict[str, Value],
+    change: dict[str, Value],
+    shown: dict[str, Value],
+) -> None:
+    """The C1000 Gen 2's spec-sheet ratings, each set at its edge.
+
+    Solar 600 W; AC out 3000 W peak; the car socket 120 W, USB-C2 140 W, USB-A
+    12 W, USB-A + USB-C1 20 W; AC charging 1200 W, UltraFast 1600 W and bypass
+    1800 W, each + the 33 W band; the AC limit 1200 W. On the recorded
+    v1.1.2.6 any ``maxInputPower`` sets; on v1.2.1.6, the build's.
+    """
+    device = model(clock=ManualClock())
+    device.set_values(**{**FULL_CHARGE_1200, **unit})
+
+    device.set_values(**change)
     status = next_0421(device)[0]
 
-    assert (status["ac_input_power"], status["pv1_input_power"]) == (1210, 940)
+    assert {name: status[name] for name in shown} == shown
+
+
+@pytest.mark.parametrize("model", C1000S)
+@pytest.mark.parametrize(
+    ("unit", "change", "match"),
+    [
+        pytest.param(
+            {"dc_input_source": SOLAR},
+            {"pv1_input_power": 601},
+            "the DC input takes at most 600 W, not 601 W",
+            id="solar-601",
+        ),
+        pytest.param(
+            {"dc_input_source": SOLAR},
+            {"total_input_power": 2150},
+            "the DC input takes at most 600 W, not 940 W",
+            id="total-2150-leaves-940-dc",
+        ),
+        pytest.param(
+            {},
+            {"ac_output_power": 3001},
+            "AC out reads at most 3000 W, not 3001 W",
+            id="ac-out-3001",
+        ),
+        pytest.param(
+            {},
+            {"car_charge1_output_power": 121},
+            "car_charge1 reads at most 120 W, not 121 W",
+            id="car-socket-121",
+        ),
+        pytest.param(
+            {},
+            {"pd2_output_power": 141},
+            "pd2 reads at most 140 W, not 141 W",
+            id="pd2-141",
+        ),
+        pytest.param(
+            {},
+            {"usb1_output_power": 13},
+            "usb1 reads at most 12 W, not 13 W",
+            id="usb-a-13",
+        ),
+        pytest.param(
+            USB_A_12,
+            {"pd1_output_power": 9},
+            "pd1 \\+ usb1 share 20 W, not 21 W",
+            id="usb-c1-9-beside-usb-a-12",
+        ),
+        pytest.param(
+            {},
+            {"pd1_output_power": 21},
+            "pd1 \\+ usb1 share 20 W, not 21 W",
+            id="usb-c1-21",
+        ),
+        pytest.param(
+            {},
+            {"pd1_device_plugged": 1, "pd1_device_power": 21},
+            "pd1 \\+ usb1 share 20 W, not 21 W",
+            id="usb-c1-device-21",
+        ),
+        pytest.param(
+            {},
+            {"ac_input_power": 1234},
+            "the AC charge reads at most 1233 W, not 1234 W",
+            id="charge-1234",
+        ),
+        pytest.param(
+            {"super_fast_charge_status": 1},
+            {"ac_input_power": 1634},
+            "the AC charge reads at most 1633 W, not 1634 W",
+            id="ultrafast-charge-1634",
+        ),
+        pytest.param(
+            {"ac_output_power": 601},
+            {"ac_input_power": 1834},
+            "AC in reads at most 1833 W on a 1800 W unit, not 1834 W",
+            id="bypass-1834",
+        ),
+        pytest.param(
+            {**C1000_ON_1216, "ac_output_power": 700},
+            {"max_input_power": 2300, "ac_input_power": 1834},
+            "AC in reads at most 1833 W on a 1800 W unit, not 1834 W",
+            id="v1216-2300-held-to-the-bypass",
+        ),
+        pytest.param(
+            {},
+            {"ac_recharge_power": 1201},
+            "the AC limit is at most 1200 W, not 1201 W",
+            id="limit-1201",
+        ),
+        pytest.param(
+            {"mcu_version": V1216},
+            {"max_input_power": 1200},
+            "maxInputPower reads 1500, 1800, 2300 W, not 1200 W",
+            id="v1216-max-1200",
+        ),
+    ],
+)
+def test_the_c1000_gen_2_refuses_one_over_its_ratings(
+    model: Model, unit: dict[str, Value], change: dict[str, Value], match: str
+) -> None:
+    """One watt over each rating is refused, and nothing is set.
+
+    USB-C1 shares USB-A's 20 W, whether its power is set or its device's;
+    on v1.2.1.6 a 2300 W ``maxInputPower`` still holds AC in to the 1800 W
+    bypass, and 1200 W isn't one the build reports.
+    """
+    device = model(clock=ManualClock())
+    device.set_values(**{**FULL_CHARGE_1200, **unit})
+    module = device.negotiated_module
+    before = (dict(module.values), next_0421(device)[0])
+
+    with pytest.raises(TypeError, match=match):
+        device.set_values(**change)
+
+    assert (dict(module.values), next_0421(device)[0]) == before
+
+
+#: Ultrafast Charge switched on.
+ULTRAFAST_ON = {"super_fast_charge_status": 1}
+
+
+@pytest.mark.parametrize(
+    ("unit", "change", "ac_in"),
+    [
+        pytest.param({}, {"ac_recharge_power": 1000}, 1010, id="v1126-limit"),
+        pytest.param({}, {"ac_output_power": 1000}, 1210, id="v1126-pass-through"),
+        pytest.param({}, {"ac_output_power": 2500}, 1833, id="v1126-bypass"),
+        pytest.param({}, ULTRAFAST_ON, 1200, id="v1126-ultrafast"),
+        pytest.param(C1000_ON_1216, ULTRAFAST_ON, 1600, id="v1216-ultrafast-1600"),
+        pytest.param(
+            C1000_ON_1216,
+            {**ULTRAFAST_ON, "ac_output_power": 100},
+            1700,
+            id="v1216-ultrafast-1600-out-100",
+        ),
+        pytest.param(
+            {"mcu_version": V1216, "max_input_power": 1500},
+            {"ac_output_power": 2500},
+            1533,
+            id="v1216-jp-inlet",
+        ),
+    ],
+)
+def test_the_c1000_gen_2_charge_follows_its_ratings(
+    unit: dict[str, Value], change: dict[str, Value], ac_in: int
+) -> None:
+    """The full AC charge on the C1000 Gen 2, the request held to its ratings.
+
+    On the recorded v1.1.2.6 (``maxInputPower`` 1200 W) the limit + 10 W, AC
+    out passed through up to the 1800 W bypass + 33 W, and UltraFast at the
+    1200 W the request leaves. On v1.2.1.6 at 1800 W, UltraFast stops at its
+    1600 W rating, and a JP unit's 1500 W inlet holds AC in to 1533 W.
+    """
+    device = A1763(clock=ManualClock())
+    device.set_values(**{**FULL_CHARGE_1200, **unit})
+
+    device.set_values(**change)
+
+    assert next_0421(device)[0]["ac_input_power"] == ac_in
+
+
+def test_the_c1000_gen_2_pd1_holds_no_device() -> None:
+    """The A1783's 86 W PD1 load is over USB-C1's shared 20 W: no re-attach draws it."""
+    clock = ManualClock()
+    device = A1763(clock=clock)
+    device.set_values(pd1_output_status=0)
+
+    device.set_values(car_charge1_output_status=1)
+    clock.advance(10)
+    device.negotiated_module.check_pushes()
+    status = next_0421(device)[0]
+
+    assert (status["pd1_output_status"], status["pd1_output_power"]) == (0, 0)
+
+
+@pytest.mark.parametrize(
+    "name", [solix_c_gen2.BYPASS_POWER, solix_c_gen2.ULTRAFAST_POWER]
+)
+def test_the_c1000_gen_2_ratings_are_read_only(name: str) -> None:
+    """The bypass and UltraFast ratings ride the state; no value sets them."""
+    with pytest.raises(LayoutError, match=name):
+        A1763().set_values(**{name: 2000})
+
+
+def test_the_c2000_ports_take_their_ratings() -> None:
+    """The car socket 120 W, USB-C1/C2 140 W, USB-C3 15 W, USB-A 12 W, C3 + A 20 W."""
+    device = A1783(clock=ManualClock())
+
+    device.set_values(**C2000_PORTS_AT_RATING)
+    alone = next_0421(device)[0]["pd3_output_power"]
+    device.set_values(usb1_output_power=0, pd3_output_power=15, pd1_device_power=140)
+    status = next_0421(device)[0]
+
+    assert alone == 8
+    assert (status["pd3_output_power"], status["pd1_output_power"]) == (15, 140)
+
+
+@pytest.mark.parametrize(
+    ("unit", "change", "match"),
+    [
+        pytest.param(
+            {},
+            {"car_charge1_output_power": 121},
+            "car_charge1 reads at most 120 W, not 121 W",
+            id="car-socket-121",
+        ),
+        pytest.param(
+            {},
+            {"pd1_output_power": 141},
+            "pd1 reads at most 140 W, not 141 W",
+            id="pd1-141",
+        ),
+        pytest.param(
+            {},
+            {"pd2_output_power": 141},
+            "pd2 reads at most 140 W, not 141 W",
+            id="pd2-141",
+        ),
+        pytest.param(
+            {},
+            {"pd3_output_power": 16},
+            "pd3 reads at most 15 W, not 16 W",
+            id="pd3-16",
+        ),
+        pytest.param(
+            {},
+            {"usb1_output_power": 13},
+            "usb1 reads at most 12 W, not 13 W",
+            id="usb-a-13",
+        ),
+        pytest.param(
+            USB_A_12,
+            {"pd3_output_power": 9},
+            "pd3 \\+ usb1 share 20 W, not 21 W",
+            id="usb-c3-9-beside-usb-a-12",
+        ),
+        pytest.param(
+            {},
+            {"pd1_device_power": 141},
+            "pd1 reads at most 140 W, not 141 W",
+            id="pd1-device-141",
+        ),
+        pytest.param(
+            USB_A_12,
+            {"pd3_device_plugged": 1, "pd3_device_power": 9},
+            "pd3 \\+ usb1 share 20 W, not 21 W",
+            id="usb-c3-device-9-beside-usb-a-12",
+        ),
+    ],
+)
+def test_the_c2000_ports_refuse_one_over_their_ratings(
+    unit: dict[str, Value], change: dict[str, Value], match: str
+) -> None:
+    """A port, its device, or two ports sharing a budget one watt over: refused."""
+    device = A1783(clock=ManualClock())
+    device.set_values(**unit)
+    module = device.negotiated_module
+    before = (dict(module.values), next_0421(device)[0])
+
+    with pytest.raises(TypeError, match=match):
+        device.set_values(**change)
+
+    assert (dict(module.values), next_0421(device)[0]) == before
+
+
+@pytest.mark.parametrize(
+    "version",
+    [pytest.param(V1126, id="v1.1.2.6"), pytest.param(V1210, id="v1.2.1.0")],
+)
+def test_an_undecoded_build_sets_any_max_input_power(version: bytes) -> None:
+    """Before v1.2.1.1, the first decoded build, ``maxInputPower`` sets as given."""
+    device = A1785(clock=ManualClock())
+    device.set_values(mcu_version=version)
+
+    device.set_values(max_input_power=2000)
+
+    assert next_0421(device)[0]["max_input_power"] == 2000
+
+
+@pytest.mark.parametrize("model", MODELS)
+def test_the_decoded_build_reports_its_max_input_powers_on_any_model(
+    model: Model,
+) -> None:
+    """``max_input_power_get``'s 1500 / 1800 / 2300 W hold from v1.2.1.1."""
+    device = model(clock=ManualClock())
+    device.set_values(mcu_version=V1211)
+
+    with pytest.raises(TypeError, match="not 2000 W"):
+        device.set_values(max_input_power=2000)
 
 
 @pytest.mark.parametrize(

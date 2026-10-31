@@ -129,7 +129,8 @@ KNOWN_COMMANDS: dict[int, int | None] = {
     **dict.fromkeys({0x100, 0x101, 0x102, 0x103, 0x104}, STATUS_ACCEPTED),
     0x064: None,
 }
-#: The display-board firmware ``0830`` reports.
+#: The A1783's display-board firmware, which its ``0830`` reports; each model
+#: reports the MainMcu build its recorded ``0421`` ``f9`` carries.
 DEVICE_VERSION = "v1.2.1.6"
 
 
@@ -981,16 +982,45 @@ CHARGE_SOURCE_2 = "charge_source_2_can_charge"
 #: (``.15.3``, 0.1 V) rounded to volts + 10 W; 50 W while it reads 0.
 CHARGE_FLOOR_OVER_VOLTS = 10
 CHARGE_FLOOR_NO_VOLTAGE = 50
-#: The C2000 chassis's ``maxInputPower`` (``max_input_power_get``,
-#: a1783-telemetry.md ``a2`` byte 30): 2300 W on the ``_high`` variant, 1500 W
-#: with country JP, else 1800 W.
-C2000_MAX_INPUT_POWERS = frozenset({1500, 1800, 2300})
+#: ``maxInputPower`` on the decoded MainMcu build (``max_input_power_get``,
+#: a1783-telemetry.md ``a2`` byte 30), keyed on the factory variant and
+#: country, not the model: 2300 W on variant 1, 1500 W with country JP, else
+#: 1800 W. One build serves all four models (firmware/mainmcu.md).
+MAX_INPUT_POWERS = frozenset({1500, 1800, 2300})
+#: The first decoded MainMcu build (v1.2.1.1; v1.2.1.6 is decoded too): from
+#: it the ``maxInputPower`` values above and AC in's ``maxInputPower`` + 33 W
+#: hold on any model. The A1763 / A1765 recordings run v1.1.2.6.
+DECODED_MCU_VERSION = 1211
 #: AC in tops out at ``maxInputPower`` (the request less AC out, the AC out
 #: passed back through) plus the steady overshoot band's top, about +33 W.
 AC_OVER_CEILING = 33
 #: The C2000 chassis's AC output peak (Anker: 2400 W continuous, 4000 W peak;
 #: a1783-control.md's overload trip came at 3815 W, between the two).
 C2000_AC_OUTPUT_PEAK = 4000
+#: The C2000 chassis's output ports, by the app's port name (a1783-telemetry.md
+#: ratings): the 12 V 10 A car socket, USB-C1/C2/C3 (PD1-PD3) and USB-A.
+C2000_PORT_LIMITS = MappingProxyType(
+    {"car_charge1": 120, "pd1": 140, "pd2": 140, "pd3": 15, "usb1": 12}
+)
+#: Ports sharing one budget: USB-C3 and USB-A share 20 W.
+C2000_SHARED_PORTS = ((("pd3", "usb1"), 20),)
+
+#: The C1000 Gen 2's ratings (Anker, US spec sheet; a1783-telemetry.md): AC
+#: charging 1200 W, UltraFast 1600 W, bypass 1800 W; solar 600 W (11-28 V
+#: 8.2 A, 29-60 V 14.5 A); AC out 2000 W rated, 3000 W peak; the car socket
+#: 120 W, USB-C2 140 W, USB-A 12 W, and USB-A and USB-C1 share 20 W.
+C1000_CHARGE_POWER = 1200
+C1000_ULTRAFAST_POWER = 1600
+C1000_BYPASS_POWER = 1800
+C1000_DC_INPUT_LIMIT = 600
+C1000_AC_OUTPUT_PEAK = 3000
+C1000_PORT_LIMITS = MappingProxyType({"car_charge1": 120, "pd2": 140, "usb1": 12})
+C1000_SHARED_PORTS = ((("pd1", "usb1"), 20),)
+#: Hidden, read-only: a model's AC bypass rating and its fastest AC charge
+#: (UltraFast), which bound the build's charge request. The C2000 lists
+#: neither: AC in tops out at ``maxInputPower``, the charge at the request.
+BYPASS_POWER = "ac_bypass_power"
+ULTRAFAST_POWER = "ultrafast_charge_power"
 
 
 #: ``4057 a2``: 0 stops the realtime stream, 1 starts it.
@@ -1265,8 +1295,9 @@ def _ac_charge_power(state: Mapping[str, Value]) -> int:
     never goes negative: with charge source 2 able to charge it is 0 once AC
     out reaches the ceiling, otherwise it holds to the floor (MainMcu
     0x08009ae4). AC in carries the AC out too (survey: limit + out + 24 at
-    54-59 W out), up to the inlet's ``maxInputPower`` + 33 W; the on-bus pack
-    feeds the outlets' rest.
+    54-59 W out), up to the AC-in ceiling (``_ac_in_top``); the on-bus pack
+    feeds the outlets' rest. The limit skipped, the charge holds to the model's
+    UltraFast rating too, where it lists one.
     """
     out = int(state[AC_OUT])
     inlet = int(state[MAX_INPUT])
@@ -1274,11 +1305,36 @@ def _ac_charge_power(state: Mapping[str, Value]) -> int:
     request = max(inlet - out, low)
     if not request:
         charge = 0
-    elif int(state[ULTRAFAST]) or int(state[WINDOW_TYPE]) != WINDOW_NONE:
-        charge = min(request, PLAN_CHARGE_CAP)
+    elif _limit_skipped(state):
+        fastest = int(state.get(ULTRAFAST_POWER, PLAN_CHARGE_CAP))
+        charge = min(request, PLAN_CHARGE_CAP, fastest)
     else:
         charge = min(request, int(state[AC_LIMIT])) + CHARGE_OVER_LIMIT
-    return min(charge + out, inlet + AC_OVER_CEILING)
+    return min(charge + out, _ac_in_top(state))
+
+
+def _limit_skipped(state: Mapping[str, Value]) -> bool:
+    """Whether the charge skips the AC limit: Ultrafast on or a backup window."""
+    return bool(int(state[ULTRAFAST]) or int(state[WINDOW_TYPE]) != WINDOW_NONE)
+
+
+def _decoded_build(state: Mapping[str, Value]) -> bool:
+    """Whether the unit runs a decoded MainMcu build (v1.2.1.1 on), any model."""
+    version = VersionNumber.parse(_bytes_value(state, "mcu_version"))
+    return bool(version >= DECODED_MCU_VERSION)
+
+
+def _ac_in_top(state: Mapping[str, Value]) -> int:
+    """Return the most AC in reads: the inlet's rating + 33 W.
+
+    On a decoded build the inlet is ``maxInputPower``, held to the model's
+    bypass rating where it lists one; on an older build, that rating alone.
+    """
+    inlet = int(state[MAX_INPUT])
+    bypass = state.get(BYPASS_POWER)
+    if bypass is not None:
+        inlet = min(inlet, int(bypass)) if _decoded_build(state) else int(bypass)
+    return inlet + AC_OVER_CEILING
 
 
 def _charge_floor(state: Mapping[str, Value]) -> int:
@@ -1316,24 +1372,86 @@ def _split_total(
 
 
 def _check_ac_ceiling(
-    powers: frozenset[int], resolved: Mapping[str, Value], after: Mapping[str, Value]
+    charging: int | None, resolved: Mapping[str, Value], after: Mapping[str, Value]
 ) -> None:
-    """Refuse a ``maxInputPower`` not in ``powers`` or AC in over its ceiling.
+    """Refuse a ``maxInputPower``, AC limit, AC in or AC charge no unit shows.
+
+    A decoded build reports only ``MAX_INPUT_POWERS``. AC in holds to
+    ``_ac_in_top``; with a model charging rating, the limit holds to it and
+    the charge (AC in less AC out) to it, or to the UltraFast rating while the
+    limit is skipped, + 33 W.
 
     Raises:
-        TypeError: If either is set to a value the unit doesn't show.
+        TypeError: If any is set to a value the unit doesn't show.
 
     """
     ceiling = int(after[MAX_INPUT])
-    if MAX_INPUT in resolved and ceiling not in powers:
-        listed = ", ".join(str(power) for power in sorted(powers))
+    reported = ceiling in MAX_INPUT_POWERS or not _decoded_build(after)
+    if MAX_INPUT in resolved and not reported:
+        listed = ", ".join(str(power) for power in sorted(MAX_INPUT_POWERS))
         msg = f"maxInputPower reads {listed} W, not {ceiling} W"
         raise TypeError(msg)
-    top = ceiling + AC_OVER_CEILING
-    ac = int(after["ac_input_power"])
-    if resolved.keys() & {"ac_input_power", MAX_INPUT} and ac > top:
-        msg = f"AC in reads at most {top} W on a {ceiling} W unit, not {ac} W"
+    limit = int(after[AC_LIMIT])
+    if charging is not None and AC_LIMIT in resolved and limit > charging:
+        msg = f"the AC limit is at most {charging} W, not {limit} W"
         raise TypeError(msg)
+    if not resolved.keys() & {"ac_input_power", MAX_INPUT}:
+        return
+    top, ac = _ac_in_top(after), int(after["ac_input_power"])
+    if ac > top:
+        rating = top - AC_OVER_CEILING
+        msg = f"AC in reads at most {top} W on a {rating} W unit, not {ac} W"
+        raise TypeError(msg)
+    if charging is None:
+        return
+    if _limit_skipped(after):
+        charging = int(after.get(ULTRAFAST_POWER, charging))
+    most, charge = charging + AC_OVER_CEILING, ac - int(after[AC_OUT])
+    if charge > most:
+        msg = f"the AC charge reads at most {most} W, not {charge} W"
+        raise TypeError(msg)
+
+
+def _port_names(port: str) -> frozenset[str]:
+    """Return the names that move what ``port`` draws: its power and its device's."""
+    names = {f"{port}_output_power"}
+    if port in USB_C_PORTS:
+        names |= {f"{port}_{DEVICE_PLUGGED}", f"{port}_{DEVICE_POWER}"}
+    return frozenset(names)
+
+
+def _port_load(after: Mapping[str, Value], port: str) -> int:
+    """Return what ``port`` draws: its power, or its plugged device's once attached."""
+    power = int(after.get(f"{port}_output_power", 0))
+    if port in USB_C_PORTS and _usb_c_device(after, port, DEVICE_PLUGGED):
+        return max(power, _usb_c_device(after, port, DEVICE_POWER))
+    return power
+
+
+def _check_ports(
+    limits: Mapping[str, int],
+    shared: tuple[tuple[tuple[str, ...], int], ...],
+    resolved: Mapping[str, Value],
+    after: Mapping[str, Value],
+) -> None:
+    """Refuse an output port, or ports sharing a budget, over its rating.
+
+    Raises:
+        TypeError: If a port's power or plugged device's power set by name
+            reads over its rating, or ports sharing a budget over it together.
+
+    """
+    for port, limit in limits.items():
+        load = _port_load(after, port)
+        if resolved.keys() & _port_names(port) and load > limit:
+            msg = f"{port} reads at most {limit} W, not {load} W"
+            raise TypeError(msg)
+    for ports, budget in shared:
+        touched = resolved.keys() & frozenset().union(*map(_port_names, ports))
+        load = sum(_port_load(after, port) for port in ports)
+        if touched and load > budget:
+            msg = f"{' + '.join(ports)} share {budget} W, not {load} W"
+            raise TypeError(msg)
 
 
 def _without(changes: dict[str, Value], own: frozenset[str]) -> dict[str, Value]:
@@ -3366,17 +3484,29 @@ class CGen2Layout(TableLayout):
         }
     )
     #: The DC input reads the car socket while unset: the latest recorded era;
-    #: charge source 2 reads clear.
+    #: charge source 2 reads clear. The C1000 Gen 2's bypass and UltraFast
+    #: ratings ride along, read-only; its PD1 (USB-C1) holds no device, the
+    #: A1783 recording's 86 W load being over its shared 20 W.
     defaults = MappingProxyType(
-        {DC_INPUT_SOURCE: DcInputSource.CAR_SOCKET, CHARGE_SOURCE_2: 0}
+        {
+            DC_INPUT_SOURCE: DcInputSource.CAR_SOCKET,
+            CHARGE_SOURCE_2: 0,
+            BYPASS_POWER: C1000_BYPASS_POWER,
+            ULTRAFAST_POWER: C1000_ULTRAFAST_POWER,
+            "pd1_device_plugged": 0,
+            "pd1_device_power": 0,
+        }
     )
-    #: The most the DC input takes, and the ``maxInputPower`` values the unit
-    #: reports, bounding AC in: none on the C1000 Gen 2, whose ratings and
-    #: ceiling aren't recorded.
-    DC_INPUT_LIMIT: int | None = None
-    MAX_INPUT_POWERS: frozenset[int] = frozenset()
-    #: The most AC output reads; none on the C1000 Gen 2, its rating unrecorded.
-    AC_OUTPUT_PEAK: int | None = None
+    #: The model's ratings: its AC charging (none on the C2000, whose charge
+    #: the inlet bounds), the most the DC input takes and the most AC output
+    #: reads.
+    CHARGE_POWER: int | None = C1000_CHARGE_POWER
+    DC_INPUT_LIMIT = C1000_DC_INPUT_LIMIT
+    AC_OUTPUT_PEAK = C1000_AC_OUTPUT_PEAK
+    #: Each output port's rating, by the app's port name, and the ports that
+    #: share one budget.
+    PORT_LIMITS: Mapping[str, int] = C1000_PORT_LIMITS
+    SHARED_PORTS: tuple[tuple[tuple[str, ...], int], ...] = C1000_SHARED_PORTS
 
     def names(self, msgtype: int) -> frozenset[str]:
         """Return the names ``set_values()`` can reach.
@@ -3457,15 +3587,15 @@ class CGen2Layout(TableLayout):
     ) -> dict[str, Value]:
         """Return what ``values`` set on ``state``: ``.23.4`` fills its inputs.
 
-        AC in holds to ``maxInputPower`` plus the overshoot band, AC out to its
-        peak rating, the DC input to its port's rating, and ``a6[0:2]`` set
-        by name to the port outputs' sum.
+        AC in and its charge hold to their ratings plus the overshoot band, AC
+        out to its peak rating, the DC input and each output port to its
+        port's rating, and ``a6[0:2]`` set by name to the port outputs' sum.
 
         Raises:
             TypeError: If an input would be negative, the output total off the
                 port outputs' sum, ``maxInputPower`` one the unit doesn't
-                report, AC in over its ceiling, AC out over its peak, or the
-                DC input over its port's rating.
+                report, AC in or its charge over its ceiling, AC out over its
+                peak, or the DC input or an output port over its rating.
 
         """
         resolved = dict(values)
@@ -3480,16 +3610,16 @@ class CGen2Layout(TableLayout):
             total = int(after[PORT_OUTPUT])
             msg = f"the output total is the ports' {ports} W, not {total} W"
             raise TypeError(msg)
-        if self.MAX_INPUT_POWERS:
-            _check_ac_ceiling(self.MAX_INPUT_POWERS, resolved, after)
+        _check_ac_ceiling(self.CHARGE_POWER, resolved, after)
         peak, out = self.AC_OUTPUT_PEAK, int(after[AC_OUT])
-        if peak is not None and AC_OUT in resolved and out > peak:
+        if AC_OUT in resolved and out > peak:
             msg = f"AC out reads at most {peak} W, not {out} W"
             raise TypeError(msg)
         limit, dc = self.DC_INPUT_LIMIT, int(after["pv1_input_power"])
-        if limit is not None and "pv1_input_power" in resolved and dc > limit:
+        if "pv1_input_power" in resolved and dc > limit:
             msg = f"the DC input takes at most {limit} W, not {dc} W"
             raise TypeError(msg)
+        _check_ports(self.PORT_LIMITS, self.SHARED_PORTS, resolved, after)
         return resolved
 
     def started(self) -> tuple[Timed, ...]:
@@ -3707,6 +3837,14 @@ class CGen2ExpansionLayout(CGen2Layout):
     COMMANDS = MappingProxyType({**LINE_COMMANDS, 0x104: _set_bms_params})
     FIELDS = _fields({**SINGLE_FIELDS, **EXPANSION_FIELDS})
     EVENT_REPORTS = True
+    #: The line's hidden-input defaults, without the C1000's ratings or its
+    #: empty PD1: AC in tops out at ``maxInputPower``, and PD1 holds the
+    #: recording's 86 W device.
+    defaults = MappingProxyType(
+        {DC_INPUT_SOURCE: DcInputSource.CAR_SOCKET, CHARGE_SOURCE_2: 0}
+    )
+    CHARGE_POWER = None
     DC_INPUT_LIMIT = C2000_DC_INPUT_LIMIT
-    MAX_INPUT_POWERS = C2000_MAX_INPUT_POWERS
     AC_OUTPUT_PEAK = C2000_AC_OUTPUT_PEAK
+    PORT_LIMITS = C2000_PORT_LIMITS
+    SHARED_PORTS = C2000_SHARED_PORTS
