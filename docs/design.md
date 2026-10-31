@@ -235,9 +235,7 @@ The package's own tests do not depend on any client library:
 
 Client libraries (SolixBLE, through its `MockDevice` adapter) test against the emulator in their own suites.
 
-Client checks kept here, run by hand with the client checkout's Python and the emulator importable (installed, or `PYTHONPATH=<emulator>/src`):
-
-- `tools/solixble_theme_check.py`: SolixBLE's A2345 custom-theme upload (SolixBLE #87, `FileTransfer.pad_last_chunk`) through `EmulatedConnection`, with `tests/fixtures/prime/themes/custom-test.jpg`, padded and unpadded. Padded, the photo shows and a repeat select sends no second `4220`; unpadded, the first draw fails, the theme falls back to screen 1, and the repeat select uploads again (as on the bench, 2026-10-30). It takes about 30 s on the real clock. It could become a test in SolixBLE's own suite.
+[SolixBLE theme upload](solixble-theme-upload.md) keeps the script SolixBLE #87's A2345 custom-theme upload was run with against the emulator, as a record of how to replicate it.
 
 ## Releases
 
