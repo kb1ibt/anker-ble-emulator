@@ -130,13 +130,15 @@ asyncio_default_fixture_loop_scope = "function"
 log_level = "WARNING"
 
 [tool.coverage.run]
-source = ["src"]
+source = ["src", "tools"]
 data_file = ".coverage"
 omit = [
     "tests/*",
     "conftest.py",
     "*/__pycache__/*",
     "*/site-packages/*",
+    # A manual check run from a SolixBLE checkout: SolixBLE isn't in this venv.
+    "tools/solixble_theme_check.py",
 ]
 command_line = "-m pytest discover -s tests/"
 parallel = true
@@ -170,7 +172,7 @@ skip_empty = true
 precision = 2
 show_missing = true
 skip_covered = true
-fail_under = 70
+fail_under = 100
 
 [tool.coverage.html]
 directory = "htmlcov"

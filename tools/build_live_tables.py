@@ -65,6 +65,8 @@ INDEPENDENT = frozenset({DC_INPUT_GROUP})
 #: The ``0490`` schema the emulator's recorded frames carry: another schema's
 #: section isn't a source.
 EMITTED_SCHEMA = "_0009"
+#: The share of a group's active frames its samples cover.
+COVER = 0.99
 #: Field names that identify a unit, never written.
 IDENTIFIER = re.compile(r"(^|_)(sn|serial|mac|vid|pid|token)(_|$)")
 
@@ -204,6 +206,91 @@ def _with_short_a4(group: dict[str, Any]) -> dict[str, Any]:
 
     samples = [*group["samples"], *([full(values), c] for values, c in short)]
     return {**group, "samples": _merged(samples)}
+
+
+def _by_columns(group: dict[str, Any]) -> dict[str, Any]:
+    """Return ``group`` with its samples in fields-then-match order, by column name.
+
+    A column the table doesn't keep (``transport``) is summed over: the BLE and
+    cloud frames come from one state. A group with no column list is in order.
+    """
+    out = {**group}
+    for samples, columns, match in (
+        ("samples", "sample_columns", group.get("match") or []),
+        (
+            "samples_short_a4",
+            "sample_columns_short_a4",
+            group.get("match_short_a4", []),
+        ),
+    ):
+        if columns in group and samples in group:
+            wanted = [*group["fields"], *match]
+            out[samples] = _project(
+                group["name"], group[samples], group[columns], wanted
+            )
+    return out
+
+
+def _with_cut(group: dict[str, Any]) -> dict[str, Any]:
+    """Return ``group`` with each sample list the survey left uncut cut to ``COVER``.
+
+    A list the survey cut (it gives ``dropped`` or ``dropped_short_a4``) stays.
+    """
+    live_at = [group["fields"].index(name) for name in group["live"]]
+    idle = [0 if value is None else value for value in group["idle"]]
+    out = {**group}
+    for samples, dropped in (
+        ("samples", "dropped"),
+        ("samples_short_a4", "dropped_short_a4"),
+    ):
+        if samples in group and dropped not in group:
+            out[samples] = _cut(group[samples], live_at, idle)
+    return out
+
+
+def _cut(samples: list[Any], live_at: list[int], idle: list[Any]) -> list[list[Any]]:
+    """Return the idle samples and the commonest active ones covering ``COVER``.
+
+    An active sample has a live field off its idle value. The one that reaches
+    the share is kept. Count-descending, a tie by tuple ascending.
+    """
+
+    def order(item: list[Any]) -> tuple[int, list[Any]]:
+        return -item[1], item[0]
+
+    def active(sample: list[Any]) -> bool:
+        return any(
+            sample[i] is not None and sample[i] != idle[k]
+            for k, i in enumerate(live_at)
+        )
+
+    ranked = sorted(samples, key=order)
+    rows = [item for item in ranked if active(item[0])]
+    total = sum(count for _, count in rows)
+    kept, run = [], 0
+    for item in rows:
+        kept.append(item)
+        run += item[1]
+        if run >= COVER * total:
+            break
+    return sorted([*(i for i in ranked if not active(i[0])), *kept], key=order)
+
+
+def _project(
+    name: str, samples: list[Any], columns: list[str], wanted: list[str]
+) -> list[list[Any]]:
+    """Return ``samples`` cut to the ``wanted`` columns, equal tuples merged.
+
+    Raises:
+        SurveyError: If a wanted column isn't there.
+
+    """
+    missing = [column for column in wanted if column not in columns]
+    if missing:
+        msg = f"{name}: no column for {missing}"
+        raise SurveyError(msg)
+    at = [columns.index(column) for column in wanted]
+    return _merged([[[sample[i] for i in at], count] for sample, count in samples])
 
 
 def _merged(samples: list[Any]) -> list[list[Any]]:
@@ -360,7 +447,8 @@ def section(
         _with_wildcards(
             _group(
                 _with_carried(
-                    _with_short_a4(group), (carried or {}).get(group["name"], {})
+                    _with_short_a4(_with_cut(_by_columns(group))),
+                    (carried or {}).get(group["name"], {}),
                 )
             )
         )

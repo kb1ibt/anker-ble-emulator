@@ -72,7 +72,7 @@ def test_a_fe_field_that_isnt_a_time_is_left_alone() -> None:
     [
         pytest.param(bytes.fromhex("a10131a25301040a"), id="not fields to the end"),
         pytest.param(bytes.fromhex("a10131a2"), id="truncated header"),
-        pytest.param(bytes.fromhex("a1013130"), id="tag below a1"),
+        pytest.param(bytes.fromhex("a10131300101"), id="tag below a1"),
         pytest.param(bytes.fromhex("00a10131"), id="no trailer"),
     ],
 )
@@ -85,6 +85,12 @@ def test_forbidden_value_fails_the_frame() -> None:
 
     with pytest.raises(SanitizeError, match="forbidden"):
         Sanitizer(forbidden=(mac,)).sanitize(b"\xa5\x06" + mac)
+
+
+def test_a_frame_without_the_forbidden_value_passes() -> None:
+    mac = bytes.fromhex("aa12deadbeef")
+
+    assert Sanitizer(forbidden=(mac,)).sanitize(b"\xa5\x01\x00") == b"\xa5\x01\x00"
 
 
 def test_unreviewed_printable_run_fails_the_frame() -> None:

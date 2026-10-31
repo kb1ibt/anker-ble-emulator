@@ -185,6 +185,129 @@ def test_a_short_a4_sample_keeps_the_match_keys_it_carries() -> None:
     ]
 
 
+def test_samples_are_read_by_their_columns_summed_over_the_transport() -> None:
+    """BLE and cloud frames come from one state: a tuple's links add up."""
+    survey = copy.deepcopy(SURVEY)
+    ac = survey["sections"][0]["groups"][0]
+    ac["sample_columns"] = [
+        "ac_input_status",
+        "transport",
+        "ac_output_power",
+        "ac_output_switch",
+    ]
+    ac["samples"] = [
+        [[1, "ble", 100, 1], 4],
+        [[1, "mqtt", 100, 1], 3],
+        [[1, "ble", 0, 1], 2],
+    ]
+
+    assert table(survey) == table(SURVEY)
+
+
+def test_short_a4_samples_are_read_by_their_own_columns() -> None:
+    survey = copy.deepcopy(SURVEY)
+    ac = survey["sections"][0]["groups"][0]
+    ac["match"] = ["ac_input_disable_switch", "ac_recharge_power"]
+    ac["sample_columns"] = [*ac["fields"], *ac["match"], "transport"]
+    ac["samples"] = [[[1, 100, 1, 1200, "ble"], 7]]
+    ac["match_short_a4"] = ["ac_recharge_power"]
+    ac["sample_columns_short_a4"] = [
+        "ac_recharge_power",
+        "transport",
+        *ac["fields"],
+    ]
+    ac["samples_short_a4"] = [
+        [[1000, "ble", 1, 100], 2],
+        [[1000, "mqtt", 1, 100], 1],
+    ]
+    ac["short_a4"] = {"a4_len": [[26, 3]], "frames": 3, "other_missing": 0}
+
+    (section,) = table(survey)["sections"]
+
+    assert section["groups"][0]["samples"] == [
+        [[1, 100, 1, 1200], 7],
+        [[1, 100, 0, 1000], 3],
+    ]
+
+
+def test_sample_columns_missing_a_field_are_refused() -> None:
+    survey = copy.deepcopy(SURVEY)
+    ac = survey["sections"][0]["groups"][0]
+    ac["sample_columns"] = ["ac_output_power", "ac_input_status", "transport"]
+
+    with pytest.raises(
+        SurveyError, match=r"ac_out: no column for \['ac_output_switch'\]"
+    ):
+        table(survey)
+
+
+def test_an_uncut_group_keeps_its_idle_and_the_active_samples_covering_99_pct() -> None:
+    """The cut runs on each tuple's summed transports; a tie goes to the lower tuple.
+
+    985 + 5 reaches 0.99 x 1 000 at the first 5, so the other two 5s are left.
+    """
+    survey = copy.deepcopy(SURVEY)
+    ac = survey["sections"][0]["groups"][0]
+    del ac["dropped"]
+    ac["sample_columns"] = [*ac["fields"], *ac["match"], "transport"]
+    ac["samples"] = [
+        [[1, 0, 1, "ble"], 40],
+        [[1, 0, 1, "mqtt"], 10],
+        [[1, 100, 1, "ble"], 900],
+        [[1, 100, 1, "mqtt"], 85],
+        [[1, 60, 1, "ble"], 5],
+        [[1, 50, 1, "mqtt"], 3],
+        [[1, 70, 1, "ble"], 5],
+        [[1, 50, 1, "ble"], 2],
+    ]
+
+    (section,) = table(survey)["sections"]
+
+    assert section["groups"][0]["samples"] == [
+        [[1, 100, 1], 985],
+        [[1, 0, 1], 50],
+        [[1, 50, 1], 5],
+    ]
+
+
+def test_an_uncut_group_with_nothing_active_keeps_every_idle_sample() -> None:
+    survey = copy.deepcopy(SURVEY)
+    ac = survey["sections"][0]["groups"][0]
+    del ac["dropped"]
+    ac["samples"] = [[[1, 0, 1], 3], [[0, 0, 1], 5]]
+
+    (section,) = table(survey)["sections"]
+
+    assert section["groups"][0]["samples"] == [[[0, 0, 1], 5], [[1, 0, 1], 3]]
+
+
+def test_a_group_the_survey_cut_is_kept_as_cut() -> None:
+    survey = copy.deepcopy(SURVEY)
+    ac = survey["sections"][0]["groups"][0]
+    ac["samples"] = [[[1, 100, 1], 985], [[1, 60, 1], 5], [[1, 50, 1], 5]]
+
+    (section,) = table(survey)["sections"]
+
+    assert section["groups"][0]["samples"] == ac["samples"]
+
+
+def test_uncut_short_a4_samples_are_cut_on_their_own() -> None:
+    survey = copy.deepcopy(SURVEY)
+    ac = survey["sections"][0]["groups"][0]
+    ac["match"] = ["ac_input_disable_switch"]
+    ac["samples"] = [[[1, 100, 1], 7]]
+    ac["samples_short_a4"] = [[[1, 100], 985], [[1, 70], 5], [[1, 60], 5]]
+    ac["short_a4"] = {"a4_len": [[26, 995]], "frames": 995, "other_missing": 0}
+
+    (section,) = table(survey)["sections"]
+
+    assert section["groups"][0]["samples"] == [
+        [[1, 100, 1], 7],
+        [[1, 100, 0], 985],
+        [[1, 60, 0], 5],
+    ]
+
+
 def test_a_sample_with_no_ac_input_matches_any_charge_limit() -> None:
     """The charge limits govern AC input, so an AC-input-0 sample takes ``ANY``."""
     survey = copy.deepcopy(SURVEY)
