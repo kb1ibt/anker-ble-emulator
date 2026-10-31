@@ -5036,7 +5036,7 @@ def test_a_port_flow_change_re_derives_the_pack_current() -> None:
     currents = []
     for values in (
         {"pv1_input_power": 100},
-        {"ac_output_power": 200},
+        {"ac_output_status": 1, "ac_output_power": 200},
         {"pack_on_bus": 2},
     ):
         device.set_values(**values)
@@ -5238,6 +5238,7 @@ def test_the_ac_charge_runs_10_w_over_its_request(
             **KASA_UNIT,
             "outage_alert_switch": False,
             "ac_recharge_power": limit,
+            "ac_output_status": 1,
             "ac_output_power": out,
         }
     )
@@ -5471,7 +5472,7 @@ DC_OVER = "the DC input takes at most 800 W"
         ),
         pytest.param(
             {},
-            {"ac_output_power": 4001},
+            {"ac_output_status": 1, "ac_output_power": 4001},
             "AC out reads at most 4000 W, not 4001 W",
             id="ac-out-4001",
         ),
@@ -5516,9 +5517,89 @@ def test_ac_out_reads_up_to_its_peak_rating(out: int) -> None:
     """2400 W continuous, 4000 W peak: the 3815 W overload trip is a state it shows."""
     device = A1783(clock=ManualClock())
 
-    device.set_values(ac_output_power=out)
+    device.set_values(ac_output_status=1, ac_output_power=out)
 
     assert next_0421(device)[0]["ac_output_power"] == out
+
+
+#: What switching the AC output off moves.
+AC_OUT_MOVES = ("ac_output_power", "total_output_power", "ac_input_power")
+
+
+def test_ac_output_off_reads_no_ac_out_and_moves_the_total() -> None:
+    """a1783-telemetry.md ``a7`` [1:3]: AC out reads 0 W unless AC output is on.
+
+    Off, it moves ``a6[0:2]`` and a full AC charge's pass-through (1410 -> 1210
+    W at the 1200 W limit); back on, AC out stays 0 W until set or drawn.
+    """
+    device = A1783(clock=ManualClock())
+    device.set_values(**{**KASA_UNIT, **FULL_CHARGE_1200})
+    device.set_values(ac_output_status=1, ac_output_power=200)
+    on = next_0421(device)[0]
+
+    device.set_values(ac_output_status=0)
+    off = next_0421(device)[0]
+    device.set_values(ac_output_status=1)
+    back_on = next_0421(device)[0]
+
+    total = int(on["total_output_power"])
+    assert tuple(on[name] for name in AC_OUT_MOVES) == (200, total, 1410)
+    assert tuple(off[name] for name in AC_OUT_MOVES) == (0, total - 200, 1210)
+    assert tuple(back_on[name] for name in AC_OUT_MOVES) == (0, total - 200, 1210)
+
+
+def test_4101_a2_off_reads_no_ac_out_in_its_0421() -> None:
+    """``4101 a2 00`` switches the AC output off: its ``0421`` reads AC out 0 W."""
+    device = A1783(clock=ManualClock())
+    client = authorized_client(device, TOKEN)
+    layout = device.layout
+    assert layout is not None
+    device.set_values(**{**KASA_UNIT, **FULL_CHARGE_1200})
+    device.set_values(ac_output_status=1, ac_output_power=200)
+    total = int(next_0421(device)[0]["total_output_power"])
+
+    replies = command(device, client, 0x101, [(0xA2, b"\x01\x00")])
+    shown = layout.read(0x421, replies[-1].plaintext)
+
+    assert [cmd_hex(reply.frame) for reply in replies] == ["4901", "4421"]
+    assert shown["ac_output_status"] == 0
+    assert tuple(shown[name] for name in AC_OUT_MOVES) == (0, total - 200, 1210)
+
+
+def test_the_ac_timer_running_out_reads_no_ac_out() -> None:
+    """The AC timer switches the output off: AC out 0 W, its total and charge move."""
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    authorized_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(**{**KASA_UNIT, **FULL_CHARGE_1200})
+    device.set_values(ac_output_status=1, ac_output_power=200, ac_timer_value=2)
+    total = int(next_0421(device)[0]["total_output_power"])
+
+    clock.advance(2)
+    module.check_pushes()
+    status = next_0421(device)[0]
+
+    assert (status["ac_output_status"], status["ac_timer_value"]) == (0, 0)
+    assert tuple(status[name] for name in AC_OUT_MOVES) == (0, total - 200, 1210)
+
+
+def test_ac_out_with_the_ac_output_off_is_refused_and_sets_nothing() -> None:
+    device = A1783(clock=ManualClock())
+    module = device.negotiated_module
+    device.set_values(ac_output_status=0)
+    before = (dict(module.values), next_0421(device)[0])
+
+    with pytest.raises(TypeError, match="AC out reads 0 W with the AC output off"):
+        device.set_values(ac_output_power=50)
+    after_alone = (dict(module.values), next_0421(device)[0])
+    device.set_values(ac_output_status=1)
+    on = (dict(module.values), next_0421(device)[0])
+    with pytest.raises(TypeError, match="AC out reads 0 W with the AC output off"):
+        device.set_values(ac_output_status=0, ac_output_power=50)
+
+    assert after_alone == before
+    assert (dict(module.values), next_0421(device)[0]) == on
 
 
 def test_outlets_over_the_inlet_discharge_the_on_bus_pack() -> None:
@@ -5534,7 +5615,9 @@ def test_outlets_over_the_inlet_discharge_the_on_bus_pack() -> None:
     currents: list[int] = []
 
     for out in (1900, 4000):
-        device.set_values(ac_output_power=out, total_output_power=out)
+        device.set_values(
+            ac_output_status=1, ac_output_power=out, total_output_power=out
+        )
         clock.advance(3)
         device.negotiated_module.check_pushes()
         status, post = next_0421(device)[0], next_0490(device)
@@ -5569,7 +5652,7 @@ def test_ac_out_alone_moves_the_output_total_and_draws_the_pack() -> None:
         if name in start and name != "ac_output_power"
     )
 
-    device.set_values(ac_output_power=4000)
+    device.set_values(ac_output_status=1, ac_output_power=4000)
     clock.advance(3)
     device.negotiated_module.check_pushes()
     status, post = next_0421(device)[0], next_0490(device)
@@ -5600,7 +5683,7 @@ def test_ac_out_never_leaves_ac_in_over_the_ceiling(out: int) -> None:
     device = A1783(clock=ManualClock())
     device.set_values(**{**KASA_UNIT, **FULL_CHARGE_1200})
 
-    device.set_values(ac_output_power=out)
+    device.set_values(ac_output_status=1, ac_output_power=out)
     moved = next_0421(device)[0]["ac_input_power"]
     device.set_values(ac_input_power=moved)
 
@@ -5647,7 +5730,7 @@ def test_the_ac_charge_request_holds_to_its_floor(
     device = A1783(clock=ManualClock())
     device.set_values(**{**KASA_UNIT, **FULL_CHARGE_1200, SOURCE_2: source_2})
 
-    device.set_values(ac_output_power=out)
+    device.set_values(ac_output_status=1, ac_output_power=out)
 
     assert next_0421(device)[0]["ac_input_power"] == ac_in
 
@@ -5661,7 +5744,7 @@ def test_the_floor_s_charge_reaches_the_pack() -> None:
     for source_2 in (0, 1):
         device = A1783(clock=ManualClock())
         device.set_values(**{**KASA_UNIT, **FULL_CHARGE_1200, SOURCE_2: source_2})
-        device.set_values(ac_output_power=1750)
+        device.set_values(ac_output_status=1, ac_output_power=1750)
         currents.append(next_0490(device)["pack_current"])
 
     assert currents == [138, 112]
@@ -5675,7 +5758,7 @@ def test_the_floor_reads_50_w_with_no_pack_voltage() -> None:
     device = A1783(clock=ManualClock())
     device.set_values(**{**KASA_UNIT, **FULL_CHARGE_1200, "battery_voltage": 0})
 
-    device.set_values(ac_output_power=1770)
+    device.set_values(ac_output_status=1, ac_output_power=1770)
 
     assert next_0421(device)[0]["ac_input_power"] == 1830
 
@@ -5775,7 +5858,7 @@ def test_the_c1000_gen_2_takes_its_ratings(
     v1.1.2.6 any ``maxInputPower`` sets; on v1.2.1.6, the build's.
     """
     device = model(clock=ManualClock())
-    device.set_values(**{**FULL_CHARGE_1200, **unit})
+    device.set_values(**{**FULL_CHARGE_1200, "ac_output_status": 1, **unit})
 
     device.set_values(**change)
     status = next_0421(device)[0]
@@ -5889,7 +5972,7 @@ def test_the_c1000_gen_2_refuses_one_over_its_ratings(
     bypass, and 1200 W isn't one the build reports.
     """
     device = model(clock=ManualClock())
-    device.set_values(**{**FULL_CHARGE_1200, **unit})
+    device.set_values(**{**FULL_CHARGE_1200, "ac_output_status": 1, **unit})
     module = device.negotiated_module
     before = (dict(module.values), next_0421(device)[0])
 
@@ -5936,7 +6019,7 @@ def test_the_c1000_gen_2_charge_follows_its_ratings(
     1600 W rating, and a JP unit's 1500 W inlet holds AC in to 1533 W.
     """
     device = A1763(clock=ManualClock())
-    device.set_values(**{**FULL_CHARGE_1200, **unit})
+    device.set_values(**{**FULL_CHARGE_1200, "ac_output_status": 1, **unit})
 
     device.set_values(**change)
 
@@ -6099,6 +6182,7 @@ def test_a_request_change_moves_a_full_charge(
             **KASA_UNIT,
             "ac_input_disable_switch": 0,
             "ac_input_status": 1,
+            "ac_output_status": 1,
             "ac_recharge_power": 1200,
             "ac_input_power": charging,
         }
@@ -6132,6 +6216,7 @@ def test_ultrafast_skips_the_limit_for_the_recorded_band(
             **KASA_UNIT,
             "outage_alert_switch": False,
             "ac_recharge_power": limit,
+            "ac_output_status": 1,
             "ac_output_power": out,
             "super_fast_charge_status": 1,
         }

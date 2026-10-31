@@ -53,6 +53,8 @@ from .solix_c_gen2 import (
     OutputPort,
     Settings,
     Tou,
+    ac_output_off,
+    ac_output_switched,
 )
 
 
@@ -252,6 +254,18 @@ def _screen_shown(_values: Mapping[str, Value], state: Mapping[str, Value]) -> S
     )
 
 
+def _outputs(state: Mapping[str, Value]) -> int:
+    """Return what ``a6[0:2]`` sums: AC out and the USB total."""
+    return int(state[AC_OUT]) + int(state[USB_OUT])
+
+
+def _output_total_follows(
+    _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Set ``a6[0:2]`` to AC out and the USB total."""
+    return Step(values={OUTPUT_TOTAL: _outputs(state)})
+
+
 def _passes_through(state: Mapping[str, Value]) -> int:
     """Return ``f0[0]`` for ``state``: 1 with the AC output on and AC coming in."""
     return int(bool(state["ac_output_status"]) and int(state[AC_IN]) > 0)
@@ -268,6 +282,7 @@ class AS220Layout(TableLayout):
     """The S2000's own telemetry code; satisfies ``LayoutProtocol``."""
 
     COMMANDS = MappingProxyType({0x101: _set_ac_params, 0x103: _set_system_params})
+    SIDE_EFFECTS = MappingProxyType({0x101: ac_output_switched})
     FIELDS = MappingProxyType(
         {MSGTYPE_421: TELEMETRY_FIELDS, MSGTYPE_900: TELEMETRY_FIELDS}
     )
@@ -282,12 +297,15 @@ class AS220Layout(TableLayout):
 
         A rating is checked when the change sets a power it reads.
 
+        AC out reads 0 W with the AC output off.
+
         Raises:
-            TypeError: If a total can't be its parts' sum, or a power would pass
-                its rating; nothing is set then.
+            TypeError: If a total can't be its parts' sum, AC out is set over 0 W
+                with the AC output off, or a power would pass its rating;
+                nothing is set then.
 
         """
-        resolved = _tied_totals(values, state)
+        resolved = _tied_totals(ac_output_off(values, state), state)
         after = {**state, **resolved}
         ac_in, ac_out = int(after[AC_IN]), int(after[AC_OUT])
         limits = (
@@ -312,11 +330,14 @@ class AS220Layout(TableLayout):
     ) -> tuple[Timed, ...]:
         """Return the screen switch a ``4103 a2`` holds and ``f0[0]``'s follow.
 
-        A request a pending one repeats keeps the pending one's time.
+        A request a pending one repeats keeps the pending one's time. A
+        command's change of AC out moves the output total too.
         """
         events = []
         if before.get(SCREEN_REQUEST) != after.get(SCREEN_REQUEST):
             events.append(Timed(SCREEN_DELAY, SCREEN_REQUEST, _screen_shown))
+        if int(after[OUTPUT_TOTAL]) != _outputs(after):
+            events.append(Timed(0.0, OUTPUT_TOTAL, _output_total_follows))
         if int(after[PASSTHROUGH]) != _passes_through(after):
             events.append(Timed(0.0, PASSTHROUGH_EVENT, _pass_through_follows))
         return tuple(events)

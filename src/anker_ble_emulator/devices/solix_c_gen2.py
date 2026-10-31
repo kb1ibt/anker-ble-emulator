@@ -22,6 +22,7 @@ produce a wire-visible ``04``.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from enum import IntEnum
 from functools import partial
 from types import MappingProxyType
@@ -813,6 +814,42 @@ EXPANSION_GROUP = {"a4": ("sub_package_switch_status", ui(1))}
 def _set_ac_params(request: ParameterDict) -> dict[str, Value] | None:
     """Return the AC group's changed fields; any subset of its tags may be present."""
     return decode_request(request, AC_GROUP)
+
+
+#: AC output power reads 0 unless AC output is on (a1783-telemetry.md ``a7``
+#: [1:3], ``tlv_a7_AcData``).
+AC_OUTPUT_SWITCH = "ac_output_status"
+
+
+def ac_output_switched(
+    request: ParameterDict,
+    state: Mapping[str, Value],  # noqa: ARG001  # the switch alone decides
+) -> dict[str, Value]:
+    """Return AC out at 0 W where a ``4101 a2`` switches the AC output off."""
+    if "a2" in request and decode_field(request, "a2", ui(1)) == 0:
+        return {AC_OUT: 0}
+    return {}
+
+
+def ac_output_off(
+    values: Mapping[str, Value], state: Mapping[str, Value]
+) -> dict[str, Value]:
+    """Return ``values`` with AC out at 0 W where they switch the AC output off.
+
+    Raises:
+        TypeError: If ``values`` set AC out over 0 W with the AC output off.
+
+    """
+    after = {**state, **values}
+    if after[AC_OUTPUT_SWITCH]:
+        return dict(values)
+    power = int(values.get(AC_OUT, 0))
+    if power > 0:
+        msg = f"AC out reads 0 W with the AC output off, not {power} W"
+        raise TypeError(msg)
+    if AC_OUTPUT_SWITCH in values:
+        return {**values, AC_OUT: 0}
+    return dict(values)
 
 
 def _set_car_charger_params(request: ParameterDict) -> dict[str, Value] | None:
@@ -2623,8 +2660,27 @@ def _timer_tick(
         tick = Timed(OUTPUT_TIMER_TICK, timer, partial(_timer_tick, timer))
         return Step(values={timer: left}, then=(tick,))
     off: dict[str, Value] = {timer: 0, output: 0}
-    edge = _socket_edge({**state, **off}, frozenset()) if output == CAR_SOCKET else []
+    if output == AC_OUTPUT_SWITCH:
+        step = _flow_step({**off, **_ac_out_cleared(state)}, state)
+        return replace(step, frames=(_event_403(code),))
+    edge = _socket_edge({**state, **off}, frozenset())
     return Step(values=off, frames=(_event_403(code),), then=tuple(edge))
+
+
+def _ac_out_cleared(state: Mapping[str, Value]) -> dict[str, Value]:
+    """Return AC out at 0 W, and the output total and full AC charge it moves.
+
+    The moves a change of AC out makes in ``timed`` (``_output_total_moved``,
+    ``_request_changed``), for a step that switches the AC output off.
+    """
+    out = int(state[AC_OUT])
+    cleared: dict[str, Value] = {
+        AC_OUT: 0,
+        PORT_OUTPUT: max(0, int(state[PORT_OUTPUT]) - out),
+    }
+    if int(state["ac_input_power"]) == _ac_charge_power(state):
+        cleared["ac_input_power"] = _ac_charge_power({**state, **cleared})
+    return cleared
 
 
 def _soc_floors_crossed(
@@ -3585,7 +3641,12 @@ class CGen2Layout(TableLayout):
 
     COMMANDS = MappingProxyType(LINE_COMMANDS)
     SIDE_EFFECTS = MappingProxyType(
-        {0x05E: _backup_plan, 0x090: _tou_periods, 0x104: _expansion_switch}
+        {
+            0x05E: _backup_plan,
+            0x090: _tou_periods,
+            0x101: ac_output_switched,
+            0x104: _expansion_switch,
+        }
     )
     READ_REPLIES = MappingProxyType({0x065: _log_size, 0x066: _log_chunk})
     FIELDS = _fields(SINGLE_FIELDS)
@@ -3712,17 +3773,20 @@ class CGen2Layout(TableLayout):
     ) -> dict[str, Value]:
         """Return what ``values`` set on ``state``: ``.23.4`` fills its inputs.
 
-        AC in and its charge hold to their ratings plus the overshoot band, AC
-        out to its peak rating, the DC input and each output port to its
-        port's rating, and ``a6[0:2]`` set by name to the port outputs' sum.
+        AC out reads 0 W with the AC output off. AC in and its charge hold to
+        their ratings plus the overshoot band, AC out to its peak rating, the
+        DC input and each output port to its port's rating, and ``a6[0:2]``
+        set by name to the port outputs' sum.
 
         Raises:
-            TypeError: If an input would be negative, the output total off the
-                port outputs' sum, ``maxInputPower`` one the unit doesn't
-                report, AC in or its charge over its ceiling, AC out over its
-                peak, or the DC input or an output port over its rating.
+            TypeError: If an input would be negative, AC out over 0 W with the
+                AC output off, the output total off the port outputs' sum,
+                ``maxInputPower`` one the unit doesn't report, AC in or its
+                charge over its ceiling, AC out over its peak, or the DC input
+                or an output port over its rating.
 
         """
+        values = ac_output_off(values, state)
         resolved = dict(values)
         if INPUT_TOTAL in values:
             resolved |= _split_total(values, {**state, **values})

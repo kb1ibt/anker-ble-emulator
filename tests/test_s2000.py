@@ -456,6 +456,50 @@ def test_as220_ac_pass_through_follows_the_ac_output_and_ac_in() -> None:
     assert passing() == 1
 
 
+def test_as220_ac_output_off_reads_no_ac_out_and_moves_the_total() -> None:
+    """``a7[1:3]`` reads 0 W unless AC output is on; switched back on, it stays 0."""
+    device = AS220()
+    client = prime_client(device, TOKEN)
+    layout = device.layout
+    assert layout is not None
+    device.set_values(ac_output_power=200, pd1_output_power=10)
+
+    device.set_values(ac_output_status=0)
+    set_off = next_0421(device)[0]
+    command(device, client, 0x101, [(0xA2, b"\x01\x01")])
+    back_on = next_0421(device)[0]
+    device.set_values(ac_output_power=150)
+    replies = command(device, client, 0x101, [(0xA2, b"\x01\x00")])
+    switched_off = layout.read(0x421, bytes.fromhex(replies[1][1]))
+
+    names = (
+        "ac_output_status",
+        "ac_output_power",
+        "total_output_power",
+        "ac_pass_through_status",
+    )
+    assert tuple(set_off[name] for name in names) == (0, 0, 10, 0)
+    assert tuple(back_on[name] for name in names) == (1, 0, 10, 1)
+    assert tuple(switched_off[name] for name in names) == (0, 0, 10, 0)
+
+
+def test_as220_refuses_ac_out_with_the_ac_output_off() -> None:
+    device = AS220()
+    module = device.negotiated_module
+    device.set_values(ac_output_status=0)
+    before = dict(module.values)
+
+    with pytest.raises(TypeError, match="AC out reads 0 W with the AC output off"):
+        device.set_values(ac_output_power=50)
+    after_refusal = dict(module.values)
+    device.set_values(ac_output_power=0)
+    with pytest.raises(TypeError, match="AC out reads 0 W with the AC output off"):
+        AS220().set_values(ac_output_status=0, ac_output_power=50)
+
+    assert after_refusal == before
+    assert module.values["ac_output_power"] == 0
+
+
 def test_as220_a4_carries_the_smart_ac_output_timeout_beside_the_country_code() -> None:
     """``a4[26:28]`` is the app's ``countryCode``; ``a4[28:30]`` the timeout (min)."""
     recorded = Parameters.parse(bytes.fromhex(data_resource("as220.json")["421"]))
