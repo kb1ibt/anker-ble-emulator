@@ -11,7 +11,8 @@ handler names (``setACPortTimedTask``, ``setACPortCountdownTask``,
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -26,7 +27,7 @@ from anker_ble_emulator.layouts import (
     TYPE_UI,
     ui,
 )
-from anker_ble_emulator.mcu import Burst
+from anker_ble_emulator.mcu import COMMAND, Burst
 from anker_ble_emulator.messages import BLE_REPLY_ROUTE
 from anker_ble_emulator.parameters import (
     FieldGroup,
@@ -154,8 +155,6 @@ CountdownRecord = Struct(
     "countdown_task_seconds" / ui(4),
     "countdown_task_remaining_seconds" / ui(4),
 )
-#: An armed countdown's remaining time counts down once a second.
-COUNTDOWN_TICK = 1.0
 #: ``0307 a3`` from the A91B2: the remaining time first (``0x0800b686``).
 CountdownRecordRemainingFirst = Struct(
     "countdown_task_switch" / Flag,
@@ -338,41 +337,233 @@ def ac_port_timed_task(port_by_select: Mapping[int, str]) -> Validator:
     return set_ac_port_timed_task
 
 
-def _half(state: Mapping[str, Value], port: str, half: str) -> dict[str, Value]:
-    """Return one timed-task half of a port, by ``HALF_FIELDS`` name."""
-    return {field: state[f"{port}_timed_task_{half}_{field}"] for field in HALF_FIELDS}
+def schedule_slot(state: Mapping[str, Value], port: str, half: str) -> dict[str, Value]:
+    """Return a port's schedule slot (timed-task half), by ``HALF_FIELDS`` name."""
+    return {name: state[f"{port}_timed_task_{half}_{name}"] for name in HALF_FIELDS}
 
 
-def _days_overlap(days: int, other: int) -> bool:
-    """Whether two weekday masks share a day; two once (0) halves count as one day."""
-    return bool(days & other) or days == other == 0
+def once_date_name(port: str, half: str) -> str:
+    """Return the hidden name of a slot's date, off the wire.
+
+    As year * 10000 + month * 100 + day; unset, the zeroed 0/0/0 both MCUs'
+    ``settings_defaults_init?`` writes (doc "Defaults and collisions", A91B2
+    ``4208`` row).
+    """
+    return f"_{port}_timed_task_{half}_date"
 
 
-def timed_task_conflict(port_by_select: Mapping[int, str]) -> SideEffect:
-    """Return ``4208``'s conflict-clear for a device's ``a2`` port numbering.
+def latch_name(port: str, half: str) -> str:
+    """Return the hidden name of a repeating slot's fired-this-match latch."""
+    return f"_{port}_timed_task_{half}_latched"
 
-    A written half that collides with the port's other half (both enabled, the
-    unset ``ff`` included, at the same time on a shared day) disables the other.
+
+MINUTE = 60
+#: The weekday bit both MCUs give the zeroed date 0/0/0: Monday (doc "Defaults
+#: and collisions"; the A91B2's ``weekday_bit_from_date?``).
+ZEROED_DATE_WEEKDAY = 0x01
+
+
+def rtc_date(rtc: int) -> int:
+    """Return the RTC's local date as year * 10000 + month * 100 + day."""
+    when = datetime.fromtimestamp(rtc, tz=UTC)
+    return when.year * 10000 + when.month * 100 + when.day
+
+
+def date_rtc(date: int, minute: int) -> int:
+    """Return the RTC second from which a stored date and minute no longer lie ahead.
+
+    A day past its month's end (a plain day + 1) never equals a real date, so
+    it reads as passed from the 1st of the next month; 0/0/0 reads passed.
+    """
+    year, rest = divmod(date, 10000)
+    month, day = divmod(rest, 100)
+    if not month:
+        return 0
+    at = int(datetime(year, month, 1, tzinfo=UTC).timestamp()) + (day - 1) * DAY
+    if datetime.fromtimestamp(at, tz=UTC).month != month:
+        return at
+    return at + minute * MINUTE
+
+
+def slot_date(rtc: int, hour: int, minute: int) -> int:
+    """Return a once slot's date: today if its hh:mm is strictly later, else tomorrow.
+
+    Both MCUs' slot set (doc "Slot record", A91B2 ``4208`` row): an equal
+    minute rolls to tomorrow; seconds are never read; the carry is a real,
+    leap-aware one.
+    """
+    day = rtc // DAY
+    if day * DAY + (hour * 60 + minute) * MINUTE <= rtc - rtc % MINUTE:
+        day += 1
+    return rtc_date(day * DAY)
+
+
+def slot_days(slot: Mapping[str, Value], date: int) -> int:
+    """Return a slot's weekday bits: its mask, or a once slot's date's weekday bit."""
+    days = int(slot["weekdays"]) & EVERY_DAY
+    if days:
+        return days
+    if not date:
+        return ZEROED_DATE_WEEKDAY
+    year, rest = divmod(date, 10000)
+    month, day = divmod(rest, 100)
+    return 1 << datetime(year, month, day, tzinfo=UTC).weekday()
+
+
+def next_minute(rtc: int, at: int, days: int) -> int:
+    """Return the RTC start of the next minute ``at`` (from this one) on ``days``."""
+    day = rtc // DAY
+    return next(
+        (day + ahead) * DAY + at * MINUTE
+        for ahead in range(WEEK + 1)
+        if (day + ahead) * DAY + at * MINUTE >= rtc - rtc % MINUTE
+        and days >> (day + ahead + RTC_DAY0_WEEKDAY) % WEEK & 1
+    )
+
+
+def slot_written(port_by_select: Mapping[int, str]) -> SideEffect:
+    """Return ``4208``'s slot set: a once slot's date, the colliding other cleared.
+
+    Both MCUs (doc "Defaults and collisions", A91B2 ``0308`` row): every
+    enabled once write (weekdays 0) dates its slot again, an ``en 0`` write
+    leaving the date. The other slot collides if both are enabled (the unset
+    ``ff`` included) at the same hh:mm and both are once slots, or on a shared
+    day, a once slot's day being its date's weekday; the written one wins.
     """
 
-    def clear_colliding_half(
+    def slot_set(
         request: ParameterDict, state: Mapping[str, Value]
     ) -> dict[str, Value]:
         port = port_by_select[decode_field(request, "a2", ui(1))]
         slot = decode_field(request, "a3", ui(1))
         written = decode_field(request, "a4", ScheduleHalf)
-        other = _half(state, port, HALF_BY_SLOT[1 - slot])
+        half, other_half = HALF_BY_SLOT[slot], HALF_BY_SLOT[1 - slot]
+        changes: dict[str, Value] = {}
+        date = int(state.get(once_date_name(port, half), 0))
+        once = not int(written["weekdays"]) & EVERY_DAY
+        if once and written["switch"]:
+            date = slot_date(int(state[RTC]), written["hour"], written["minute"])
+            changes[once_date_name(port, half)] = date
+        other = schedule_slot(state, port, other_half)
+        other_date = int(state.get(once_date_name(port, other_half), 0))
+        other_once = not int(other["weekdays"]) & EVERY_DAY
         collides = (
             written["switch"]
             and other["switch"]
             and (written["hour"], written["minute"]) == (other["hour"], other["minute"])
-            and _days_overlap(int(written["weekdays"]), int(other["weekdays"]))
+            and (
+                (once and other_once)
+                or slot_days(written, date) & slot_days(other, other_date)
+            )
         )
-        if not collides:
-            return {}
-        return {f"{port}_timed_task_{HALF_BY_SLOT[1 - slot]}_switch": 0}
+        if collides:
+            changes[f"{port}_timed_task_{other_half}_switch"] = 0
+        return changes
 
-    return clear_colliding_half
+    return slot_set
+
+
+def once_compare(state: Mapping[str, Value], port: str, half: str) -> int:
+    """Return now against a once slot's date and minute: -1 before, 0 at, 1 past.
+
+    ``date_cmp?``, then ``time_cmp?``, on both MCUs (doc "Schedule timing",
+    A91B2 "Schedule firing").
+    """
+    rtc = int(state[RTC])
+    slot = schedule_slot(state, port, half)
+    now = (rtc_date(rtc), rtc % DAY // MINUTE)
+    bound = (
+        int(state.get(once_date_name(port, half), 0)),
+        int(slot["hour"]) * 60 + int(slot["minute"]),
+    )
+    return (now > bound) - (now < bound)
+
+
+def slot_disabled_push(
+    select: int, half: str, slot: Mapping[str, Value], state: Mapping[str, Value]
+) -> tuple[int, bytes]:
+    """Return ``0308``: a slot the timer run just disabled, its record en 00."""
+    fields = {
+        "a2": container("a2", TYPE_UI, ui(1).build(select)),
+        "a3": container("a3", TYPE_UI, ui(1).build(SLOT_BY_HALF[half])),
+        "a4": container("a4", TYPE_BIN, ScheduleHalf.build({**slot, "switch": 0})),
+    }
+    return timed_push(0x308, fields, state)
+
+
+def date_once_slots(
+    port_by_select: Mapping[int, str],
+    before: Mapping[str, Value],
+    after: Mapping[str, Value],
+    plan: Callable[[Mapping[str, Value]], tuple[Timed, ...]],
+) -> tuple[Timed, ...]:
+    """Return the dating of each enabled once slot (weekdays 0) a change wrote.
+
+    A ``4208`` dates its slot itself (``slot_written``), so this covers
+    ``set_values`` only; ``plan`` times the next timer run by the new date.
+    """
+    if COMMAND in after:
+        return ()
+    events = []
+    for port in port_by_select.values():
+        for half in HALF_BY_SLOT.values():
+            slot = schedule_slot(after, port, half)
+            once = slot["switch"] == 1 and not int(slot["weekdays"]) & EVERY_DAY
+            if once and slot != schedule_slot(before, port, half):
+                dated = partial(_once_dated, port, half, plan)
+                events.append(Timed(0, once_date_name(port, half), dated))
+    return tuple(events)
+
+
+def _once_dated(
+    port: str,
+    half: str,
+    plan: Callable[[Mapping[str, Value]], tuple[Timed, ...]],
+    values: Mapping[str, Value],
+    state: Mapping[str, Value],
+) -> Step:
+    """Date a once slot by the RTC, as ``slot_date`` does; plan by it."""
+    slot = schedule_slot(state, port, half)
+    date = slot_date(int(state[RTC]), int(slot["hour"]), int(slot["minute"]))
+    return hidden_set(once_date_name(port, half), date, plan, values, state)
+
+
+def hidden_set(
+    name: str,
+    value: Value,
+    plan: Callable[[Mapping[str, Value]], tuple[Timed, ...]],
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Set a hidden value a device's timer run reads, and ``plan`` the run by it."""
+    return Step(values={name: value}, then=plan({**state, name: value}))
+
+
+def countdown_shown_name(port: str) -> str:
+    """Return the hidden name of the countdown switch a port's last ``0307`` showed."""
+    return f"_{port}_countdown_shown"
+
+
+def countdown_shown_events(
+    port_by_select: Mapping[int, str],
+    before: Mapping[str, Value],
+    after: Mapping[str, Value],
+    plan: Callable[[Mapping[str, Value]], tuple[Timed, ...]],
+) -> tuple[Timed, ...]:
+    """Return the shown switch of each countdown a change armed or disarmed first.
+
+    Both MCUs' countdown tick pushes ``0307`` on the edge between the switch
+    and the one it last showed (doc ``0307`` rows); not shown yet, that is the
+    switch before the change.
+    """
+    events = []
+    for port in port_by_select.values():
+        switch = f"{port}_countdown_task_switch"
+        name = countdown_shown_name(port)
+        if name not in after and bool(before[switch]) != bool(after[switch]):
+            shown = partial(hidden_set, name, bool(before[switch]), plan)
+            events.append(Timed(0, name, shown))
+    return tuple(events)
 
 
 def timed_task_push(port_by_select: Mapping[int, str]) -> PushBuilder:
@@ -394,7 +585,7 @@ def timed_task_push(port_by_select: Mapping[int, str]) -> PushBuilder:
                 "a2": request["a2"],
                 "a3": container("a3", TYPE_UI, ui(1).build(other_slot)),
                 "a4": container(
-                    "a4", TYPE_BIN, ScheduleHalf.build(_half(after, port, half))
+                    "a4", TYPE_BIN, ScheduleHalf.build(schedule_slot(after, port, half))
                 ),
             }
         )
@@ -427,158 +618,6 @@ def ac_port_countdown_task(
     return set_ac_port_countdown_task
 
 
-def countdown_timers(  # noqa: PLR0913  # the change and the device's countdown rules
-    port_by_select: Mapping[int, str],
-    before: Mapping[str, Value],
-    after: Mapping[str, Value],
-    *,
-    disarm_clears: Collection[str],
-    remaining_first: bool,
-    switch_watch: SwitchWatch | None = None,
-) -> tuple[Timed, ...]:
-    """Return the countdown events a change starts, one ``<port>_countdown`` each.
-
-    A port armed, re-armed or given a new remaining time counts down from it,
-    once a second; a disarmed one's pending expiry is dropped. The remaining
-    time is ticked live, so every frame reads it as it stands. With
-    ``switch_watch`` an expiry's ``0302`` waits for its pass; else it goes at once.
-    """
-    events = []
-    for select, port in port_by_select.items():
-        switch = f"{port}_countdown_task_switch"
-        remaining = f"{port}_countdown_task_remaining_seconds"
-        key = f"{port}_countdown"
-        if after[switch] and (
-            not before[switch] or before[remaining] != after[remaining]
-        ):
-            clears = port in disarm_clears
-            tick = _Countdown(port, select, clears, remaining_first, switch_watch)
-            events.append(Timed(COUNTDOWN_TICK, key, tick))
-        elif before[switch] and not after[switch]:
-            events.append(Timed(0, key, drop_queued))
-    return tuple(events)
-
-
-def schedule_timers(
-    port_by_select: Mapping[int, str],
-    before: Mapping[str, Value],
-    after: Mapping[str, Value],
-    *,
-    switch_watch: SwitchWatch | None = None,
-) -> tuple[Timed, ...]:
-    """Return the timed-task events a change starts, one ``<port>_timed_task_<half>``.
-
-    An enabled half (switch 1; the unset ``ff`` never fires) is timed to its
-    next hh:mm on one of its weekdays by the RTC, again when a clock set moves
-    the RTC; one disabled or changed drops what was queued. With
-    ``switch_watch`` a firing's ``0302`` waits for its pass; else it goes at once.
-    """
-    clock_set = before[RTC] != after[RTC]
-    events = []
-    for select, port in port_by_select.items():
-        for half in HALF_BY_SLOT.values():
-            was, now = _half(before, port, half), _half(after, port, half)
-            key = f"{port}_timed_task_{half}"
-            if now["switch"] == 1 and (was != now or clock_set):
-                delay, weekday = _next_firing(int(after[RTC]), now)
-                weekdays = int(now["weekdays"])
-                task = _TimedTask(port, select, half, weekdays, weekday, switch_watch)
-                events.append(Timed(delay, key, task))
-            elif was != now:
-                events.append(Timed(0, key, drop_queued))
-    return tuple(events)
-
-
-def _next_firing(rtc: int, half: Mapping[str, Value]) -> tuple[int, int]:
-    """Return the seconds to a half's next hh:mm on its weekdays, and that weekday.
-
-    A once half (weekdays 0) fires at its next hh:mm: the firmware keeps its
-    date off the wire, which the emulator doesn't.
-    """
-    day, now = divmod(rtc, DAY)
-    today = (day + RTC_DAY0_WEEKDAY) % WEEK
-    days = int(half["weekdays"]) & EVERY_DAY or EVERY_DAY
-    at = int(half["hour"]) * 3600 + int(half["minute"]) * 60
-    return next(
-        (ahead * DAY + at - now, (today + ahead) % WEEK)
-        for ahead in range(WEEK + 1)
-        if ahead * DAY + at > now and days >> (today + ahead) % WEEK & 1
-    )
-
-
-@dataclass(frozen=True)
-class _TimedTask:
-    """A timed-task half firing: its port switched on (start) or off (end).
-
-    Firing is firmware-only (the per-minute run, ``schedule_tick_push_0308``):
-    ``0302`` reports the switch if it changed (the A2345's switch watcher sends
-    on a change; assumed the same for the A91B2). A once half is then disabled
-    and reported in ``0308`` with en 00; a repeating one fires again on its
-    next weekday.
-
-    Attributes:
-        port: The port's name.
-        select: Its ``a2`` port number.
-        half: ``start`` or ``end``.
-        weekdays: Its weekday mask, bit 0 Monday; 0 for once.
-        weekday: The weekday it fires on, 0 Monday.
-
-    """
-
-    port: str
-    select: int
-    half: str
-    weekdays: int
-    weekday: int
-    switch_watch: SwitchWatch | None = None
-
-    def __call__(
-        self,
-        values: Mapping[str, Value],  # noqa: ARG002  # reads the whole state
-        state: Mapping[str, Value],
-    ) -> Step:
-        """Return the firing's step: the switch, its pushes, the next firing."""
-        on = self.half == "start"
-        relay = f"{self.port}_relay_switch"
-        port = container("a2", TYPE_UI, ui(1).build(self.select))
-        frames: list[tuple[int, bytes]] = []
-        reports: tuple[Timed, ...] = ()
-        source: dict[str, Value] = {}
-        if bool(state[relay]) != on:
-            frames, reports, source = _switch_reported(
-                self.select, state, on=on, watch=self.switch_watch
-            )
-        if not self.weekdays & EVERY_DAY:
-            enable = f"{self.port}_timed_task_{self.half}_switch"
-            record = _half(state, self.port, self.half) | {"switch": 0}
-            fields = {
-                "a2": port,
-                "a3": container("a3", TYPE_UI, ui(1).build(SLOT_BY_HALF[self.half])),
-                "a4": container("a4", TYPE_BIN, ScheduleHalf.build(record)),
-            }
-            frames.append(timed_push(0x308, fields, state))
-            return Step(
-                values={relay: on, enable: 0, **source},
-                frames=tuple(frames),
-                then=reports,
-            )
-        ahead = next(
-            ahead
-            for ahead in range(1, WEEK + 1)
-            if self.weekdays >> (self.weekday + ahead) % WEEK & 1
-        )
-        then = replace(self, weekday=(self.weekday + ahead) % WEEK)
-        key = f"{self.port}_timed_task_{self.half}"
-        return Step(
-            values={relay: on, **source},
-            frames=tuple(frames),
-            then=(Timed(ahead * DAY, key, then), *reports),
-        )
-
-
-#: The A2345's switch watcher (``port_switch_tick``, on ``tick_100ms_group``)
-#: reports switch changes after its ~5-tick debounce (doc push table ``0302``).
-SWITCH_REPORT_DEBOUNCE = 0.5
 #: ``0302``'s one source byte (``DAT_2000a7ce``) for all ports, in no frame. An
 #: app ``4207`` writes it 1, a firmware switch change 2.
 SWITCH_SOURCE = "_switch_report_source"
@@ -586,40 +625,98 @@ SOURCE_APP = 1
 SOURCE_UNIT = 2
 
 
-#: ``tick_100ms_group``: the grid ``port_switch_tick`` runs on, and its phase on
-#: the device clock, a hidden per-run input (0-0.1 s, default 0).
-SWITCH_TICK = 0.1
-SWITCH_TICK_PHASE = "switch_tick_phase"
+#: The A2345's SysTick groups (doc "Scheduler groups") and the A91B2's TIM1
+#: tasks (its "Timer timing"): each first fires one period after boot and
+#: every period after, nothing at boot itself. Boot's instant on the device
+#: clock is a hidden per-run input (0-3 s, default 0), one name for both.
+SYSTICK_PHASE = "systick_phase"
+SYSTICK_CYCLE = 3.0
+#: ``tick_100ms_group``: the grid the screen reports and switch watcher run on.
+#: ``screen_report_service_tick`` skips while ``FUN_0001c758()`` reads
+#: nonzero, unexplained in the doc and not modeled.
+TICK_100MS = 0.1
+#: A mark writes count 0 and each tick counts 1 up; the 5th sends (doc
+#: "Report timing").
+REPORT_TICKS = 5
+#: ``port_switch_tick`` runs after ``screen_report_service_tick`` in a tick.
+AFTER_SCREEN_REPORTS = 1e-6
 #: The float slack a tick instant is matched with.
 TICK_SLACK = 1e-9
 
 
+def on_grid(
+    state: Mapping[str, Value], period: float, at: float, *, at_or_after: bool
+) -> float:
+    """Return a SysTick group's first instant after ``at``, or at it too."""
+    phase = float(state.get(SYSTICK_PHASE, 0.0))
+    ticks = (at - phase) / period
+    if at_or_after:
+        count = math.ceil(ticks - TICK_SLACK)
+    else:
+        count = math.floor(ticks + TICK_SLACK) + 1
+    return phase + max(count, 1) * period
+
+
+def grid_delay(
+    state: Mapping[str, Value], period: float, offset: float, at: float
+) -> float:
+    """Return the delay to a task's first run at or after ``at``, ``offset`` into it.
+
+    A run already made at this instant (``offset`` past its tick) doesn't count.
+    """
+    now = float(state[CLOCK])
+    following = on_grid(state, period, now - offset, at_or_after=False)
+    first = on_grid(state, period, at - offset, at_or_after=True)
+    return max(following, first) + offset - now
+
+
+def check_systick_phase(values: Mapping[str, Value]) -> None:
+    """Refuse a ``systick_phase`` outside 0-3 s.
+
+    Raises:
+        TypeError: If it is set outside that or not a number.
+
+    """
+    phase = values.get(SYSTICK_PHASE)
+    if phase is not None and (
+        isinstance(phase, bytes) or not 0 <= phase < SYSTICK_CYCLE
+    ):
+        msg = f"{SYSTICK_PHASE} is 0 to {SYSTICK_CYCLE} s"
+        raise TypeError(msg)
+
+
+def report_delay(state: Mapping[str, Value]) -> float:
+    """Return the seconds from now to the 5th ``tick_100ms_group`` tick of a count.
+
+    A change counts from the next tick: one from a command or the unit falls
+    between ticks, one from the 150 ms pass after that tick's 100 ms group.
+    """
+    now = float(state[CLOCK])
+    first = on_grid(state, TICK_100MS, now, at_or_after=False)
+    return first + (REPORT_TICKS - 1) * TICK_100MS - now
+
+
 @dataclass(frozen=True)
 class SwitchWatch:
-    """A switch watcher: each port's ``0302`` a debounce after its own last change.
+    """A switch watcher: each port's ``0302`` on the 5th tick after its last change.
 
     ``port_switch_change_mark?`` marks the port and zeroes its count, so a
-    change restarts only that port's; the port is due on the first 100 ms
-    tick at or after its mark plus the debounce. Each tick's pass walks the
-    due ports in order: a source byte of 1 drops one and resets the byte to
-    0; 0 or 2 sends it, with the switch as it then stands (doc "``0302``
-    timing").
+    change restarts only that port's (doc "``0302`` timing", "Report timing").
+    Each tick's pass, after the screen reports', walks the due ports in order:
+    a source byte of 1 drops one and resets the byte to 0; 0 or 2 sends it,
+    with the switch as it then stands.
 
     Attributes:
         ports: The ports, as (select, name), in select order.
-        debounce: The seconds from a port's last change to its send.
 
     """
 
     ports: tuple[tuple[int, str], ...]
-    debounce: float = SWITCH_REPORT_DEBOUNCE
 
     def mark(self, select: int, state: Mapping[str, Value]) -> dict[str, Value]:
         """Return a change of port ``select`` marked: the tick it's due on."""
-        at = float(state[CLOCK]) + self.debounce
-        phase = float(state.get(SWITCH_TICK_PHASE, 0.0))
-        ticks = math.ceil((at - phase) / SWITCH_TICK - TICK_SLACK)
-        return {self._due(select): phase + ticks * SWITCH_TICK}
+        delay = report_delay(state) + AFTER_SCREEN_REPORTS
+        return {self._due(select): float(state[CLOCK]) + delay}
 
     def marked(
         self, before: Mapping[str, Value], after: Mapping[str, Value]
@@ -668,119 +765,9 @@ class SwitchWatch:
         return f"_{dict(self.ports)[select]}_switch_due"
 
 
-def _switch_reported(
-    select: int,
-    state: Mapping[str, Value],
-    *,
-    on: bool,
-    watch: SwitchWatch | None,
-) -> tuple[list[tuple[int, bytes]], tuple[Timed, ...], dict[str, Value]]:
-    """Return a firmware switch change's ``0302``: at once, or marked for its send.
-
-    A marked one writes the source byte 2.
-    """
-    if watch is None:
-        a2 = container("a2", TYPE_UI, ui(1).build(select))
-        a3 = container("a3", TYPE_UI, ui(1).build(on))
-        return [timed_push(0x302, {"a2": a2, "a3": a3}, state)], (), {}
-    changes = {**watch.mark(select, state), SWITCH_SOURCE: SOURCE_UNIT}
-    return [], (watch.report(select, {**state, **changes}),), changes
-
-
 def drop_queued(
     values: Mapping[str, Value],  # noqa: ARG001  # replaces a pending event
     state: Mapping[str, Value],  # noqa: ARG001
 ) -> Step:
     """Do nothing: this event only replaces the one queued under its key."""
     return Step()
-
-
-@dataclass(frozen=True)
-class _Countdown:
-    """One second of a port's countdown: the remaining time down one, or expiry.
-
-    The expiry is firmware-only (``usbc_countdown_tick`` / ``ac_countdown_tick``):
-    the port switches off, ``0302`` reports it if it was on (the A2345's switch
-    watcher sends on a change; assumed the same for the A91B2), then ``0307``
-    disarms, with the remaining time a ``4209`` disarm would leave.
-
-    Attributes:
-        port: The port's name.
-        select: Its ``a2`` port number.
-        clears: Expiry zeroes the remaining time; otherwise it is the seconds set.
-        remaining_first: ``0307`` carries the remaining time before the seconds.
-
-    """
-
-    port: str
-    select: int
-    clears: bool
-    remaining_first: bool
-    switch_watch: SwitchWatch | None = None
-
-    def __call__(
-        self,
-        values: Mapping[str, Value],  # noqa: ARG002  # reads the whole state
-        state: Mapping[str, Value],
-    ) -> Step:
-        """Return this second's step: the next tick, or the expiry."""
-        remaining = f"{self.port}_countdown_task_remaining_seconds"
-        left = int(state[remaining]) - 1
-        if left > 0:
-            key = f"{self.port}_countdown"
-            return Step(
-                values={remaining: left}, then=(Timed(COUNTDOWN_TICK, key, self),)
-            )
-        seconds = state[f"{self.port}_countdown_task_seconds"]
-        record = {
-            "countdown_task_switch": False,
-            "countdown_task_seconds": seconds,
-            "countdown_task_remaining_seconds": 0 if self.clears else seconds,
-        }
-        relay = f"{self.port}_relay_switch"
-        port = container("a2", TYPE_UI, ui(1).build(self.select))
-        frames: list[tuple[int, bytes]] = []
-        reports: tuple[Timed, ...] = ()
-        source: dict[str, Value] = {}
-        if state[relay]:
-            frames, reports, source = _switch_reported(
-                self.select, state, on=False, watch=self.switch_watch
-            )
-        codec = (
-            CountdownRecordRemainingFirst if self.remaining_first else CountdownRecord
-        )
-        a3 = container("a3", TYPE_BIN, codec.build(record))
-        frames.append(timed_push(0x307, {"a2": port, "a3": a3}, state))
-        changes = {f"{self.port}_{n}": v for n, v in record.items()}
-        return Step(
-            values={relay: False, **changes, **source},
-            frames=tuple(frames),
-            then=reports,
-        )
-
-
-def countdown_push(
-    port_by_select: Mapping[int, str], *, remaining_first: bool
-) -> PushBuilder:
-    """Return the ``0307`` builder: a port's countdown record when it arms or disarms.
-
-    Re-arming an armed countdown draws none. With ``remaining_first`` the
-    record carries the remaining time before the seconds.
-    """
-    codec = CountdownRecordRemainingFirst if remaining_first else CountdownRecord
-
-    def countdown_edge(
-        request: ParameterDict,
-        before: Mapping[str, Value],
-        after: Mapping[str, Value],
-    ) -> ParameterDict | None:
-        port = port_by_select[decode_field(request, "a2", ui(1))]
-        switch = f"{port}_countdown_task_switch"
-        if bool(before[switch]) == bool(after[switch]):
-            return None
-        record = {name: after[f"{port}_{name}"] for name in COUNTDOWN_FIELDS}
-        return ParameterDict(
-            {"a2": request["a2"], "a3": container("a3", TYPE_BIN, codec.build(record))}
-        )
-
-    return countdown_edge

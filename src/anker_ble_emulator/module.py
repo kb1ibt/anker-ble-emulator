@@ -42,7 +42,7 @@ from .frame import (
     make_frame,
     reply_frame,
 )
-from .layouts import CLOCK, EPOCH, RTC
+from .layouts import CLOCK, EPOCH, RTC, RTC_SECOND_AT
 from .mcu import CLOUD, COMMAND, GIVEN, LINK, UNIT_EVENT, given, mcu_frame
 from .messages import (
     AUTH_PENDING_REPLY,
@@ -553,11 +553,13 @@ class Module:
 
         """
         now = self.clock.now() if at is None else at
+        set_at = self._clock_set[0]
         return {
             **self.mcu.state(self.values),
             RTC: self._rtc_at(now),
             EPOCH: self._epoch_at(now),
             CLOCK: now,
+            RTC_SECOND_AT: set_at + int(now - set_at),
             CLOUD: int(self.cloud),
             LINK: int(self.authorized),
         }
@@ -981,18 +983,19 @@ class Module:
         self.schedule(Timed(TZ_FIRST, "tz_timer", partial(self._tz_tick, tz)))
 
     def _tz_tick(
-        self, tz: PosixTz, _values: Mapping[str, Value], _state: Mapping[str, Value]
+        self, tz: PosixTz, _values: Mapping[str, Value], state: Mapping[str, Value]
     ) -> Step:
-        """Send the MCU ``tz``'s offset now, then re-arm.
+        """Send the MCU ``tz``'s offset at the tick's instant, then re-arm.
 
         Every 30 min; 300 s within 30 min of a DST change, 5 s within 300 s. A
         zero offset is sent as -1, which an MCU that keeps blanks ignores.
         """
         set_at, utc = self._module_clock
-        elapsed = int(self.clock.now() - set_at)
+        tick = float(state[CLOCK])
+        elapsed = int(tick - set_at)
         now = utc + elapsed
         west = tz.offset_west(now)
-        self._set_rtc(now, west or -1, at=set_at + elapsed)
+        self._set_rtc(now, west or -1, at=set_at + elapsed, changed_at=tick)
         change = tz.next_change(now)
         until = TZ_FAR if change is None else change - now
         delay = TZ_FAR if until > TZ_FAR else TZ_NEAR if until > TZ_NEAR else TZ_CLOSE
@@ -1016,7 +1019,13 @@ class Module:
         self._set_rtc(fields.time, -east)
         return _status(STATUS_OK)
 
-    def _set_rtc(self, time: int, utc_offset: int, at: float | None = None) -> None:
+    def _set_rtc(
+        self,
+        time: int,
+        utc_offset: int,
+        at: float | None = None,
+        changed_at: float | None = None,
+    ) -> None:
         """Set the RTC to ``time`` less ``utc_offset`` seconds west.
 
         A UTC before ``RTC_SYNC_MIN``, or before the MCU's own floor, never
@@ -1028,16 +1037,18 @@ class Module:
             time: The UTC sent.
             utc_offset: The offset sent, seconds west.
             at: The device-clock instant ``time`` was read at; now if None.
+            changed_at: The device-clock instant of the set; now if None.
 
         """
         if time >= max(RTC_SYNC_MIN, self.mcu.clock_floor):
             if self.mcu.clock_keeps_blank and utc_offset in BLANK_OFFSETS:
                 utc_offset = self._clock_set[2]
-            before = (self.rtc, self.epoch)
+            change = self.clock.now() if changed_at is None else changed_at
+            before = (self._rtc_at(change), self._epoch_at(change))
             utc = (time + self.mcu.clock_lead) % RTC_MODULUS
             anchor = self.clock.now() if at is None else at
             self._clock_set = (anchor, utc, utc_offset)
-            self.start_timed(self.values, clock=before)
+            self.start_timed(self.values, clock=before, at=change)
 
     def _bind(self, request: _Request) -> _Reply:
         if request.fields.account is None:

@@ -31,6 +31,9 @@ EPOCH = "epoch"
 #: The state name a timed event or side effect finds the device-clock instant
 #: under, in seconds: what a firmware tick grid is laid on.
 CLOCK = "device_clock"
+#: The state name a timed event or side effect finds the device-clock instant
+#: the RTC's current second began at under: where its seconds tick.
+RTC_SECOND_AT = "rtc_second_at"
 
 
 class LayoutProtocol(Protocol):

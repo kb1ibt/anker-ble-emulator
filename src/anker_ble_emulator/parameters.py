@@ -269,19 +269,6 @@ def stamp_clock(payload: bytes, epoch: int) -> bytes:
     return Parameters.build(params)
 
 
-def echo(*tags: str) -> PushBuilder:
-    """Return a push builder that carries the request's ``tags``, unconditionally."""
-
-    def echoed(
-        request: ParameterDict,
-        before: Mapping[str, Value],  # noqa: ARG001  # sent whatever changed
-        after: Mapping[str, Value],  # noqa: ARG001
-    ) -> ParameterDict:
-        return ParameterDict({tag: request[tag] for tag in tags if tag in request})
-
-    return echoed
-
-
 class CommandDispatchLayout:
     """Dispatch a command by msgtype to a per-command validator.
 

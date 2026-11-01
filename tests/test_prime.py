@@ -1,6 +1,8 @@
 # Copyright (c) 2026 Shawn Stricker
 """The Prime devices (A110B, A2345, A25X7, A2687, A91B2) over bleak."""
 
+from datetime import UTC, datetime
+
 import pytest
 from bleak import BleakClient
 
@@ -20,9 +22,12 @@ from anker_ble_emulator.devices.a91b2 import ClockTheme as A91B2ClockTheme
 from anker_ble_emulator.devices.a2345 import (
     DISPLAY,
     DISPLAY_TICK,
-    SCREEN_REPORT_DEBOUNCE,
+    SCHEDULE_FROM,
     SCREENSAVER_FIELDS,
+    WINDOW_END_DATE,
     WINDOW_PHASE,
+    WINDOW_START_DATE,
+    WINDOW_START_DONE,
     A2345Layout,
     Schedule,
     Screensaver,
@@ -31,7 +36,7 @@ from anker_ble_emulator.devices.a2345 import (
     stored_bytes,
 )
 from anker_ble_emulator.devices.base import data_resource
-from anker_ble_emulator.devices.prime import SWITCH_REPORT_DEBOUNCE, OutputPort
+from anker_ble_emulator.devices.prime import OutputPort
 from anker_ble_emulator.layouts import Value, ui
 from anker_ble_emulator.parameters import Parameter, Parameters, decode_field
 from tests.fixtures.client import (
@@ -76,6 +81,13 @@ from tests.fixtures.prime import (
 
 TOKEN = b"owner-token"
 ACCOUNT = b"a" * 40
+#: Past the 5th 100 ms tick after a change, when an A2345 report goes out.
+REPORT_WAIT = 0.6
+DAY_SECONDS = 86400
+#: Past the A2345 window's first evaluation (the 10th 150 ms pass, 1.5 s), and
+#: one pass on.
+WINDOW_FIRST_WAIT = 1.6
+PASS_WAIT = 0.15
 #: ``4827`` status until the owner confirms by button.
 NEEDS_AUTHENTICATION = 0x09
 #: A request's ``fe`` clock, which its pushes carry back.
@@ -240,8 +252,9 @@ async def test_a2345_factory_reset_acks_then_drops_the_link_and_forgets_the_owne
     assert reset[0].plaintext == bytes.fromhex("00a10131")
     assert during_debounce
     assert not after_debounce
-    # The settings are gone; the window's first evaluation (RAM) lands after.
-    assert set(device.negotiated_module.values) == {WINDOW_PHASE}
+    # The settings are gone; the schedule's start (RAM) lands after, and the
+    # window's first evaluation waits for the 10th pass.
+    assert set(device.negotiated_module.values) == {SCHEDULE_FROM}
     assert replies[0x827].status == NEEDS_AUTHENTICATION
 
 
@@ -302,9 +315,8 @@ async def test_a91b2_port_switch_covers_both_ac_ports_and_all_four_usbc_ports() 
             0x207, [(0xA1, b"\x21"), (0xA2, b"\x01\x00"), (0xA3, b"\x01\x02")], SESSION
         )
 
-    assert [cmd_hex(reply.frame) for reply in ac] == ["4a07", "4302"]
+    assert [cmd_hex(reply.frame) for reply in ac] == ["4a07"]
     assert ac[0].plaintext.hex() == "00a10131a2020100" + device_clock(0)
-    assert ac[1].plaintext.hex() == "a10131a2020100a3020100" + device_clock(0)
     assert [cmd_hex(reply.frame) for reply in out_of_range] == ["4a07"]
     assert usbc[0].plaintext.hex() == "00a10131a2020102" + device_clock(0)
     assert out_of_range[0].plaintext == bytes.fromhex("04a10131")
@@ -1050,16 +1062,19 @@ def test_an_a2345_setter_stamps_its_own_clock_replays_the_app_log(
     """The ack and its pushes carry the unit's clock, not the request's.
 
     prime-a2345-a91b2.md "Commands", "Reply ``a1``" and the ``4209`` row: over
-    MQTT ``0209`` at ``e822a26a`` drew ``0a09`` and ``0307`` at the unit's
-    ``e622a26a``, ``0207`` at ``1b5f9b6a`` its ``0a07`` at ``1a5f9b6a``; the
-    ``0208`` at ``0223a26a`` its ``0a08`` at ``0123a26a``. Here the request
-    runs 2 s ahead of the unit.
+    MQTT ``0209`` at ``e822a26a`` drew ``0a09`` and, on the next 150 ms pass,
+    ``0307`` at the unit's ``e622a26a``; ``0207`` at ``1b5f9b6a`` its ``0a07``
+    at ``1a5f9b6a``; the ``0208`` at ``0223a26a`` its ``0a08`` at ``0123a26a``.
+    Here the request runs 2 s ahead of the unit.
     """
-    device = A2345(clock=ManualClock())
+    clock = ManualClock()
+    device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
     ahead = (0xFE, b"\x03" + ui(4).build(PRIME_EPOCH + 2))
+    advance(device, client, clock, 0.05)
 
     answered = command(device, client, msgtype, [*fields, ahead])
+    answered += advance(device, client, clock, 0.15)
 
     assert answered == [(cmd, body + device_clock(0)) for cmd, body in frames]
 
@@ -1090,19 +1105,36 @@ def test_a2345_screensaver_read_reports_what_the_snapshot_reports() -> None:
     assert decode_field(snapshot, "af", Theme).screen_saver_theme_id == 7
 
 
-def test_an_a91b2_port_switch_is_followed_by_its_0302_push() -> None:
-    """Every captured A91B2 0a07 is followed by a 0302 with the port and its state.
+@pytest.mark.parametrize(
+    ("select", "early", "due"),
+    [
+        pytest.param(0, 0.04, 0.02, id="ac_1: the next 100 ms pass"),
+        pytest.param(2, 0.44, 0.02, id="usbc_1: 4 passes after the marking pass"),
+    ],
+)
+def test_an_a91b2_4207_draws_its_0302_on_the_port_kind_s_pass(
+    select: int, early: float, due: float
+) -> None:
+    """The recorded app_log pairs (2026-09-09): AC with the ack, USB-C 0.36 s on.
 
-    prime-a2345-a91b2.md, the A91B2's "MCU pushes" ``0302`` row.
+    prime-a2345-a91b2.md A91B2 ``0302`` row and "``0302`` recorded timing": the
+    period-100 tasks see the change on their next pass (0.1 s for a ``4207``
+    at 0.05 s). ``ac_switch_push_0302?`` sends on it; ``usbc_switch_push_0302?``
+    marks it there and sends on the 5th call counting that one, 0.5 s.
     """
-    request = bytes.fromhex("a10121a2020102a3020101fe0503953cd66a")
+    clock = ManualClock()
+    device = A91B2(clock=clock)
+    client = prime_client(device, TOKEN)
+    advance(device, client, clock, 0.05)
+    port = (0xA2, bytes([1, select]))
 
-    a91b2 = A91B2().mcu.respond(0x207, request=request, epoch=0x6AD63C93)
+    replies = command(device, client, 0x207, [port, (0xA3, b"\x01\x00")])
+    waiting = advance(device, client, clock, early)
+    sent = advance(device, client, clock, due)
 
-    assert [(frame.cmd.msgtype, frame.payload.hex()) for frame in a91b2] == [
-        (0xA07, "00a10131a2020102fe0503933cd66a"),
-        (0x302, "a10131a2020102a3020101fe0503933cd66a"),
-    ]
+    assert [cmd for cmd, _ in replies] == ["4a07"]
+    assert waiting == []
+    assert sent == [("4302", f"a10131a20201{select:02x}a3020100{device_clock(0)}")]
 
 
 def test_a2345_an_app_port_switch_draws_no_0302() -> None:
@@ -1138,7 +1170,7 @@ def test_a2345_two_app_switches_in_one_0302_pass_report_the_second() -> None:
 
     command(device, client, 0x207, [(0xA2, b"\x01\x00"), (0xA3, b"\x01\x00")])
     command(device, client, 0x207, [(0xA2, b"\x01\x04"), (0xA3, b"\x01\x00")])
-    sent = advance(device, client, clock, SWITCH_REPORT_DEBOUNCE + DISPLAY_TICK)
+    sent = advance(device, client, clock, REPORT_WAIT + DISPLAY_TICK)
 
     assert sent == [("4302", "a10131a2020104a3020100" + device_clock(0))]
 
@@ -1299,8 +1331,9 @@ def test_a2345_each_port_reports_0302_after_its_own_last_change() -> None:
 def test_a2345_ports_due_on_one_tick_go_in_port_order() -> None:
     """``port_switch_tick`` on ``tick_100ms_group``: one tick's pass walks 0-4.
 
-    pd3 marked at 1.42 s and pd1 at 1.45 s are both due on the 2.0 s tick; a
-    ``4207``'s 1 drops the walk's first, pd1, and pd3 sends.
+    pd3 marked at 1.42 s and pd1 at 1.45 s both count from the 1.5 s tick and
+    are due on the 1.9 s one; a ``4207``'s 1 drops the walk's first, pd1, and
+    pd3 sends.
     """
     clock = ManualClock()
     device = A2345(clock=clock)
@@ -1313,29 +1346,490 @@ def test_a2345_ports_due_on_one_tick_go_in_port_order() -> None:
     device.set_values(pd1_relay_switch=True)
     advance(device, client, clock, 0.05)
     command(device, client, 0x207, [(0xA2, b"\x01\x01"), (0xA3, b"\x01\x01")])
-    early = advance(device, client, clock, 0.45)
+    early = advance(device, client, clock, 0.35)
     due = advance(device, client, clock, 0.1)
 
     assert early == []
     assert [payload[:22] for _, payload in due] == ["a10131a2020102a3020101"]
 
 
-def test_a2345_the_switch_tick_phase_shifts_the_0302_grid() -> None:
-    """The hidden ``switch_tick_phase`` (0-0.1 s) places the 100 ms ticks."""
+def test_a2345_the_systick_phase_shifts_the_report_grid() -> None:
+    """The hidden ``systick_phase`` (0-3 s) places the SysTick groups' grids.
+
+    At 0.05 a 1.0 s tap counts from the 1.05 s tick and sends on the 1.45 s one.
+    """
     clock = ManualClock()
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
-    device.set_values(pd1_relay_switch=False, switch_tick_phase=0.05)
+    device.set_values(pd1_relay_switch=False, systick_phase=0.05)
     advance(device, client, clock, 1)
 
     device.set_values(pd1_relay_switch=True)
-    early = advance(device, client, clock, 0.52)
+    early = advance(device, client, clock, 0.42)
     due = advance(device, client, clock, 0.05)
 
     assert early == []
     assert [cmd for cmd, _ in due] == ["4302"]
-    with pytest.raises(TypeError, match=r"switch_tick_phase is 0 to 0\.1 s"):
-        device.set_values(switch_tick_phase=0.2)
+    with pytest.raises(TypeError, match=r"systick_phase is 0 to 3\.0 s"):
+        device.set_values(systick_phase=3.0)
+
+
+def test_a2345_the_systick_phase_shifts_the_countdown_grids() -> None:
+    """At 0.5 the 1 s steps fall on 1.5 and 2.5 s, the passes on 0.5 + 0.15 k.
+
+    A 2 s ``4209`` at 0.6 s steps to 0 at 2.5 s; the 2.6 s pass expires it.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(systick_phase=0.5)
+    advance(device, client, clock, 0.6)
+
+    command(device, client, 0x209, [(0xA2, b"\x01\x00"), arm(2)])
+    early = advance(device, client, clock, 1.95)
+    expired = advance(device, client, clock, 0.1)
+
+    assert [cmd for cmd, _ in early] == ["4307"]
+    assert [cmd for cmd, _ in expired] == ["4307"]
+
+
+def test_a2345_a_change_between_ticks_reports_on_the_5th_tick_after_it() -> None:
+    """A mark writes count 0; the next tick counts 1, and the 5th sends.
+
+    prime-a2345-a91b2.md "Report timing": a tap at 1.03 s sends on the 1.5 s
+    tick, 0.47 s on.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(pd1_relay_switch=False)
+    advance(device, client, clock, 1.03)
+
+    device.set_values(pd1_relay_switch=True)
+    early = advance(device, client, clock, 0.45)
+    due = advance(device, client, clock, 0.04)
+
+    assert early == []
+    assert [cmd for cmd, _ in due] == ["4302"]
+
+
+def test_a2345_a_countdown_steps_on_the_boot_1_s_grid_and_expires_on_a_pass() -> None:
+    """prime-a2345-a91b2.md "Countdown timing", on the boot-phased grids.
+
+    ``4209`` (3 s) at 0.4 s: its arm ``0307`` on the 0.45 s pass; ``remaining``
+    steps on the 1, 2 and 3 s boundaries; the 3.0 s pass sees 0, switches the
+    port off and sends the disarm ``0307``; the ``0302`` counts from the 3.1 s
+    tick and sends on the 3.5 s one.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    advance(device, client, clock, 0.4)
+
+    def remaining() -> int:
+        timer = decode_field(snapshot(device), "aa", Timer)
+        return int(timer.countdown_task_remaining_seconds)
+
+    replies = command(device, client, 0x209, [(0xA2, b"\x01\x00"), arm(3)])
+    armed = advance(device, client, clock, 0.1)
+    steps = [remaining()]
+    for at in (0.6, 1.0):
+        advance(device, client, clock, at)
+        steps.append(remaining())
+    before_pass = advance(device, client, clock, 0.85)
+    expired = advance(device, client, clock, 0.06)
+    switched = advance(device, client, clock, 0.6)
+
+    assert [cmd for cmd, _ in replies] == ["4a09"]
+    assert [cmd for cmd, _ in armed] == ["4307"]
+    assert steps == [3, 2, 1]
+    assert before_pass == []
+    assert [cmd for cmd, _ in expired] == ["4307"]
+    assert [cmd for cmd, _ in switched] == ["4302"]
+    assert not decode_field(snapshot(device), "aa", Timer).relay_switch
+
+
+def test_a2345_a_countdown_armed_on_an_off_port_is_disarmed_with_no_0307() -> None:
+    """The next 150 ms pass disarms it; it never showed armed, so no ``0307``."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(pd1_relay_switch=False)
+
+    command(device, client, 0x209, [(0xA2, b"\x01\x00"), arm(600)])
+    later = advance(device, client, clock, 1)
+
+    timer = decode_field(snapshot(device), "aa", Timer)
+    assert later == []
+    assert not timer.countdown_task_switch
+
+
+def test_a2345_a_countdown_on_an_off_port_writes_no_source_byte() -> None:
+    """``countdown_tick_push_0307`` writes 2 only when it finds the port on.
+
+    prime-a2345-a91b2.md "Schedule timing": so an off port's disarm leaves an
+    app ``4207``'s 1, and that ``4207``'s ``0302`` is still dropped.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x00")
+    advance(device, client, clock, 0.05)
+
+    command(device, client, 0x207, [port, (0xA3, b"\x01\x00")])
+    command(device, client, 0x209, [port, arm(600)])
+    later = advance(device, client, clock, 1)
+
+    assert later == []
+    assert not decode_field(snapshot(device), "aa", Timer).countdown_task_switch
+
+
+def test_a2345_the_systick_groups_first_fire_one_period_after_boot() -> None:
+    """Nothing fires at boot: 100 ms at 0.1 s, the 150 ms pass at 0.15 s, 1 s at 1 s.
+
+    prime-a2345-a91b2.md "Scheduler groups": a ``4209`` (1 s) at boot shows
+    armed on the 0.15 s pass, steps to 0 at 1 s, expires on the 1.05 s pass,
+    and its ``0302`` counts from the 1.1 s tick and sends on the 1.5 s one.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+
+    replies = command(device, client, 0x209, [(0xA2, b"\x01\x00"), arm(1)])
+    timeline = [
+        [cmd for cmd, _ in advance(device, client, clock, step)]
+        for step in (0.14, 0.02, 0.88, 0.02, 0.43, 0.02)
+    ]
+
+    assert [cmd for cmd, _ in replies] == ["4a09"]
+    assert timeline == [[], ["4307"], [], ["4307"], [], ["4302"]]
+
+
+def test_a2345_the_schedule_starts_10_passes_after_the_rtc_is_valid() -> None:
+    """``schedule_tick_push_0308`` runs from the 10th 150 ms pass with the RTC valid.
+
+    prime-a2345-a91b2.md "Schedule timing" (``DAT_2000af52`` counts before its
+    ``> 9`` test): valid from boot, the 10th pass is at 1.5 s. An off-time in
+    the current minute (Sunday 23:25) fires on it.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    sunday_2325 = (0xA4, b"\x03\x01\x17\x19\x40")
+    command(
+        device, client, 0x208, [(0xA2, b"\x01\x00"), (0xA3, b"\x01\x00"), sunday_2325]
+    )
+
+    advance(device, client, clock, 1.49)
+    waiting = decode_field(snapshot(device), "aa", Timer).relay_switch
+    advance(device, client, clock, 0.02)
+
+    assert waiting
+    assert not decode_field(snapshot(device), "aa", Timer).relay_switch
+
+
+def test_a2345_a_schedule_fire_on_a_port_already_so_releases_a_4207s_0302() -> None:
+    """A fire writes source 2 before ``port_switch_set``, even with nothing to change.
+
+    prime-a2345-a91b2.md "Schedule timing": the pd1 on-time (on already) fires
+    on the 1.5 s pass, so pd2's app ``4207`` at 1.3 s sends its ``0302`` at 1.8 s.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    on_time = [
+        (0xA2, b"\x01\x00"),
+        (0xA3, b"\x01\x01"),
+        (0xA4, b"\x03\x01\x17\x19\x40"),
+    ]
+    command(device, client, 0x208, on_time)
+    advance(device, client, clock, 1.3)
+
+    command(device, client, 0x207, [(0xA2, b"\x01\x01"), (0xA3, b"\x01\x00")])
+    sent = advance(device, client, clock, 0.6)
+
+    assert [payload[:22] for _, payload in sent] == ["a10131a2020101a3020100"]
+
+
+def test_a2345_a_repeating_slot_fires_once_in_its_minute() -> None:
+    """Latched until the minute stops matching: switched back on, it stays on."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x00")
+    command(device, client, 0x208, [port, (0xA3, b"\x01\x00"), SUNDAY_2326])
+    advance(device, client, clock, 45.1)
+    fired_off = not decode_field(snapshot(device), "aa", Timer).relay_switch
+
+    command(device, client, 0x207, [port, (0xA3, b"\x01\x01")])
+    advance(device, client, clock, 30)
+
+    assert fired_off
+    assert decode_field(snapshot(device), "aa", Timer).relay_switch
+
+
+@pytest.mark.parametrize("model", [A2345, A91B2])
+def test_a_prime_once_slot_passed_by_a_clock_set_is_disabled_unfired(
+    model: type[A2345 | A91B2],
+) -> None:
+    """A once slot fires only at its exact date and minute; passed, it's disabled.
+
+    prime-a2345-a91b2.md "Schedule timing" and the A91B2 "Schedule firing":
+    disabled with a ``0308`` en 00, the port (0 on both) left as it was.
+    """
+    clock = ManualClock()
+    device = model(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x00")
+    once_2326 = (0xA4, b"\x03\x01\x17\x1a\x00")
+    advance(device, client, clock, 2)
+    command(device, client, 0x208, [port, (0xA3, b"\x01\x00"), once_2326])
+
+    moved = ui(4).build(ui(4).parse(TIMESTAMP) + 2 + 120)
+    exchange(
+        device.negotiated_module,
+        client,
+        0x022,
+        [(0xA1, moved), (0xA3, UTC_OFFSET), (0xA5, TZ)],
+    )
+    passed = advance(device, client, clock, 1)
+
+    timer = decode_field(snapshot(device), "aa", Timer)
+    assert [cmd for cmd, _ in passed] == ["4308"]
+    assert timer.relay_switch
+    assert timer.timed_task_end_switch == 0
+
+
+def test_a2345_a_once_slot_set_on_the_unit_is_dated_by_the_same_rule() -> None:
+    """A ``set_values`` once 23:26 at Sunday 23:25:17 is dated today and fires."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    advance(device, client, clock, 2)
+
+    device.set_values(
+        pd1_timed_task_end_switch=1,
+        pd1_timed_task_end_hour=23,
+        pd1_timed_task_end_minute=26,
+        pd1_timed_task_end_weekdays=0,
+    )
+    fired = advance(device, client, clock, 44)
+
+    assert [cmd for cmd, _ in fired] == ["4308", "4302"]
+    assert not decode_field(snapshot(device), "aa", Timer).relay_switch
+
+
+@pytest.mark.parametrize(
+    ("model", "pushes"),
+    [
+        pytest.param(A2345, ["4308", "4302"], id="A2345"),
+        pytest.param(A91B2, ["4308", "4302"], id="A91B2"),
+    ],
+)
+def test_a_prime_once_slot_at_the_current_minute_is_dated_tomorrow(
+    model: type[A2345 | A91B2], pushes: list[str]
+) -> None:
+    """The slot set dates a once slot today only if its hh:mm is strictly later.
+
+    prime-a2345-a91b2.md "Slot record" and the A91B2 ``4208`` row: a once 23:25
+    written at Sunday 23:25:15 is dated Monday, so it fires a day on, then
+    ``0308`` en 00.
+    """
+    clock = ManualClock()
+    device = model(clock=clock)
+    client = prime_client(device, TOKEN)
+    once_2325 = (0xA4, b"\x03\x01\x17\x19\x00")
+    command(
+        device, client, 0x208, [(0xA2, b"\x01\x00"), (0xA3, b"\x01\x00"), once_2325]
+    )
+
+    advance(device, client, clock, 2)
+    waiting = decode_field(snapshot(device), "aa", Timer).relay_switch
+    fired = advance(device, client, clock, DAY_SECONDS)
+
+    assert waiting
+    assert [cmd for cmd, _ in fired] == pushes
+    assert not decode_field(snapshot(device), "aa", Timer).relay_switch
+
+
+@pytest.mark.parametrize(
+    ("rewrite", "fired"),
+    [
+        pytest.param(False, False, id="a clock set back leaves its date"),
+        pytest.param(True, True, id="a 4208 rewrite dates it again"),
+    ],
+)
+@pytest.mark.parametrize("model", [A2345, A91B2])
+def test_a_prime_once_slot_date_is_set_only_by_a_4208(
+    model: type[A2345 | A91B2], *, rewrite: bool, fired: bool
+) -> None:
+    """Nothing but the slot set dates a once slot; the tick judges that date.
+
+    prime-a2345-a91b2.md "Slot record" and the A91B2 ``4208`` row: a once
+    23:26 written Sunday 23:25 waits for Sunday after the clock goes back a
+    day; the same slot written again on Saturday 23:25 is dated Saturday and
+    fires at Saturday 23:26.
+    """
+    clock = ManualClock()
+    device = model(clock=clock)
+    client = prime_client(device, TOKEN)
+    once = [(0xA2, b"\x01\x00"), (0xA3, b"\x01\x00"), (0xA4, b"\x03\x01\x17\x1a\x00")]
+    command(device, client, 0x208, once)
+
+    moved = ui(4).build(ui(4).parse(TIMESTAMP) - DAY_SECONDS)
+    fields = [(0xA1, moved), (0xA3, UTC_OFFSET), (0xA5, TZ)]
+    exchange(device.negotiated_module, client, 0x022, fields)
+    if rewrite:
+        command(device, client, 0x208, once)
+    advance(device, client, clock, 50)
+
+    assert decode_field(snapshot(device), "aa", Timer).relay_switch is not fired
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "back", "collides"),
+    [
+        pytest.param(
+            b"\x03\x01\x17\x1e\x40",
+            b"\x03\x01\x17\x1e\x00",
+            False,
+            True,
+            id="a once dated Sunday meets a Sunday slot",
+        ),
+        pytest.param(
+            b"\x03\x01\x0c\x00\x40",
+            b"\x03\x01\x0c\x00\x00",
+            False,
+            False,
+            id="a once dated Monday misses a Sunday slot",
+        ),
+        pytest.param(
+            b"\x03\x01\x17\x1e\x00",
+            b"\x03\x01\x17\x1e\x00",
+            False,
+            True,
+            id="two once slots dated one Sunday meet",
+        ),
+        pytest.param(
+            b"\x03\x01\x17\x1e\x00",
+            b"\x03\x01\x17\x1e\x00",
+            True,
+            True,
+            id="once slots dated Sunday and Saturday still meet",
+        ),
+    ],
+)
+@pytest.mark.parametrize("model", [A2345, A91B2])
+def test_a_prime_4208_collision_takes_a_once_slots_weekday_from_its_date(
+    model: type[A2345 | A91B2],
+    first: bytes,
+    second: bytes,
+    *,
+    back: bool,
+    collides: bool,
+) -> None:
+    """The conflict clear: a once slot's day is its date's (port 0 on both).
+
+    prime-a2345-a91b2.md "Defaults and collisions" and the A91B2 ``0308`` row:
+    the off-time written second disables the enabled on-time at the same
+    hh:mm, the ``0308`` before the ack. Against a repeating slot a once slot
+    counts on its date's weekday; two once slots always meet. Here it is
+    Sunday 23:25; ``back`` writes the second on Saturday.
+    """
+    clock = ManualClock()
+    device = model(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x00")
+    command(device, client, 0x208, [port, (0xA3, b"\x01\x01"), (0xA4, first)])
+    if back:
+        moved = ui(4).build(ui(4).parse(TIMESTAMP) - DAY_SECONDS)
+        fields = [(0xA1, moved), (0xA3, UTC_OFFSET), (0xA5, TZ)]
+        exchange(device.negotiated_module, client, 0x022, fields)
+
+    written = command(
+        device, client, 0x208, [port, (0xA3, b"\x01\x00"), (0xA4, second)]
+    )
+
+    expected = ["4308", "4a08"] if collides else ["4a08"]
+    assert [cmd for cmd, _ in written] == expected
+    on_time = decode_field(snapshot(device), "aa", Timer).timed_task_start_switch
+    assert on_time == (0 if collides else 1)
+
+
+@pytest.mark.parametrize(
+    ("days", "collides"),
+    [
+        pytest.param(0x01, True, id="a Monday 12:00 meets it"),
+        pytest.param(0x40, False, id="a Sunday 12:00 misses it"),
+    ],
+)
+@pytest.mark.parametrize("model", [A2345, A91B2])
+def test_a_prime_unset_half_is_a_once_slot_dated_0_0_0_a_monday(
+    model: type[A2345 | A91B2], days: int, *, collides: bool
+) -> None:
+    """The unset ``ff 0c 00 00`` half: a once 12:00 dated 0/0/0, which reads Monday.
+
+    prime-a2345-a91b2.md "Defaults and collisions" (``FUN_0003e538``) and the
+    A91B2 ``0308`` row (``weekday_bit_from_date?``): the dates are zeroed, and
+    0/0/0 gives 0x01, so a written repeating 12:00 meets the unset off-time
+    only on Monday.
+    """
+    clock = ManualClock()
+    device = model(clock=clock)
+    client = prime_client(device, TOKEN)
+    noon = (0xA4, bytes((3, 1, 12, 0, days)))
+
+    written = command(
+        device, client, 0x208, [(0xA2, b"\x01\x00"), (0xA3, b"\x01\x01"), noon]
+    )
+
+    expected = ["4308", "4a08"] if collides else ["4a08"]
+    assert [cmd for cmd, _ in written] == expected
+    off_time = decode_field(snapshot(device), "aa", Timer).timed_task_end_switch
+    assert off_time == (0 if collides else 0xFF)
+
+
+@pytest.mark.parametrize(
+    ("phase", "written", "sent"),
+    [
+        pytest.param(0.0, 0.05, 0.5, id="a write between ticks"),
+        pytest.param(0.05, 0.2, 0.65, id="the group's phase"),
+    ],
+)
+def test_a2345_a_screen_report_goes_on_the_5th_grid_tick_after_its_write(
+    phase: float, written: float, sent: float
+) -> None:
+    """``screen_report_service_tick`` runs in ``tick_100ms_group``, on its grid.
+
+    prime-a2345-a91b2.md "Report timing": the 5th tick after the mark sends.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(systick_phase=phase)
+    advance(device, client, clock, written)
+
+    device.set_values(screen_brightness=40)
+    early = advance(device, client, clock, sent - written - 0.03)
+    due = advance(device, client, clock, 0.05)
+
+    assert early == []
+    assert [cmd for cmd, _ in due] == ["430a"]
+
+
+def test_a2345_screen_reports_go_before_the_0302s_on_one_tick() -> None:
+    """``screen_report_service_tick`` runs before ``port_switch_tick`` in a tick."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(pd1_relay_switch=False)
+    advance(device, client, clock, 1)
+
+    device.set_values(pd1_relay_switch=True)
+    device.set_values(screen_brightness=40)
+    sent = advance(device, client, clock, REPORT_WAIT + DISPLAY_TICK)
+
+    assert [cmd for cmd, _ in sent] == ["430a", "4302"]
 
 
 def test_a2345_a_port_switched_on_on_the_unit_is_the_power_on_tap() -> None:
@@ -1417,86 +1911,86 @@ def test_a2345_4209_refuses_an_a2_or_a3_of_another_length(
 
 
 @pytest.mark.parametrize(
-    ("model", "client", "select", "disarmed", "kept"),
+    ("select", "disarmed", "kept"),
     [
-        pytest.param(
-            A2345,
-            AppClient(),
-            0,
-            "000000000000000000",
-            ("aa", 0, 0),
-            id="A2345 writes the disarm's seconds and zeroes the remaining time",
-        ),
-        pytest.param(
-            A91B2,
-            AppClient(encrypted_outer=False),
-            0,
-            "00201c0000201c0000",
-            ("aa", 7200, 7200),
-            id="A91B2 AC keeps it",
-        ),
-        pytest.param(
-            A91B2,
-            AppClient(encrypted_outer=False),
-            3,
-            "0000000000201c0000",
-            ("b1", 7200, 0),
-            id="A91B2 USB-C zeroes it and reports it first",
-        ),
+        pytest.param(0, "00201c0000201c0000", ("aa", 7200, 7200), id="AC keeps it"),
+        pytest.param(3, "0000000000201c0000", ("b1", 7200, 0), id="USB-C zeroes it"),
     ],
 )
-async def test_a_prime_pushes_0307_when_a_countdown_arms_or_disarms(
-    model: type[A2345 | A91B2],
-    client: AppClient,
-    select: int,
-    disarmed: str,
-    kept: tuple[str, int, int],
+def test_an_a91b2_pushes_0307_on_the_pass_after_an_arm_or_disarm(
+    select: int, disarmed: str, kept: tuple[str, int, int]
 ) -> None:
-    """Re-arming an armed countdown draws no 0307.
+    """The countdown tick's enable edge shows a ``4209`` on the next timer pass.
 
-    prime-a2345-a91b2.md's "MCU pushes" ``0307`` rows, the A2345's and the
-    A91B2's: the push fires on the enable edge, a re-arm 1 -> 1 silent. The
-    A2345's ``countdown_set?`` writes every ``4209``'s seconds, a disarm's too.
+    prime-a2345-a91b2.md A91B2 "Countdown timing" and ``0307`` row:
+    ``cmd209_set_countdown`` only sets the record and replies; the edge is
+    pushed by ``ac/usbc_countdown_tick_push_0307?``, a re-arm 1 -> 1 silent.
+    The record carries the remaining time first.
     """
-    device = model(clock=ManualClock())
-    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as ble:
-        link = BleakLink(ble, client)
-        await link.start()
-        await link.negotiate(TOKEN)
-        device.press_button()
-        await settle()
+    clock = ManualClock()
+    device = A91B2(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, bytes([1, select]))
+    advance(device, client, clock, 0.05)
 
-        port = [(0xA1, b"\x21"), (0xA2, bytes([1, select]))]
-        arm = [*port, (0xA3, b"\x04\x01\x20\x1c\x00\x00"), CLOCK]
-        armed = await link.send(0x209, arm, SESSION)
-        rearmed = await link.send(0x209, arm, SESSION)
-        disarm = [*port, (0xA3, b"\x04\x00\x00\x00\x00\x00"), CLOCK]
-        disarming = await link.send(0x209, disarm, SESSION)
+    armed = command(device, client, 0x209, [port, arm(7200)])
+    armed_pass = advance(device, client, clock, 0.15)
+    rearmed = command(device, client, 0x209, [port, arm(7200)])
+    rearmed += advance(device, client, clock, 0.15)
+    disarm = (0xA3, b"\x04\x00\x00\x00\x00\x00")
+    disarming = command(device, client, 0x209, [port, disarm])
+    disarmed_pass = advance(device, client, clock, 0.15)
 
     a2 = f"a20201{select:02x}"
-    assert [(cmd_hex(reply.frame), reply.plaintext.hex()) for reply in armed] == [
-        ("4a09", f"00a10131{a2}{device_clock(0)}"),
-        ("4307", f"a10131{a2}a30a0401201c0000201c0000{device_clock(0)}"),
-    ]
-    assert [cmd_hex(reply.frame) for reply in rearmed] == ["4a09"]
-    assert (
-        disarming[1].plaintext.hex() == f"a10131{a2}a30a04{disarmed}{device_clock(0)}"
-    )
-    record, seconds, remaining = kept
-    snapshot = device.mcu.respond(0x200, values=device.negotiated_module.values)[0]
-    countdown = decode_field(Parameters.parse(snapshot.payload), record, Timer)
+    reply = ("4a09", f"00a10131{a2}{device_clock(0)}")
+    record = f"a10131{a2}a30a04{{}}{device_clock(0)}"
+    assert armed == rearmed == disarming == [reply]
+    assert armed_pass == [("4307", record.format("01201c0000201c0000"))]
+    assert disarmed_pass == [("4307", record.format(disarmed))]
+    name, seconds, remaining = kept
+    countdown = decode_field(snapshot(device), name, Timer)
     assert (
         countdown.countdown_task_seconds,
         countdown.countdown_task_remaining_seconds,
     ) == (seconds, remaining)
 
 
+def test_an_a2345_pushes_0307_on_the_pass_after_an_arm_or_disarm() -> None:
+    """``countdown_tick_push_0307`` shows the enable edge on the next 150 ms pass.
+
+    prime-a2345-a91b2.md ``0307`` row: a re-arm 1 -> 1 is silent; on disarm
+    ``remaining`` is 0. ``countdown_set?`` writes every ``4209``'s seconds, a
+    disarm's too.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x00")
+    advance(device, client, clock, 0.05)
+
+    armed = command(device, client, 0x209, [port, arm(7200)])
+    armed_pass = advance(device, client, clock, 0.15)
+    rearmed = command(device, client, 0x209, [port, arm(7200)])
+    rearmed += advance(device, client, clock, 0.15)
+    disarm = (0xA3, b"\x04\x00\x05\x00\x00\x00")
+    disarmed = command(device, client, 0x209, [port, disarm])
+    disarmed_pass = advance(device, client, clock, 0.15)
+
+    reply = ("4a09", f"00a10131a2020100{device_clock(0)}")
+    record = f"a10131a2020100a30a04{{}}{device_clock(0)}"
+    assert armed == rearmed == disarmed == [reply]
+    assert armed_pass == [("4307", record.format("01201c0000201c0000"))]
+    assert disarmed_pass == [("4307", record.format("000500000000000000"))]
+    timer = decode_field(snapshot(device), "aa", Timer)
+    assert (timer.countdown_task_seconds, timer.countdown_task_remaining_seconds) == (
+        5,
+        0,
+    )
+
+
 @pytest.mark.parametrize(
     ("model", "select", "record", "expired", "left"),
     [
-        pytest.param(
-            A2345, 0, "aa", "000300000000000000", 0, id="A2345 zeroes the remaining"
-        ),
         pytest.param(
             A91B2, 0, "aa", "000300000003000000", 3, id="A91B2 AC keeps the seconds"
         ),
@@ -1505,13 +1999,15 @@ async def test_a_prime_pushes_0307_when_a_countdown_arms_or_disarms(
         ),
     ],
 )
-def test_a_prime_countdown_runs_down_then_switches_the_port_off(
-    model: type[A2345 | A91B2], select: int, record: str, expired: str, left: int
+def test_an_a91b2_countdown_runs_down_then_switches_the_port_off(
+    model: type[A91B2], select: int, record: str, expired: str, left: int
 ) -> None:
-    """Each second takes one off the remaining time; at 0 the port switches off.
+    """Each RTC second takes one off the remaining time; at 0 the port switches off.
 
-    Then ``0302`` (the port, off) and the ``0307`` disarm, remaining as a
-    ``4209`` disarm leaves it (doc "MCU pushes" ``0302``/``0307``, A91B2 ``0307``).
+    The 3 s pass ends it: the ``0307`` disarm, remaining as a ``4209`` disarm
+    leaves it, then the port's ``0302`` from its switch task (AC on the next
+    100 ms pass, USB-C 4 passes after its marking pass; doc A91B2 ``0302`` /
+    ``0307`` rows).
     """
     clock = ManualClock()
     device = model(clock=clock)
@@ -1528,36 +2024,21 @@ def test_a_prime_countdown_runs_down_then_switches_the_port_off(
 
     armed = command(device, client, 0x209, [port, arm(3)])
     timeline = [(countdown(), advance(device, client, clock, 1)) for _ in range(3)]
-    debounced = advance(device, client, clock, SWITCH_REPORT_DEBOUNCE)
+    ended = advance(device, client, clock, 0.5)
 
     a2 = f"a20201{select:02x}"
     stamp = device_clock(3)
     off = ("4302", f"a10131{a2}a3020100{stamp}")
     disarm = ("4307", f"a10131{a2}a30a04{expired}{stamp}")
-    # The A2345's switch watcher reports after its ~5-tick debounce.
-    at_expiry, after = ([disarm], [off]) if model is A2345 else ([off, disarm], [])
-    assert [cmd for cmd, _ in armed] == ["4a09", "4307"]
+    shown = ("4307", f"a10131{a2}a30a04010300000003000000{device_clock(0)}")
+    assert [cmd for cmd, _ in armed] == ["4a09"]
     assert timeline == [
-        ((True, True, 3), []),
+        ((True, True, 3), [shown]),
         ((True, True, 2), []),
-        ((True, True, 1), at_expiry),
+        ((True, True, 1), []),
     ]
-    assert debounced == after
+    assert ended == [disarm, off]
     assert countdown() == (False, False, left)
-
-
-def test_a_countdown_expiry_on_a_port_already_off_sends_no_0302() -> None:
-    """The switch watcher reports a change only (doc "MCU pushes" ``0302``)."""
-    clock = ManualClock()
-    device = A2345(clock=clock)
-    client = prime_client(device, TOKEN)
-    port = (0xA2, b"\x01\x00")
-    command(device, client, 0x207, [port, (0xA3, b"\x01\x00")])
-
-    command(device, client, 0x209, [port, arm(1)])
-    expired = advance(device, client, clock, 1)
-
-    assert [cmd for cmd, _ in expired] == ["4307"]
 
 
 def test_a_countdown_jumped_past_expires_without_a_push() -> None:
@@ -1587,12 +2068,14 @@ def test_a_countdown_disarm_drops_its_pending_expiry() -> None:
     disarm = command(device, client, 0x209, [port, (0xA3, b"\x04\x00\x00\x00\x00\x00")])
     later = advance(device, client, clock, 10)
 
-    assert early == later == []
-    assert [cmd for cmd, _ in disarm] == ["4a09", "4307"]
+    assert [cmd for cmd, _ in early] == ["4307"]
+    assert [cmd for cmd, _ in disarm] == ["4a09"]
+    assert [cmd for cmd, _ in later] == ["4307"]
     assert decode_field(snapshot(device), "aa", Timer).relay_switch
 
 
 def test_a_countdown_rearm_counts_down_again_from_its_seconds() -> None:
+    """A re-arm at 3 s steps on the 4-8 s boundaries; the 8.1 s pass expires it."""
     clock = ManualClock()
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
@@ -1602,9 +2085,9 @@ def test_a_countdown_rearm_counts_down_again_from_its_seconds() -> None:
     advance(device, client, clock, 3)
     rearm = command(device, client, 0x209, [port, arm(5)])
     restarted = decode_field(snapshot(device), "aa", Timer)
-    early = advance(device, client, clock, 4)
-    expired = advance(device, client, clock, 1)
-    expired += advance(device, client, clock, SWITCH_REPORT_DEBOUNCE)
+    early = advance(device, client, clock, 5.05)
+    expired = advance(device, client, clock, 0.1)
+    expired += advance(device, client, clock, 0.5)
 
     assert [cmd for cmd, _ in rearm] == ["4a09"]
     assert restarted.countdown_task_remaining_seconds == 5
@@ -1616,34 +2099,36 @@ def test_a_countdown_rearm_counts_down_again_from_its_seconds() -> None:
 
 
 def test_a_countdown_remaining_set_by_a_test_counts_down_from_there() -> None:
+    """``remaining`` 2 from 0 s steps on the 1 and 2 s boundaries; 2.1 s expires it."""
     clock = ManualClock()
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
 
     command(device, client, 0x209, [(0xA2, b"\x01\x00"), arm(600)])
     device.set_values(pd1_countdown_task_remaining_seconds=2)
-    early = advance(device, client, clock, 1)
+    early = advance(device, client, clock, 2)
     expired = advance(device, client, clock, 1)
-    expired += advance(device, client, clock, SWITCH_REPORT_DEBOUNCE)
 
-    assert early == []
+    assert [cmd for cmd, _ in early] == ["4307"]
     assert [cmd for cmd, _ in expired] == ["4307", "4302"]
 
 
 @pytest.mark.parametrize(
-    ("model", "select", "record"),
+    ("model", "select", "record", "app_reported"),
     [
-        pytest.param(A2345, 0, "aa", id="A2345 usbc1"),
-        pytest.param(A91B2, 2, "b0", id="A91B2 usbc1"),
+        pytest.param(A2345, 0, "aa", False, id="A2345 usbc1"),
+        pytest.param(A91B2, 2, "b0", True, id="A91B2 usbc1"),
     ],
 )
 def test_a_prime_timed_task_switches_its_port_at_its_time_each_week(
-    model: type[A2345 | A91B2], select: int, record: str
+    model: type[A2345 | A91B2], select: int, record: str, *, app_reported: bool
 ) -> None:
     """An enabled off-time at Sunday 23:26 switches the port off then, by the RTC.
 
-    The firmware's per-minute run fires it and ``0302`` reports it (doc "MCU
-    pushes" ``0302``); a repeating half stays enabled and fires a week on.
+    The firmware fires it in that minute and ``0302`` reports it (doc "MCU
+    pushes" ``0302``); a repeating half stays enabled and fires a week on. The
+    ``4207`` turning it back on is reported too on the A91B2, which has no
+    source gate; the A2345's source byte drops it.
     """
     clock = ManualClock()
     device = model(clock=clock)
@@ -1654,15 +2139,18 @@ def test_a_prime_timed_task_switches_its_port_at_its_time_each_week(
     write = command(device, client, 0x208, [port, (0xA3, b"\x01\x00"), sunday_2326])
     early = advance(device, client, clock, 44)
     fired = advance(device, client, clock, 1)
-    fired += advance(device, client, clock, SWITCH_REPORT_DEBOUNCE)
+    fired += advance(device, client, clock, REPORT_WAIT)
     timer = decode_field(snapshot(device), record, Timer)
     command(device, client, 0x207, [port, (0xA3, b"\x01\x01")])
-    week_early = advance(device, client, clock, 7 * 86400 - 1)
+    switched_on = advance(device, client, clock, REPORT_WAIT)
+    week_early = advance(device, client, clock, 7 * 86400 - 1 - REPORT_WAIT)
     week = advance(device, client, clock, 1)
-    week += advance(device, client, clock, SWITCH_REPORT_DEBOUNCE)
+    week += advance(device, client, clock, REPORT_WAIT)
 
     off = f"a10131a20201{select:02x}a3020100"
+    on = ("4302", f"a10131a20201{select:02x}a3020101{device_clock(46)}")
     assert [cmd for cmd, _ in write] == ["4a08"]
+    assert switched_on == ([on] if app_reported else [])
     assert early == week_early == []
     assert fired == [("4302", off + device_clock(45))]
     assert not timer.relay_switch
@@ -1671,10 +2159,10 @@ def test_a_prime_timed_task_switches_its_port_at_its_time_each_week(
 
 
 def test_a_once_timed_task_fires_at_its_next_time_then_disables_itself() -> None:
-    """A once on-time (weekdays 0) fires at its next hh:mm, then ``0308`` en 00.
+    """A once on-time (weekdays 0) fires at its date and minute, then ``0308`` en 00.
 
-    The firmware keeps a once half's date off the wire; the emulator fires it
-    at its next hh:mm (doc "MCU pushes" ``0308``: a fired once slot).
+    Its date is off the wire: today's hh:mm, or tomorrow's once that minute is
+    past (doc "MCU pushes" ``0308``: a fired once slot).
     """
     clock = ManualClock()
     device = A2345(clock=clock)
@@ -1689,7 +2177,7 @@ def test_a_once_timed_task_fires_at_its_next_time_then_disables_itself() -> None
         [port, (0xA3, b"\x01\x01"), (0xA4, b"\x03\x01\x17\x1a\x00")],
     )
     fired = advance(device, client, clock, 45)
-    fired += advance(device, client, clock, SWITCH_REPORT_DEBOUNCE)
+    fired += advance(device, client, clock, REPORT_WAIT)
     week = advance(device, client, clock, 7 * 86400)
 
     clock_field = device_clock(45)
@@ -1724,6 +2212,299 @@ def test_a_timed_task_firing_on_a_port_already_so_sends_no_0302() -> None:
     assert timer.timed_task_start_switch == 1
 
 
+def test_an_a91b2_once_timed_task_fires_at_its_date_then_disables_itself() -> None:
+    """A once on-time (weekdays 0) fires at its date and minute, then ``0308`` en 00.
+
+    prime-a2345-a91b2.md A91B2 "Schedule firing": on the first 150 ms pass in
+    Sunday 23:26 (45 s on), the timer run fires it and disables it; usbc_1's
+    ``0302`` goes 4 passes after the 45 s marking pass.
+    """
+    clock = ManualClock()
+    device = A91B2(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x02")
+    command(device, client, 0x207, [port, (0xA3, b"\x01\x00")])
+    advance(device, client, clock, 0.6)
+
+    command(
+        device,
+        client,
+        0x208,
+        [port, (0xA3, b"\x01\x01"), (0xA4, b"\x03\x01\x17\x1a\x00")],
+    )
+    fired = advance(device, client, clock, 44.9)
+
+    clock_field = device_clock(45)
+    assert fired == [
+        ("4308", f"a10131a2020102a3020101a4050400171a00{clock_field}"),
+        ("4302", f"a10131a2020102a3020101{clock_field}"),
+    ]
+    timer = decode_field(snapshot(device), "b0", Timer)
+    assert timer.relay_switch
+    assert timer.timed_task_start_switch == 0
+
+
+def test_an_a91b2_timed_task_firing_on_a_port_already_so_sends_no_0302() -> None:
+    """An on-time firing on a port already on changes nothing and reports nothing."""
+    clock = ManualClock()
+    device = A91B2(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x02")
+
+    command(device, client, 0x208, [port, (0xA3, b"\x01\x01"), SUNDAY_2326])
+    fired = advance(device, client, clock, 46)
+
+    assert fired == []
+    assert decode_field(snapshot(device), "b0", Timer).relay_switch
+
+
+def test_an_a91b2_countdown_expiry_on_a_port_already_off_sends_no_0302() -> None:
+    """The expiry reports the switch only if it changes it; ``0307`` still disarms.
+
+    Armed at 0.6 s, shown armed on the 0.75 s pass, stepped to 0 at the 1 s
+    RTC edge, it expires on the 1.05 s pass.
+    """
+    clock = ManualClock()
+    device = A91B2(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x02")
+    command(device, client, 0x207, [port, (0xA3, b"\x01\x00")])
+    advance(device, client, clock, 0.6)
+
+    command(device, client, 0x209, [port, arm(1)])
+    expired = advance(device, client, clock, 0.6)
+
+    assert [cmd for cmd, _ in expired] == ["4307", "4307"]
+
+
+def test_an_a91b2_countdown_steps_on_the_rtcs_own_second() -> None:
+    """``remaining`` drops in the RTC second interrupt; the 150 ms group expires it.
+
+    prime-a2345-a91b2.md A91B2 "Countdown timing" / "Timer timing": the RTC is
+    set at 0.3 s, so its seconds start at 0.3 + k. A 2 s ``4209`` at 0.4 s
+    steps at 1.3 and 2.3 s; the 2.4 s pass (one period after boot, 0.15 k)
+    switches the port off and disarms it. The USB-C task marks the change on
+    its 2.4 s pass, after the timer group, and sends 4 passes on.
+    """
+    clock = ManualClock()
+    device = A91B2(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x02")
+    advance(device, client, clock, 0.3)
+    fields = [(0xA1, TIMESTAMP), (0xA3, UTC_OFFSET), (0xA5, TZ)]
+    exchange(device.negotiated_module, client, 0x022, fields)
+    advance(device, client, clock, 0.1)
+
+    def remaining() -> int:
+        timer = decode_field(snapshot(device), "b0", Timer)
+        return int(timer.countdown_task_remaining_seconds)
+
+    command(device, client, 0x209, [port, arm(2)])
+    steps = []
+    for at in (0.85, 0.1):
+        advance(device, client, clock, at)
+        steps.append(remaining())
+    before_pass = advance(device, client, clock, 0.9)
+    expired = advance(device, client, clock, 0.2)
+    off = not decode_field(snapshot(device), "b0", Timer).relay_switch
+    reported = advance(device, client, clock, 0.4)
+
+    assert steps == [2, 1]
+    assert before_pass == []
+    assert [cmd for cmd, _ in expired] == ["4307"]
+    assert off
+    assert [cmd for cmd, _ in reported] == ["4302"]
+
+
+def test_an_a91b2_repeating_slot_needs_second_0() -> None:
+    """A repeating slot fires only when the seconds read 0, so a jump into :05 skips.
+
+    prime-a2345-a91b2.md A91B2 "Schedule firing": a clock set to Sunday
+    23:26:05 leaves a 23:26 off-time unfired for that minute.
+    """
+    clock = ManualClock()
+    device = A91B2(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x02")
+    command(device, client, 0x208, [port, (0xA3, b"\x01\x00"), SUNDAY_2326])
+    advance(device, client, clock, 2)
+
+    moved = ui(4).build(ui(4).parse(TIMESTAMP) + 2 + 49)
+    fields = [(0xA1, moved), (0xA3, UTC_OFFSET), (0xA5, TZ)]
+    exchange(device.negotiated_module, client, 0x022, fields)
+    advance(device, client, clock, 30)
+
+    assert decode_field(snapshot(device), "b0", Timer).relay_switch
+
+
+def test_an_a91b2_repeating_slot_fires_on_the_first_pass_in_second_0() -> None:
+    """At phase 0.05 the passes run at 0.05 + 0.15 k: 23:26:00 (45 s) fires at 45.05."""
+    clock = ManualClock()
+    device = A91B2(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(systick_phase=0.05)
+    port = (0xA2, b"\x01\x02")
+    command(device, client, 0x208, [port, (0xA3, b"\x01\x00"), SUNDAY_2326])
+
+    advance(device, client, clock, 45.02)
+    waiting = decode_field(snapshot(device), "b0", Timer).relay_switch
+    advance(device, client, clock, 0.04)
+
+    assert waiting
+    assert not decode_field(snapshot(device), "b0", Timer).relay_switch
+
+
+def test_an_a91b2_slots_hold_through_another_port_s_pass_in_second_0() -> None:
+    """A fired repeating slot stays latched in second 0; a future once slot waits.
+
+    prime-a2345-a91b2.md A91B2 "Schedule firing": the usbc_1 off-time fires on
+    the 45 s pass; usbc_1 is switched back on, and a 0 s ``4209`` on usbc_2
+    brings the 45.15 s pass, which neither fires usbc_1 again nor ends usbc_3's
+    once 23:30.
+    """
+    clock = ManualClock()
+    device = A91B2(clock=clock)
+    client = prime_client(device, TOKEN)
+    usbc_1 = (0xA2, b"\x01\x02")
+    command(device, client, 0x208, [usbc_1, (0xA3, b"\x01\x00"), SUNDAY_2326])
+    once_2330 = (0xA4, b"\x03\x01\x17\x1e\x00")
+    command(
+        device, client, 0x208, [(0xA2, b"\x01\x04"), (0xA3, b"\x01\x00"), once_2330]
+    )
+    advance(device, client, clock, 45.03)
+    command(device, client, 0x207, [usbc_1, (0xA3, b"\x01\x01")])
+
+    command(device, client, 0x209, [(0xA2, b"\x01\x03"), arm(0)])
+    advance(device, client, clock, 0.15)
+
+    assert decode_field(snapshot(device), "b0", Timer).relay_switch
+    assert not decode_field(snapshot(device), "b1", Timer).relay_switch
+    assert decode_field(snapshot(device), "b2", Timer).timed_task_end_switch == 1
+
+
+@pytest.mark.parametrize(
+    ("model", "select", "record", "sent"),
+    [
+        pytest.param(A2345, 0, "aa", 0.6, id="A2345: source 2, the 5th tick on"),
+        pytest.param(A91B2, 0, "aa", 0.2, id="A91B2 AC: its next 100 ms pass"),
+        pytest.param(A91B2, 2, "b0", 0.6, id="A91B2 USB-C: 4 passes after marking"),
+    ],
+)
+def test_a_prime_countdown_armed_at_0_switches_its_port_off_on_the_next_pass(
+    model: type[A2345 | A91B2], select: int, record: str, sent: float
+) -> None:
+    """A 0 s ``4209`` on a port that's on: the 0.15 s pass ends it and switches off.
+
+    Ended before its edge is shown, it is never shown armed, so no ``0307``.
+    The ``0302`` goes as each unit reports a switch: the A2345's countdown
+    writes source 2 (it found the port on) and reports on the 5th tick; the
+    A91B2's AC task on its 0.2 s pass, the USB-C task 4 passes after marking.
+    """
+    clock = ManualClock()
+    device = model(clock=clock)
+    client = prime_client(device, TOKEN)
+    advance(device, client, clock, 0.05)
+
+    command(device, client, 0x209, [(0xA2, bytes([1, select])), arm(0)])
+    early = advance(device, client, clock, sent - 0.05 - 0.02)
+    timer = decode_field(snapshot(device), record, Timer)
+    reported = advance(device, client, clock, 0.04)
+
+    off = f"a10131a20201{select:02x}a3020100{device_clock(0)}"
+    assert early == []
+    assert not timer.relay_switch
+    assert not timer.countdown_task_switch
+    assert reported == [("4302", off)]
+
+
+def test_an_a91b2_disarm_on_a_never_armed_ac_port_acks_and_draws_no_0307() -> None:
+    """A never-armed AC port (record ``+0`` ``ff``) is skipped by the AC tick.
+
+    prime-a2345-a91b2.md A91B2 "AC countdown record ``+0``": a disarm ``4209``
+    there acks and draws no ``0307``; the countdown stays at its defaults.
+    """
+    clock = ManualClock()
+    device = A91B2(clock=clock)
+    client = prime_client(device, TOKEN)
+    disarm = [(0xA2, b"\x01\x01"), (0xA3, b"\x04\x00\x00\x00\x00\x00")]
+
+    replies = command(device, client, 0x209, disarm)
+    later = advance(device, client, clock, 1)
+
+    timer = decode_field(snapshot(device), "ab", Timer)
+    assert [cmd for cmd, _ in replies] == ["4a09"]
+    assert later == []
+    assert not timer.countdown_task_switch
+
+
+def test_an_a91b2_countdown_disarm_stops_its_steps() -> None:
+    """A ``4209`` disarm on ac_1 keeps the seconds as the remaining time, no step on.
+
+    The next pass shows the disarm; nothing follows.
+    """
+    clock = ManualClock()
+    device = A91B2(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x00")
+    command(device, client, 0x209, [port, arm(5)])
+    advance(device, client, clock, 0.5)
+
+    command(device, client, 0x209, [port, (0xA3, b"\x04\x00\x00\x00\x00\x00")])
+    later = advance(device, client, clock, 3)
+
+    timer = decode_field(snapshot(device), "aa", Timer)
+    assert [cmd for cmd, _ in later] == ["4307"]
+    assert (timer.countdown_task_switch, timer.countdown_task_remaining_seconds) == (
+        False,
+        5,
+    )
+    assert timer.relay_switch
+
+
+def test_an_a91b2_switch_flipped_back_within_a_pass_reports_nothing() -> None:
+    """``ac_switch_push_0302?`` compares the switch with its shadow: off, on, none."""
+    clock = ManualClock()
+    device = A91B2(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x00")
+    advance(device, client, clock, 0.02)
+
+    command(device, client, 0x207, [port, (0xA3, b"\x01\x00")])
+    command(device, client, 0x207, [port, (0xA3, b"\x01\x01")])
+    later = advance(device, client, clock, 1)
+
+    assert later == []
+
+
+def test_a2345_a_clock_set_out_of_a_fired_minute_clears_its_latch() -> None:
+    """The latch holds until a pass sees the minute no longer matching.
+
+    prime-a2345-a91b2.md "Schedule timing": jumped out of 23:26 and back, the
+    slot fires again.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x00")
+    command(device, client, 0x208, [port, (0xA3, b"\x01\x00"), SUNDAY_2326])
+    advance(device, client, clock, 45.1)
+    command(device, client, 0x207, [port, (0xA3, b"\x01\x01")])
+
+    def clock_set(shift: int) -> None:
+        moved = ui(4).build(ui(4).parse(TIMESTAMP) + int(clock.now()) + shift)
+        fields = [(0xA1, moved), (0xA3, UTC_OFFSET), (0xA5, TZ)]
+        exchange(device.negotiated_module, client, 0x022, fields)
+
+    clock_set(60)
+    advance(device, client, clock, 0.2)
+    kept_on = decode_field(snapshot(device), "aa", Timer).relay_switch
+    clock_set(0)
+    advance(device, client, clock, 0.2)
+
+    assert kept_on
+    assert not decode_field(snapshot(device), "aa", Timer).relay_switch
+
+
 def test_a_timed_task_disabled_drops_its_pending_firing() -> None:
     clock = ManualClock()
     device = A2345(clock=clock)
@@ -1743,11 +2524,11 @@ def test_a_timed_task_disabled_drops_its_pending_firing() -> None:
     ("shift", "due"),
     [
         pytest.param(-3600, 3645, id="an hour back fires an hour later"),
-        pytest.param(60, 7 * 86400 - 15, id="past it waits a week"),
+        pytest.param(120, 7 * 86400 - 75, id="past it waits a week"),
     ],
 )
 def test_a_clock_set_re_times_a_queued_timed_task(shift: int, due: int) -> None:
-    """A ``0022`` that moves the RTC re-times a queued half by the new clock."""
+    """A ``0022`` that moves the RTC moves a slot's firing by the new clock."""
     clock = ManualClock()
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
@@ -1768,10 +2549,36 @@ def test_a_clock_set_re_times_a_queued_timed_task(shift: int, due: int) -> None:
     )
     early = advance(device, client, clock, due - 1)
     fired = advance(device, client, clock, 1)
-    fired += advance(device, client, clock, SWITCH_REPORT_DEBOUNCE)
+    fired += advance(device, client, clock, REPORT_WAIT)
 
     assert early == []
     assert fired == [("4302", f"a10131a2020100a3020100{device_clock(shift + due)}")]
+
+
+def test_a2345_a_clock_set_into_a_slots_minute_fires_it_on_the_next_pass() -> None:
+    """The pass checks the slot's hour:minute, so a jump into it fires it then.
+
+    prime-a2345-a91b2.md "Schedule timing": the first pass in its minute fires
+    a repeating slot.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x00")
+    command(device, client, 0x208, [port, (0xA3, b"\x01\x00"), SUNDAY_2326])
+    advance(device, client, clock, 2)
+
+    moved = ui(4).build(ui(4).parse(TIMESTAMP) + 2 + 60)
+    exchange(
+        device.negotiated_module,
+        client,
+        0x022,
+        [(0xA1, moved), (0xA3, UTC_OFFSET), (0xA5, TZ)],
+    )
+    fired = advance(device, client, clock, 0.2)
+
+    assert fired == []
+    assert not decode_field(snapshot(device), "aa", Timer).relay_switch
 
 
 def test_the_a91b2_mcu_sets_its_clock_a_second_ahead() -> None:
@@ -1813,25 +2620,26 @@ def test_the_a2345_mcu_takes_no_utc_before_2024_04_30() -> None:
     assert module.epoch == 0x66311580 + 1
 
 
-async def test_an_a91b2_ac_disarm_copies_the_seconds_into_the_remaining_time() -> None:
-    """The AC disarm path (0x08004f3c) restores the remaining time to the seconds."""
-    device = A91B2(clock=ManualClock())
-    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as ble:
-        link = BleakLink(ble, AppClient(encrypted_outer=False))
-        await link.start()
-        await link.negotiate(TOKEN)
+def test_an_a91b2_ac_disarm_copies_the_seconds_into_the_remaining_time() -> None:
+    """The AC disarm path (0x08004f3c) restores the remaining time to the seconds.
 
-        port = [(0xA1, b"\x21"), (0xA2, b"\x01\x00")]
-        await link.send(0x209, [*port, (0xA3, b"\x04\x01\x20\x1c\x00\x00")], SESSION)
-        device.set_values(ac1_countdown_task_remaining_seconds=100)
-        disarm = [*port, (0xA3, b"\x04\x00\x00\x00\x00\x00"), CLOCK]
-        disarming = await link.send(0x209, disarm, SESSION)
+    The next timer pass shows the disarm with it.
+    """
+    clock = ManualClock()
+    device = A91B2(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x00")
+    command(device, client, 0x209, [port, arm(7200)])
+    advance(device, client, clock, 0.2)
+    device.set_values(ac1_countdown_task_remaining_seconds=100)
 
-    assert disarming[1].plaintext.hex() == (
-        "a10131a2020100a30a0400201c0000201c0000" + device_clock(0)
-    )
-    snapshot = device.mcu.respond(0x200, values=device.negotiated_module.values)[0]
-    countdown = decode_field(Parameters.parse(snapshot.payload), "aa", Timer)
+    command(device, client, 0x209, [port, (0xA3, b"\x04\x00\x00\x00\x00\x00")])
+    disarmed = advance(device, client, clock, 0.15)
+
+    assert disarmed == [
+        ("4307", "a10131a2020100a30a0400201c0000201c0000" + device_clock(0))
+    ]
+    countdown = decode_field(snapshot(device), "aa", Timer)
     assert countdown.countdown_task_remaining_seconds == 7200
 
 
@@ -2191,7 +2999,7 @@ def test_a2345_reports_a_screen_setting_changed_on_the_unit() -> None:
 
     def settled(**values: Value) -> list[tuple[str, str]]:
         device.set_values(**values)
-        return advance(device, client, clock, SCREEN_REPORT_DEBOUNCE)
+        return advance(device, client, clock, REPORT_WAIT)
 
     assert settled(screen_brightness=40) == [
         ("430a", f"a10131a2020128{device_clock(0)}")
@@ -2235,10 +3043,10 @@ def test_a2345_brightness_set_unchanged_on_the_unit_still_reports() -> None:
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
     device.set_values(screen_brightness=40, screen_timeout=2)
-    advance(device, client, clock, SCREEN_REPORT_DEBOUNCE)
+    advance(device, client, clock, REPORT_WAIT)
 
     device.set_values(screen_brightness=40, screen_timeout=2)
-    again = advance(device, client, clock, SCREEN_REPORT_DEBOUNCE)
+    again = advance(device, client, clock, REPORT_WAIT)
 
     assert [cmd for cmd, _ in again] == ["430a"]
 
@@ -2320,7 +3128,7 @@ def test_a2345_an_unit_change_after_an_app_write_still_reports() -> None:
     command(device, client, 0x204, [(0xA2, b"\x01\x32")])
     advance(device, client, clock, 0.2)
     device.set_values(screen_brightness=40)
-    reports = advance(device, client, clock, SCREEN_REPORT_DEBOUNCE)
+    reports = advance(device, client, clock, REPORT_WAIT)
 
     assert [cmd for cmd, _ in reports] == ["430a"]
 
@@ -3149,9 +3957,11 @@ def test_a_prime_push_leaves_ble_for_mqtt_while_wifi_is_up() -> None:
     port = (0xA2, b"\x01\x00")
 
     device.set_wifi(True)
-    switched = command(device, client, 0x207, [port, (0xA3, b"\x01\x00")])
+    switched = command(
+        device, client, 0x207, [(0xA2, b"\x01\x01"), (0xA3, b"\x01\x00")]
+    )
     command(device, client, 0x209, [port, arm(1)])
-    expired = advance(device, client, clock, 1)
+    expired = advance(device, client, clock, 2)
     stream = command(device, client, 0x20B, []), advance(device, client, clock, 5)
     while_up = published(device)
     device.set_wifi(False)
@@ -3166,6 +3976,7 @@ def test_a_prime_push_leaves_ble_for_mqtt_while_wifi_is_up() -> None:
         (0x301, "a10164"),
         (0x307, "a10164"),
         (0x307, "a10164"),
+        (0x302, "a10164"),
         *[(0x303, "a10134")] * 6,
     ]
 
@@ -3558,10 +4369,10 @@ def test_a2345_theme_report_carries_the_holiday_record_while_it_shows() -> None:
     device.set_wifi(False)
 
     device.set_values(screen_saver_theme=1)
-    shown = advance(device, client, clock, SCREEN_REPORT_DEBOUNCE)
+    shown = advance(device, client, clock, REPORT_WAIT)
     advance(device, client, clock, 600)
     device.set_values(screen_saver_theme=2)
-    after = advance(device, client, clock, SCREEN_REPORT_DEBOUNCE)
+    after = advance(device, client, clock, REPORT_WAIT)
 
     fields = Parameters.parse(bytes.fromhex(shown[0][1]))
     assert [cmd for cmd, _ in shown] == ["430b"]
@@ -3773,22 +4584,6 @@ def test_a2345_a_clock_switch_back_on_before_the_tick_keeps_the_screensaver() ->
     assert module.values[DISPLAY] == 1
 
 
-def test_a2345_the_window_phase_is_first_evaluated_a_second_after_the_rtc() -> None:
-    """``DAT_2000b489`` reads 0 until 10 passes after the RTC is valid."""
-    clock = ManualClock()
-    device = A2345(clock=clock)
-    prime_client(device, TOKEN)
-    module = device.negotiated_module
-
-    clock.advance(0.9)
-    module.check_pushes()
-    early = module.values.get(WINDOW_PHASE, 0)
-    clock.advance(0.2)
-    module.check_pushes()
-
-    assert (early, module.values[WINDOW_PHASE]) == (0, 2)
-
-
 #: 4213 windows against the RTC (Sunday 23:25:15, then Monday 00:25:15 an hour
 #: on), and the phase each reads: 2 inside, 1 outside. Weekdays bit 0 Monday,
 #: bit 6 Sunday.
@@ -3824,16 +4619,162 @@ def test_a2345_the_4213_window_phase(
     """prime-a2345-a91b2.md "``4213`` window": minute resolution, start inclusive.
 
     End exclusive, wrapping past midnight; a once window (weekdays 0) is dated.
+    Read after the first evaluation, a pass on.
     """
     clock = ManualClock()
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
-    advance(device, client, clock, 1.1)
+    advance(device, client, clock, WINDOW_FIRST_WAIT)
 
     command(device, client, 0x213, screensaver_window(start, end, weekdays))
-    advance(device, client, clock, later)
+    advance(device, client, clock, later + PASS_WAIT)
 
     assert device.negotiated_module.values[WINDOW_PHASE] == phase
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "dates", "phase"),
+    [
+        pytest.param((23, 30), (23, 40), (20260913, 20260913), 1, id="before both"),
+        pytest.param(
+            (23, 30), (1, 0), (20260913, 20260914), 1, id="before both, end <= start"
+        ),
+        pytest.param((9, 0), (12, 0), (20260914, 20260914), 1, id="after both"),
+        pytest.param(
+            (12, 0), (9, 0), (20260913, 20260914), 2, id="after both, start >= end"
+        ),
+        pytest.param((23, 0), (23, 40), (20260913, 20260913), 2, id="in it"),
+        pytest.param((23, 30), (10, 0), (20260913, 20260914), 1, id="before the start"),
+    ],
+)
+def test_a2345_a_once_window_is_dated_and_phased_by_now_against_its_ends(
+    start: tuple[int, int], end: tuple[int, int], dates: tuple[int, int], phase: int
+) -> None:
+    """``screensaver_window_store``: the doc's four cases, at Sunday 2026-09-13 23:25.
+
+    prime-a2345-a91b2.md "``4213`` window dates": the dates as ``b4a0`` /
+    ``b4aa`` (year, month, day); a once window's phase set at the store.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    advance(device, client, clock, WINDOW_FIRST_WAIT)
+
+    command(device, client, 0x213, screensaver_window(start, end, 0))
+    advance(device, client, clock, DISPLAY_TICK)
+
+    stored = (module.values[WINDOW_START_DATE], module.values[WINDOW_END_DATE])
+    assert (stored, module.values[WINDOW_PHASE]) == (dates, phase)
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "phase", "clock_on"),
+    [
+        pytest.param((23, 55), (0, 10), 2, False, id="an end on Oct 32 has passed"),
+        pytest.param((23, 30), (23, 45), 1, True, id="a start on Oct 32 is skipped"),
+    ],
+)
+def test_a2345_a_once_window_rolled_past_month_end_reads_passed_from_the_1st(
+    start: tuple[int, int], end: tuple[int, int], phase: int, *, clock_on: bool
+) -> None:
+    """Every roll is a plain day + 1, and ``date_cmp?`` compares year, month, day.
+
+    prime-a2345-a91b2.md "``4213`` window dates": stored at Oct 31 23:50, a
+    roll lands on (2026, 10, 32), which is passed at Nov 1 00:00. An end found
+    passed turns the clock off with the phase left inside; a start found
+    passed is skipped for good.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    advance(device, client, clock, WINDOW_FIRST_WAIT)
+    local = int(datetime(2026, 10, 31, 23, 50, tzinfo=UTC).timestamp())
+    moved = ui(4).build(local + ui(4).parse(UTC_OFFSET))
+    exchange(module, client, 0x022, [(0xA1, moved), (0xA3, UTC_OFFSET), (0xA5, TZ)])
+
+    command(device, client, 0x213, screensaver_window(start, end, 0))
+    advance(device, client, clock, 11 * 60)
+
+    assert (module.values[WINDOW_START_DONE], module.values[WINDOW_PHASE]) == (1, phase)
+    assert bool(module.values.get("screen_saver_switch", True)) is clock_on
+
+
+def test_a2345_the_window_is_first_evaluated_on_the_10th_pass() -> None:
+    """``clock_holiday_autoscreen?``: first on the 10th pass with the RTC valid.
+
+    prime-a2345-a91b2.md "``4213`` window": valid from boot, that is 1.5 s.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+
+    advance(device, client, clock, 1.49)
+    unevaluated = WINDOW_PHASE not in module.values
+    advance(device, client, clock, 0.02)
+
+    assert unevaluated
+    assert module.values[WINDOW_PHASE] == 2
+
+
+def test_a2345_a_window_edge_lands_on_the_first_pass_in_its_minute() -> None:
+    """The window is evaluated on every 150 ms pass, so its start lands on one.
+
+    prime-a2345-a91b2.md "``4213`` window": at phase 0.05 the passes run at
+    0.05 + 0.15 k; 23:26 starts at 45 s, so the 45.05 s pass goes inside.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(systick_phase=0.05)
+    advance(device, client, clock, 2)
+    command(device, client, 0x213, screensaver_window((23, 26), (23, 40), 0x7F))
+
+    advance(device, client, clock, 43.02)
+    waiting = module.values[WINDOW_PHASE]
+    advance(device, client, clock, 0.04)
+
+    assert (waiting, module.values[WINDOW_PHASE]) == (1, 2)
+
+
+def test_a2345_a_weekly_window_written_before_the_10th_pass_is_judged_on_it() -> None:
+    """The phase stays 0 until the seed block re-stores and judges it in one pass.
+
+    prime-a2345-a91b2.md "``4213`` first evaluation": a weekly 23:30-23:40 at
+    0.5 s leaves the phase 0 (the store returns early); the 1.5 s pass judges
+    it outside.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    advance(device, client, clock, 0.5)
+
+    command(device, client, 0x213, screensaver_window((23, 30), (23, 40), 0x7F))
+    advance(device, client, clock, 0.99)
+    unjudged = WINDOW_PHASE not in module.values
+    advance(device, client, clock, 0.02)
+
+    assert unjudged
+    assert module.values[WINDOW_PHASE] == 1
+
+
+def test_a2345_a_weekly_window_store_leaves_the_phase_to_the_next_pass() -> None:
+    """``screensaver_window_store`` sets no weekly phase; the next pass does."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    advance(device, client, clock, 2.06)
+
+    command(device, client, 0x213, screensaver_window((23, 30), (23, 40), 0x7F))
+    stored = module.values[WINDOW_PHASE]
+    advance(device, client, clock, 0.15)
+
+    assert (stored, module.values[WINDOW_PHASE]) == (2, 1)
 
 
 def test_a2345_a_once_window_whose_start_a_clock_set_passes_is_skipped() -> None:
@@ -3845,7 +4786,7 @@ def test_a2345_a_once_window_whose_start_a_clock_set_passes_is_skipped() -> None
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
     module = device.negotiated_module
-    advance(device, client, clock, 1.1)
+    advance(device, client, clock, WINDOW_FIRST_WAIT)
     command(device, client, 0x213, screensaver_window((23, 30), (23, 40), 0))
 
     moved = ui(4).build(ui(4).parse(TIMESTAMP) + 360)
@@ -3866,7 +4807,7 @@ def test_a2345_a_once_window_end_turns_the_clock_off() -> None:
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
     module = device.negotiated_module
-    advance(device, client, clock, 1.1)
+    advance(device, client, clock, WINDOW_FIRST_WAIT)
     command(device, client, 0x213, screensaver_window((23, 25), (23, 27), 0))
     into_screensaver(device, client, clock)
 
@@ -3891,10 +4832,10 @@ def test_a2345_a_once_window_end_with_the_clock_already_off_reports_nothing() ->
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
     module = device.negotiated_module
-    advance(device, client, clock, 1.1)
+    advance(device, client, clock, WINDOW_FIRST_WAIT)
     command(device, client, 0x213, screensaver_window((23, 25), (23, 27), 0))
     device.set_values(screen_saver_switch=False)
-    advance(device, client, clock, SCREEN_REPORT_DEBOUNCE)
+    advance(device, client, clock, REPORT_WAIT)
 
     pushes = advance(device, client, clock, 106)
 
@@ -3911,12 +4852,12 @@ def test_a2345_a_once_window_end_passed_by_a_clock_set_turns_the_clock_off() -> 
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
     module = device.negotiated_module
-    advance(device, client, clock, 1.1)
+    advance(device, client, clock, WINDOW_FIRST_WAIT)
     command(device, client, 0x213, screensaver_window((23, 25), (23, 27), 0))
 
     moved = ui(4).build(ui(4).parse(TIMESTAMP) + 300)
     exchange(module, client, 0x022, [(0xA1, moved), (0xA3, UTC_OFFSET), (0xA5, TZ)])
-    advance(device, client, clock, DISPLAY_TICK)
+    advance(device, client, clock, PASS_WAIT)
 
     assert module.values[WINDOW_PHASE] == 2
     assert module.values["screen_saver_switch"] is False

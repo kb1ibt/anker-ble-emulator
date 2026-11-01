@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import partial
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -17,7 +18,15 @@ from construct import (
     Struct,
 )
 
-from anker_ble_emulator.layouts import STATUS_ACCEPTED, TYPE_UI, ui
+from anker_ble_emulator.layouts import (
+    CLOCK,
+    RTC,
+    RTC_SECOND_AT,
+    STATUS_ACCEPTED,
+    TYPE_BIN,
+    TYPE_UI,
+    ui,
+)
 from anker_ble_emulator.live import LiveSource
 from anker_ble_emulator.module import AuthMode
 from anker_ble_emulator.parameters import (
@@ -30,16 +39,21 @@ from anker_ble_emulator.parameters import (
     container,
     decode_field,
     decode_request,
-    echo,
     leaf_zeros,
     one_field,
 )
 from anker_ble_emulator.products import ModuleBuild, Outer, Path, Product
+from anker_ble_emulator.timed import Step, Timed
 from anker_ble_emulator.validators import OptionsValidator
 
 from .base import Advert, ProductDevice, Profile, register
 from .prime import (
     BLE_ROUTE,
+    COUNTDOWN_FIELDS,
+    DAY,
+    EVERY_DAY,
+    HALF_BY_SLOT,
+    MINUTE,
     MSGTYPE_303,
     MSGTYPE_A00,
     PORT_CLOCKED,
@@ -47,24 +61,39 @@ from .prime import (
     PORT_GROUPS,
     PUSH_ROUTES,
     REALTIME_BURST,
+    RTC_DAY0_WEEKDAY,
     SCHEDULE_HEAD,
     SCHEDULE_HEAD_FIELDS,
     STATS_PERIOD,
     SWITCH,
+    SYSTICK_PHASE,
     TIMED_TASK_LEADS,
+    WEEK,
     WIFI_UP,
     Countdown,
+    CountdownRecordRemainingFirst,
     ac_port_countdown_task,
     ac_port_timed_task,
-    countdown_push,
-    countdown_timers,
+    check_systick_phase,
+    countdown_shown_events,
+    countdown_shown_name,
+    date_once_slots,
+    date_rtc,
     every,
+    grid_delay,
+    hidden_set,
+    latch_name,
     mqtt_routed,
+    next_minute,
+    once_compare,
+    once_date_name,
     reaches_ble,
-    schedule_timers,
+    schedule_slot,
     set_screen_timeout,
+    slot_disabled_push,
+    slot_written,
     stats_push,
-    timed_task_conflict,
+    timed_push,
     timed_task_push,
     wifi_events,
 )
@@ -74,7 +103,6 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from anker_ble_emulator.layouts import Value
-    from anker_ble_emulator.timed import Timed
 
 
 # --- Telemetry: 0303 and 0a00 ------------------------------------------------
@@ -232,6 +260,315 @@ def _set_ac_light_mode(request: ParameterDict) -> dict[str, Value] | None:
     return decode_request(request, {"a2": ("ac_light_mode", SWITCH)})
 
 
+# --- Timers: the TIM1 task scheduler (doc "Timer timing") ---------------------
+# ``sched_tasks_register?`` registers every task at boot, on one phase
+# (``systick_phase``); a flag-0 task first runs one period after boot. Tasks
+# due at one tick run in slot order: ``ac_switch_push_0302?`` (100 ms), then
+# ``timer_group_tick_150?`` (150 ms), then ``usbc_switch_push_0302?`` (100 ms).
+
+SWITCH_TASK = 0.1
+TIMER_GROUP = 0.15
+AC_TASK_AFTER = 1e-6
+TIMER_AFTER = 2e-6
+USBC_TASK_AFTER = 3e-6
+TIMER_KEY = "timer_group"
+AC_PORTS = frozenset({"ac1", "ac2"})
+#: ``switch_0302_debounce?``: the marking call counts 1 and the 5th sends, 4
+#: periods after it.
+USBC_SEND_AFTER = 4 * SWITCH_TASK
+#: The RTC second interrupt steps every armed ``remaining`` (doc "Countdown
+#: timing").
+RTC_SECOND = 1.0
+
+
+def _shadow(port: str) -> str:
+    """Return the hidden name of a port's last-reported switch (``0x200000f2``)."""
+    return f"_{port}_switch_shadow"
+
+
+def _switch_task(select: int, state: Mapping[str, Value]) -> Timed:
+    """Return a port's switch task on its next period-100 pass."""
+    port = PORT_BY_SELECT[select]
+    after = AC_TASK_AFTER if port in AC_PORTS else USBC_TASK_AFTER
+    delay = grid_delay(state, SWITCH_TASK, after, float(state[CLOCK]))
+    return Timed(delay, f"{port}_switch_task", partial(_switch_seen, select))
+
+
+def _switch_seen(
+    select: int,
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Run a port's switch task: one off its shadow is reported or marked.
+
+    ``ac_switch_push_0302?`` sends ``0302`` on this pass; ``usbc_switch_push_0302?``
+    marks it and sends 4 periods on, a new change marking it again.
+    """
+    port = PORT_BY_SELECT[select]
+    current = bool(state[f"{port}_relay_switch"])
+    if current == bool(state.get(_shadow(port), current)):
+        return Step()
+    if port in AC_PORTS:
+        return Step(
+            values={_shadow(port): current}, frames=(_switch_push(select, state),)
+        )
+    send = Timed(USBC_SEND_AFTER, f"{port}_switch_send", partial(_switch_sent, select))
+    return Step(values={_shadow(port): current}, then=(send,))
+
+
+def _switch_sent(
+    select: int,
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Send a marked USB-C port's ``0302``, its switch as it stands."""
+    return Step(frames=(_switch_push(select, state),))
+
+
+def _switch_push(select: int, state: Mapping[str, Value]) -> tuple[int, bytes]:
+    """Return ``0302``: a port and its switch."""
+    on = bool(state[f"{PORT_BY_SELECT[select]}_relay_switch"])
+    fields = {
+        "a2": container("a2", TYPE_UI, ui(1).build(select)),
+        "a3": container("a3", TYPE_UI, ui(1).build(on)),
+    }
+    return timed_push(0x302, fields, state)
+
+
+def _switch_events(
+    before: Mapping[str, Value], after: Mapping[str, Value]
+) -> tuple[Timed, ...]:
+    """Return the switch task of each port a change switched, its shadow first set.
+
+    A port never reported yet takes the switch it had before as its shadow.
+    """
+    events = []
+    for select, port in PORT_BY_SELECT.items():
+        relay = f"{port}_relay_switch"
+        if bool(before[relay]) == bool(after[relay]):
+            continue
+        if _shadow(port) not in after:
+            prior = bool(before[relay])
+            shadow = partial(hidden_set, _shadow(port), prior, _timer_plan)
+            events.append(Timed(0, _shadow(port), shadow))
+        events.append(_switch_task(select, after))
+    return tuple(events)
+
+
+def _countdown_steps(
+    before: Mapping[str, Value], after: Mapping[str, Value]
+) -> tuple[Timed, ...]:
+    """Return each armed countdown's steps on the RTC's own seconds.
+
+    Armed, re-armed or given a new remaining time, or with the RTC set again,
+    ``remaining`` steps from the RTC's next second edge.
+    """
+    clock_set = before[RTC] != after[RTC]
+    edge = float(after[RTC_SECOND_AT]) + RTC_SECOND - float(after[CLOCK])
+    events = []
+    for port in PORT_BY_SELECT.values():
+        switch = f"{port}_countdown_task_switch"
+        remaining = f"{port}_countdown_task_remaining_seconds"
+        started = not before[switch] or before[remaining] != after[remaining]
+        if after[switch] and int(after[remaining]) and (started or clock_set):
+            step = partial(_countdown_step, port)
+            events.append(Timed(edge, f"{port}_countdown", step))
+    return tuple(events)
+
+
+def _countdown_step(
+    port: str,
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Step a countdown's ``remaining`` down one; the timer group ends it at 0."""
+    remaining = f"{port}_countdown_task_remaining_seconds"
+    if not state[f"{port}_countdown_task_switch"] or not int(state[remaining]):
+        return Step()
+    left = int(state[remaining]) - 1
+    step = Timed(RTC_SECOND, f"{port}_countdown", partial(_countdown_step, port))
+    return Step(values={remaining: left}, then=(step,) if left else ())
+
+
+def _timer_plan(state: Mapping[str, Value]) -> tuple[Timed, ...]:
+    """Return the next timer group pass with work to do, if any."""
+    now = float(state[CLOCK])
+    soon = [
+        due
+        for port in PORT_BY_SELECT.values()
+        for due in (_countdown_due(state, port), *_slots_due(state, port))
+        if due is not None
+    ]
+    if not soon:
+        return ()
+    delay = grid_delay(state, TIMER_GROUP, TIMER_AFTER, max(min(soon), now))
+    return (Timed(delay, TIMER_KEY, _timer_pass),)
+
+
+def _countdown_due(state: Mapping[str, Value], port: str) -> float | None:
+    """Return when a port's countdown next needs the timer group.
+
+    At once for an edge not shown yet or a 0; else the RTC edge it steps to 0.
+    """
+    armed = bool(state[f"{port}_countdown_task_switch"])
+    shown = state.get(countdown_shown_name(port))
+    if shown is not None and bool(shown) != armed:
+        return float(state[CLOCK])
+    if not armed:
+        return None
+    remaining = int(state[f"{port}_countdown_task_remaining_seconds"])
+    if not remaining:
+        return float(state[CLOCK])
+    return float(state[RTC_SECOND_AT]) + remaining * RTC_SECOND
+
+
+def _slots_due(state: Mapping[str, Value], port: str) -> list[float | None]:
+    """Return when each of a port's enabled slots next needs the timer group."""
+    return [_slot_due(state, port, half) for half in HALF_BY_SLOT.values()]
+
+
+def _slot_due(state: Mapping[str, Value], port: str, half: str) -> float | None:
+    """Return when an enabled slot next needs the timer group.
+
+    A once slot at its date and minute; a repeating one at second 0 of its
+    next minute, or, latched, at the next second, which clears the latch.
+    """
+    slot = schedule_slot(state, port, half)
+    if slot["switch"] != 1:
+        return None
+    rtc = int(state[RTC])
+    days = int(slot["weekdays"]) & EVERY_DAY
+    at = int(slot["hour"]) * 60 + int(slot["minute"])
+    if not days:
+        target = date_rtc(int(state.get(once_date_name(port, half), 0)), at)
+    elif state.get(latch_name(port, half)):
+        target = rtc + 1
+    else:
+        target = next_minute(rtc, at, days)
+        if target < rtc:
+            target = next_minute(rtc - rtc % MINUTE + MINUTE, at, days)
+    return float(state[RTC_SECOND_AT]) + target - rtc
+
+
+@dataclass
+class _TimerRun:
+    """One ``timer_group_tick_150?`` pass at work: the state as it goes, its output.
+
+    Attributes:
+        work: The state with the pass's changes so far.
+        changes: The values it set.
+        frames: The pushes it sent, in order.
+        later: The events it starts.
+
+    """
+
+    work: dict[str, Value]
+    changes: dict[str, Value]
+    frames: list[tuple[int, bytes]]
+    later: list[Timed]
+
+    def put(self, name: str, value: Value) -> None:
+        """Set ``name`` for the rest of the pass and after it."""
+        self.changes[name] = value
+        self.work[name] = value
+
+    def switch(self, select: int, *, on: bool) -> None:
+        """Switch a port (``ac_switch_set`` / ``usbc_switch_set``) if that changes."""
+        port = PORT_BY_SELECT[select]
+        relay = f"{port}_relay_switch"
+        if bool(self.work[relay]) == on:
+            return
+        if _shadow(port) not in self.work:
+            self.put(_shadow(port), bool(self.work[relay]))
+        self.put(relay, on)
+        self.later.append(_switch_task(select, self.work))
+
+    def countdown(self, select: int) -> None:
+        """``ac/usbc_countdown_tick_push_0307?``: expire one at 0, then show the edge.
+
+        At 0 the port switches off and the countdown disarms, ``remaining`` 0
+        on USB-C and the seconds set on AC. A switch that differs from the one
+        last shown pushes ``0307`` (doc "Countdown timing", ``0307`` row).
+        """
+        port = PORT_BY_SELECT[select]
+        switch = f"{port}_countdown_task_switch"
+        remaining = f"{port}_countdown_task_remaining_seconds"
+        if self.work[switch] and not int(self.work[remaining]):
+            seconds = self.work[f"{port}_countdown_task_seconds"]
+            self.switch(select, on=False)
+            self.put(switch, value=False)
+            self.put(remaining, 0 if port in USB_C else seconds)
+        armed = bool(self.work[switch])
+        shown = self.work.get(countdown_shown_name(port))
+        if shown is None or bool(shown) == armed:
+            return
+        self.put(countdown_shown_name(port), armed)
+        record = {name: self.work[f"{port}_{name}"] for name in COUNTDOWN_FIELDS}
+        fields = {
+            "a2": container("a2", TYPE_UI, ui(1).build(select)),
+            "a3": container(
+                "a3", TYPE_BIN, CountdownRecordRemainingFirst.build(record)
+            ),
+        }
+        self.frames.append(timed_push(0x307, fields, self.work))
+
+    def slot(self, select: int, half: str) -> None:
+        """``ac_timer_tick`` / ``usbc_timer_tick``: fire or end a slot.
+
+        Doc "Schedule firing".
+
+        A repeating one fires when its hour and minute match, the seconds read
+        0 and its weekday bit is set, latched until a call that doesn't match;
+        a once one fires at its date and minute, and fired or passed is
+        disabled with a ``0308``.
+        """
+        port = PORT_BY_SELECT[select]
+        slot = schedule_slot(self.work, port, half)
+        if slot["switch"] != 1:
+            return
+        on = half == "start"
+        days = int(slot["weekdays"]) & EVERY_DAY
+        if days:
+            rtc = int(self.work[RTC])
+            weekday = (rtc // DAY + RTC_DAY0_WEEKDAY) % WEEK
+            at = int(slot["hour"]) * 60 + int(slot["minute"])
+            match = (
+                rtc % DAY // MINUTE == at and not rtc % MINUTE and days >> weekday & 1
+            )
+            latched = bool(self.work.get(latch_name(port, half)))
+            if match and not latched:
+                self.put(latch_name(port, half), value=True)
+                self.switch(select, on=on)
+            elif not match and latched:
+                self.put(latch_name(port, half), value=False)
+            return
+        compared = once_compare(self.work, port, half)
+        if compared < 0:
+            return
+        if not compared:
+            self.switch(select, on=on)
+        self.put(f"{port}_timed_task_{half}_switch", 0)
+        self.frames.append(slot_disabled_push(select, half, slot, self.work))
+
+
+def _timer_pass(
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Run ``timer_group_tick_150?``: both countdown ticks, then both timer ticks."""
+    run = _TimerRun(dict(state), {}, [], [])
+    for select in PORT_BY_SELECT:
+        run.countdown(select)
+    for select in PORT_BY_SELECT:
+        for half in ("start", "end"):
+            run.slot(select, half)
+    return Step(
+        values=run.changes,
+        frames=tuple(run.frames),
+        then=(*run.later, *_timer_plan(run.work)),
+    )
+
+
 #: The MCU's fid 0x0f table, 0x200-0x21c, and the ops below 0x200 it handles
 #: inline (prime-a2345-a91b2.md "Commands"): every real handler acks ``00``
 #: where nothing recorded or modeled answers, an op past the table too. No
@@ -268,20 +605,14 @@ class A91B2Layout(TableLayout):
     READ_REPLIES = MappingProxyType({0x202: _screensaver_read})
     SIDE_EFFECTS = MappingProxyType(
         {
-            0x208: timed_task_conflict(PORT_BY_SELECT),
+            0x208: slot_written(PORT_BY_SELECT),
             0x209: _ac_disarm_restores_remaining,
         }
     )
-    #: ``0302`` follows every ``4207`` (``uploadACPortSwitchState``, after every
-    #: captured ``0a07``); ``0307`` a countdown arming or disarming; ``0308`` a
-    #: timed-task half a ``4208`` collision disabled (doc "MCU pushes").
-    FOLLOW_UPS = MappingProxyType(
-        {
-            0x207: ((0x302, echo("a2", "a3")),),
-            0x208: ((0x308, timed_task_push(PORT_BY_SELECT)),),
-            0x209: ((0x307, countdown_push(PORT_BY_SELECT, remaining_first=True)),),
-        }
-    )
+    #: ``0308``: a timed-task half a ``4208`` collision disabled (doc "MCU
+    #: pushes"). A ``4207``'s ``0302`` comes from the port's switch task and a
+    #: ``4209``'s ``0307`` from the next timer group pass, as every one does.
+    FOLLOW_UPS = MappingProxyType({0x208: ((0x308, timed_task_push(PORT_BY_SELECT)),)})
     FIELDS = MappingProxyType({MSGTYPE_A00: SNAPSHOT_FIELDS})
     GROUPS = MappingProxyType(
         {
@@ -293,14 +624,36 @@ class A91B2Layout(TableLayout):
     def timed(
         self, before: Mapping[str, Value], after: Mapping[str, Value]
     ) -> tuple[Timed, ...]:
-        """Return the events a change starts: countdowns, timed tasks, WiFi up."""
+        """Return the events a change starts.
+
+        Those are countdown steps and shown switches, once-slot dates, the next
+        timer group pass, the switch tasks of switched ports, and WiFi's.
+        """
         return (
-            *countdown_timers(
-                PORT_BY_SELECT, before, after, disarm_clears=USB_C, remaining_first=True
-            ),
-            *schedule_timers(PORT_BY_SELECT, before, after),
+            *_countdown_steps(before, after),
+            *countdown_shown_events(PORT_BY_SELECT, before, after, _timer_plan),
+            *date_once_slots(PORT_BY_SELECT, before, after, _timer_plan),
+            *_timer_plan(after),
+            *_switch_events(before, after),
             *wifi_events(before, after, PERIODICS),
         )
+
+    def names(self, msgtype: int) -> frozenset[str]:
+        """Return the names a frame reads; the snapshot the hidden SysTick phase."""
+        names = super().names(msgtype)
+        return names | {SYSTICK_PHASE} if msgtype == MSGTYPE_A00 else names
+
+    def resolve(
+        self, values: Mapping[str, Value], state: Mapping[str, Value]
+    ) -> dict[str, Value]:
+        """Return what ``values`` set, the SysTick phase checked.
+
+        Raises:
+            TypeError: If the SysTick phase is outside 0-3 s or not a number.
+
+        """
+        check_systick_phase(values)
+        return super().resolve(values, state)
 
     def sends(self, msgtype: int, values: Mapping[str, Value]) -> bool:
         """Whether a push reaches the BLE link: with WiFi up, most go to MQTT."""

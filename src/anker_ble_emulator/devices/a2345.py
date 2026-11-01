@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import zlib
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from types import MappingProxyType
@@ -26,6 +27,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher as AesCipher
 from cryptography.hazmat.primitives.ciphers import algorithms, modes
 
 from anker_ble_emulator.layouts import (
+    CLOCK,
     RTC,
     STATUS_ACCEPTED,
     TYPE_BIN,
@@ -56,9 +58,12 @@ from anker_ble_emulator.validators import OptionsValidator
 
 from .base import Advert, ProductDevice, Profile, register
 from .prime import (
+    COUNTDOWN_FIELDS,
     COUNTRY_PERIOD,
     DAY,
+    EVERY_DAY,
     HALF_BY_SLOT,
+    MINUTE,
     MSGTYPE_303,
     MSGTYPE_A00,
     PORT_CLOCKED,
@@ -74,24 +79,36 @@ from .prime import (
     STATS_PERIOD,
     SWITCH,
     SWITCH_SOURCE,
-    SWITCH_TICK,
-    SWITCH_TICK_PHASE,
+    SYSTICK_PHASE,
     TIMED_TASK_LEADS,
     WEEK,
     WIFI_UP,
+    CountdownRecord,
     SwitchWatch,
     ac_port_countdown_task,
     ac_port_timed_task,
-    countdown_push,
-    countdown_timers,
+    check_systick_phase,
+    countdown_shown_events,
+    countdown_shown_name,
+    date_once_slots,
+    date_rtc,
     drop_queued,
     every,
+    grid_delay,
+    latch_name,
     mqtt_routed,
+    next_minute,
+    on_grid,
+    once_compare,
+    once_date_name,
     reaches_ble,
-    schedule_timers,
+    report_delay,
+    rtc_date,
+    schedule_slot,
+    slot_disabled_push,
+    slot_written,
     stats_push,
     timed_push,
-    timed_task_conflict,
     timed_task_push,
     untimed_push,
     utc_hours,
@@ -1132,16 +1149,11 @@ def _set_dc_relay_switch(request: ParameterDict) -> dict[str, Value] | None:
     return {f"{PORT_BY_SELECT[port]}_relay_switch": bool(state)}
 
 
-#: ``4209``: the Prime countdown validator and ``0307`` builder; ``cmd209``
-#: takes an ``a2`` of TLV length 2 and an ``a3`` of 6 (en + u32 seconds).
+#: ``4209``: the Prime countdown validator; ``cmd209`` takes an ``a2`` of TLV
+#: length 2 and an ``a3`` of 6 (en + u32 seconds). Its ``0307`` comes from the
+#: next 150 ms pass.
 COUNTDOWN = ac_port_countdown_task(PORT_BY_SELECT, disarm_clears=DISARM_CLEARS)
-COUNTDOWN_PUSH = countdown_push(PORT_BY_SELECT, remaining_first=False)
 COUNTDOWN_A3_LENGTH = 6
-
-
-def _countdown_port_unknown(request: ParameterDict) -> bool:
-    """Whether a ``4209``'s port has no countdown record: acked, nothing written."""
-    return _one_byte(request) not in PORT_BY_SELECT
 
 
 def _set_countdown(request: ParameterDict) -> dict[str, Value] | None:
@@ -1160,18 +1172,9 @@ def _set_countdown(request: ParameterDict) -> dict[str, Value] | None:
     return {**(COUNTDOWN(request) or {}), name: seconds}
 
 
-def _countdown_push(
-    request: ParameterDict, before: Mapping[str, Value], after: Mapping[str, Value]
-) -> ParameterDict | None:
-    """``0307``: a port's countdown arming or disarming; none for an unknown port."""
-    if _countdown_port_unknown(request):
-        return None
-    return COUNTDOWN_PUSH(request, before, after)
-
-
-#: ``4208``: the Prime timed-task validator, side effect and ``0308`` builder.
+#: ``4208``: the Prime timed-task validator, slot set and ``0308`` builder.
 TIMED_TASK = ac_port_timed_task(PORT_BY_SELECT)
-TIMED_TASK_CONFLICT = timed_task_conflict(PORT_BY_SELECT)
+SLOT_WRITTEN = slot_written(PORT_BY_SELECT)
 TIMED_TASK_PUSH = timed_task_push(PORT_BY_SELECT)
 
 
@@ -1185,11 +1188,11 @@ def _set_timed_task(request: ParameterDict) -> dict[str, Value] | None:
     return {} if _slot_dropped(request) else TIMED_TASK(request)
 
 
-def _timed_task_conflict(
+def _timed_task_written(
     request: ParameterDict, state: Mapping[str, Value]
 ) -> dict[str, Value]:
-    """Clear the colliding half of a ``4208`` write; none for a dropped one."""
-    return {} if _slot_dropped(request) else TIMED_TASK_CONFLICT(request, state)
+    """``4208``'s slot set (``slot_written``); none for a dropped write."""
+    return {} if _slot_dropped(request) else SLOT_WRITTEN(request, state)
 
 
 def _timed_task_push(
@@ -1264,9 +1267,6 @@ SCREEN_REPORTS = {
     0x309: "screen_timeout",
     0x310: "button_rotate_direction",
 }
-#: ``screen_report_dirty_debounce`` 0x00016e38: a report goes > 4 ticks (~500 ms)
-#: after its setting changes; a change inside that restarts it.
-SCREEN_REPORT_DEBOUNCE = 0.5
 #: ``screen_brightness_set`` marks ``030a`` pending even when unchanged.
 REPORTED_WHEN_SET = frozenset({"screen_brightness"})
 #: What ``030b`` reports: ``af[0]`` (switch, holiday, theme) and the theme id.
@@ -1356,9 +1356,272 @@ def _port_tapped_on(
     state: Mapping[str, Value],
 ) -> Step:
     """Mark the power-on tap's ``0302``: source 2, the port's send timed."""
-    changes = {**SWITCH_WATCH.mark(select, state), SWITCH_SOURCE: SOURCE_UNIT}
+    marked = SWITCH_WATCH.mark(select, state)
+    changes = {**marked, SWITCH_SOURCE: SOURCE_UNIT}
     report = SWITCH_WATCH.report(select, {**state, **changes})
     return Step(values=changes, then=(report,))
+
+
+#: ``schedule_countdown_tick?``: every 150 ms, ``countdown_tick_push_0307`` then
+#: ``schedule_tick_push_0308``, port by port (doc "Scheduler groups"). A pass
+#: runs after the 100 ms group and the 1 s countdown step of a tick it shares.
+PASS_PERIOD = 0.15
+AFTER_TICK_GROUPS = 2e-6
+TICK_150MS_KEY = "schedule_countdown_pass"
+#: The 1 s group: the SysTick ISR steps every armed countdown's ``remaining``.
+COUNTDOWN_STEP = 1.0
+#: The schedule pass runs from the 10th pass with the RTC valid; the hidden
+#: grid instant of that 10th pass.
+SCHEDULE_PASSES = 10
+SCHEDULE_FROM = "_schedule_from"
+
+
+def _countdown_steps(
+    before: Mapping[str, Value], after: Mapping[str, Value]
+) -> tuple[Timed, ...]:
+    """Return the 1 s steps of each countdown armed or reset.
+
+    ``remaining`` steps on the boot-phased 1 s grid from the first boundary
+    after the change (doc "Countdown timing").
+    """
+    now = float(after[CLOCK])
+    first = on_grid(after, COUNTDOWN_STEP, now, at_or_after=False) - now
+    events = []
+    for port in PORT_BY_SELECT.values():
+        switch = f"{port}_countdown_task_switch"
+        remaining = f"{port}_countdown_task_remaining_seconds"
+        if after[switch] and (
+            not before[switch] or before[remaining] != after[remaining]
+        ):
+            step = partial(_countdown_step, port)
+            events.append(Timed(first, f"{port}_countdown", step))
+    return tuple(events)
+
+
+def _countdown_step(
+    port: str,
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Step an armed countdown's ``remaining`` one down, to 0; a pass expires it."""
+    remaining = f"{port}_countdown_task_remaining_seconds"
+    if not state[f"{port}_countdown_task_switch"] or not int(state[remaining]):
+        return Step()
+    left = int(state[remaining]) - 1
+    step = Timed(COUNTDOWN_STEP, f"{port}_countdown", partial(_countdown_step, port))
+    return Step(values={remaining: left}, then=(step,) if left else ())
+
+
+def _pass_plan(state: Mapping[str, Value]) -> tuple[Timed, ...]:
+    """Return the next 150 ms pass with work to do, if any."""
+    wake = _next_work(state)
+    if wake is None:
+        return ()
+    return (Timed(wake - float(state[CLOCK]), TICK_150MS_KEY, _pass),)
+
+
+def _next_work(state: Mapping[str, Value]) -> float | None:
+    """Return the instant of the first pass with work, from the whole state."""
+    now = float(state[CLOCK])
+    rtc = int(state[RTC])
+    soon = [
+        due for port in PORT_BY_SELECT.values() for due in _countdown_due(state, port)
+    ]
+    if rtc > CLOCK_FLOOR and SCHEDULE_FROM not in state:
+        soon.append(now)
+    elif rtc > CLOCK_FLOOR:
+        start = float(state[SCHEDULE_FROM])
+        if not state.get(WINDOW_PHASE):
+            soon.append(max(now, start))
+        for port in PORT_BY_SELECT.values():
+            for half in HALF_BY_SLOT.values():
+                due = _slot_due(state, port, half)
+                if due is not None:
+                    soon.append(max(due, start))
+    if not soon:
+        return None
+    following = on_grid(state, PASS_PERIOD, now - AFTER_TICK_GROUPS, at_or_after=False)
+    first = on_grid(state, PASS_PERIOD, min(soon), at_or_after=True)
+    return max(following, first) + AFTER_TICK_GROUPS
+
+
+def _countdown_due(state: Mapping[str, Value], port: str) -> list[float]:
+    """Return when a port's countdown next needs a pass: an edge, a disarm, expiry."""
+    now = float(state[CLOCK])
+    armed = bool(state[f"{port}_countdown_task_switch"])
+    remaining = int(state[f"{port}_countdown_task_remaining_seconds"])
+    shown = state.get(countdown_shown_name(port))
+    edge = shown is not None and bool(shown) != armed
+    if edge or (armed and not (remaining and state[f"{port}_relay_switch"])):
+        return [now]
+    if armed:
+        first = on_grid(state, COUNTDOWN_STEP, now, at_or_after=False)
+        return [first + (remaining - 1) * COUNTDOWN_STEP]
+    return []
+
+
+def _slot_due(state: Mapping[str, Value], port: str, half: str) -> float | None:
+    """Return when an enabled slot next needs a pass: its minute, or its latch's end.
+
+    The RTC's step within its second is off the state, so this is up to 1 s
+    early; each pass plans again.
+    """
+    slot = schedule_slot(state, port, half)
+    if slot["switch"] != 1:
+        return None
+    now = float(state[CLOCK])
+    rtc = int(state[RTC])
+    days = int(slot["weekdays"]) & EVERY_DAY
+    at = int(slot["hour"]) * 60 + int(slot["minute"])
+    if not days:
+        target = date_rtc(int(state.get(once_date_name(port, half), 0)), at)
+    elif state.get(latch_name(port, half)):
+        if rtc % DAY // MINUTE != at:
+            return now
+        target = rtc - rtc % MINUTE + MINUTE
+    else:
+        target = next_minute(rtc, at, days)
+    return now + target - rtc - 1
+
+
+@dataclass
+class _PassRun:
+    """One 150 ms pass at work: the state as it goes, what it set, sent, marked.
+
+    Attributes:
+        work: The state with the pass's changes so far.
+        changes: The values it set.
+        frames: The pushes it sent, in order.
+        marked: The ports whose ``0302`` it marked.
+        later: The events it starts, after its own.
+
+    """
+
+    work: dict[str, Value]
+    changes: dict[str, Value]
+    frames: list[tuple[int, bytes]]
+    marked: list[int]
+    later: list[Timed]
+
+    def put(self, name: str, value: Value) -> None:
+        """Set ``name`` for the rest of the pass and after it."""
+        self.changes[name] = value
+        self.work[name] = value
+
+    def switch(self, select: int, *, on: bool) -> None:
+        """Switch a port with source 2, its ``0302`` marked, if that changes it."""
+        relay = f"{PORT_BY_SELECT[select]}_relay_switch"
+        if bool(self.work[relay]) == on:
+            return
+        self.put(relay, on)
+        self.put(SWITCH_SOURCE, SOURCE_UNIT)
+        for name, value in SWITCH_WATCH.mark(select, self.work).items():
+            self.put(name, value)
+        self.marked.append(select)
+
+    def fire(self, select: int, *, on: bool) -> None:
+        """Fire a slot: source 2 every time, then the switch (doc "Schedule timing")."""
+        self.put(SWITCH_SOURCE, SOURCE_UNIT)
+        self.switch(select, on=on)
+
+    def countdown(self, select: int) -> None:
+        """``countdown_tick_push_0307``: expire or disarm, then show the switch's edge.
+
+        At 0 the port switches off; on a port that is off, it disarms. A switch
+        that differs from the one last shown pushes ``0307``, with ``remaining``
+        0 on a disarm.
+        """
+        port = PORT_BY_SELECT[select]
+        switch = f"{port}_countdown_task_switch"
+        remaining = f"{port}_countdown_task_remaining_seconds"
+        if self.work[switch] and not int(self.work[remaining]):
+            self.switch(select, on=False)
+            self.put(switch, value=False)
+        elif self.work[switch] and not self.work[f"{port}_relay_switch"]:
+            self.put(switch, value=False)
+        armed = bool(self.work[switch])
+        shown = self.work.get(countdown_shown_name(port))
+        if shown is None or bool(shown) == armed:
+            return
+        record = {name: self.work[f"{port}_{name}"] for name in COUNTDOWN_FIELDS}
+        if not armed:
+            record["countdown_task_remaining_seconds"] = 0
+        fields = {
+            "a2": container("a2", TYPE_UI, ui(1).build(select)),
+            "a3": container("a3", TYPE_BIN, CountdownRecord.build(record)),
+        }
+        self.frames.append(timed_push(0x307, fields, self.work))
+        self.put(countdown_shown_name(port), armed)
+
+    def slot(self, select: int, half: str) -> None:
+        """``schedule_tick_push_0308``: fire a slot in its minute; end a once slot.
+
+        A repeating one fires once per match, latched until its minute stops
+        matching; a once one fires at its date and minute, and fired or passed
+        is disabled with a ``0308``.
+        """
+        port = PORT_BY_SELECT[select]
+        slot = schedule_slot(self.work, port, half)
+        if slot["switch"] != 1:
+            return
+        rtc = int(self.work[RTC])
+        days = int(slot["weekdays"]) & EVERY_DAY
+        at = int(slot["hour"]) * 60 + int(slot["minute"])
+        if days:
+            latch = latch_name(port, half)
+            if rtc % DAY // MINUTE != at:
+                if self.work.get(latch):
+                    self.put(latch, value=False)
+                return
+            weekday = (rtc // DAY + RTC_DAY0_WEEKDAY) % WEEK
+            if not self.work.get(latch) and days >> weekday & 1:
+                self.put(latch, value=True)
+                self.fire(select, on=half == "start")
+            return
+        compared = once_compare(self.work, port, half)
+        if compared < 0:
+            return
+        if not compared:
+            self.fire(select, on=half == "start")
+        self.put(f"{port}_timed_task_{half}_switch", 0)
+        self.frames.append(slot_disabled_push(select, half, slot, self.work))
+
+    def step(self) -> Step:
+        """Return the pass's step: changes, pushes, ``0302`` sends, the next pass."""
+        reports = tuple(
+            SWITCH_WATCH.report(select, self.work) for select in self.marked
+        )
+        return Step(
+            values=self.changes,
+            frames=tuple(self.frames),
+            then=(*reports, *self.later, *_pass_plan(self.work)),
+        )
+
+
+def _pass(
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Run one 150 ms pass: every port's countdown, then, once started, its slots.
+
+    From the 10th pass with the RTC valid the window is evaluated too
+    (``clock_holiday_autoscreen?``, after the slots): its first evaluation here,
+    the rest on the pass its own events land on.
+    """
+    run = _PassRun(dict(state), {}, [], [], [])
+    now = float(state[CLOCK])
+    if int(state[RTC]) > CLOCK_FLOOR and SCHEDULE_FROM not in state:
+        first = now - AFTER_TICK_GROUPS
+        run.put(SCHEDULE_FROM, first + (SCHEDULE_PASSES - 1) * PASS_PERIOD)
+    for select in PORT_BY_SELECT:
+        run.countdown(select)
+    if SCHEDULE_FROM in run.work and now >= float(run.work[SCHEDULE_FROM]):
+        for select in PORT_BY_SELECT:
+            for half in ("start", "end"):
+                run.slot(select, half)
+        if not run.work.get(WINDOW_PHASE):
+            run.later.append(Timed(AFTER_PASS, WINDOW_KEY, _window_first))
+    return run.step()
 
 
 def _screen_reports(
@@ -1369,25 +1632,24 @@ def _screen_reports(
     A change from an app command reports nothing (doc "Screen reports": "sent
     when a setting changes on the unit"): its setter's source byte drops the
     report pending at send time, an on-unit one inside the debounce included.
+    Each goes on the 5th ``tick_100ms_group`` tick after its mark ("Report
+    timing").
     """
+    delay = report_delay(after)
     if COMMAND in after:
         return tuple(
-            Timed(SCREEN_REPORT_DEBOUNCE, _report_key(report), drop_queued)
+            Timed(delay, _report_key(report), drop_queued)
             for report in REPORT_SOURCES
             if before.get(_source_name(report)) != after.get(_source_name(report))
         )
     marked = REPORTED_WHEN_SET & name_set(after, GIVEN)
     events = [
-        Timed(
-            SCREEN_REPORT_DEBOUNCE,
-            _report_key(msgtype),
-            partial(_setting_report, msgtype, name),
-        )
+        Timed(delay, _report_key(msgtype), partial(_setting_report, msgtype, name))
         for msgtype, name in SCREEN_REPORTS.items()
         if before[name] != after[name] or name in marked
     ]
     if any(before[name] != after[name] for name in THEME_FIELDS):
-        events.append(Timed(SCREEN_REPORT_DEBOUNCE, _report_key(0x30B), _theme_report))
+        events.append(Timed(delay, _report_key(0x30B), _theme_report))
     return tuple(events)
 
 
@@ -1442,18 +1704,22 @@ WAKING_COMMANDS = frozenset({0x203, 0x204, *range(0x206, 0x20A), 0x20E, 0x213, 0
 #: ``DAT_20001af1``, ``af[0]`` bit 7.
 CLOCK_SWITCH = "screen_saver_switch"
 #: The ``4213`` window's phase (``DAT_2000b489``): 0 until its first evaluation,
-#: 10 passes after the RTC is valid, then 1 outside and 2 inside.
+#: on the 10th pass with the RTC valid, then 1 outside and 2 inside.
 WINDOW_PHASE = "_screensaver_window_phase"
 WINDOW_OUTSIDE = 1
 WINDOW_INSIDE = 2
-WINDOW_FIRST = 1.0
-#: A once window's (weekdays 0) dated bounds, as RTC seconds, and its latches,
-#: its start (``DAT_2000b49e``) and end (``DAT_2000b4a8``) handled. In no frame.
-WINDOW_START_AT = "_screensaver_window_start_at"
-WINDOW_END_AT = "_screensaver_window_end_at"
+#: ``clock_holiday_autoscreen?`` evaluates the window on every 150 ms pass,
+#: after the countdown and schedule ticks; its events land on those passes.
+WINDOW_KEY = "screensaver_window"
+AFTER_PASS = 1e-6
+#: A once window's (weekdays 0) dates, ``b4a0`` (start) and ``b4aa`` (end), as
+#: year * 10000 + month * 100 + day, so they order as ``date_cmp?`` reads
+#: them; and its latches, its start (``DAT_2000b49e``) and end
+#: (``DAT_2000b4a8``) handled. In no frame.
+WINDOW_START_DATE = "_screensaver_window_start_date"
+WINDOW_END_DATE = "_screensaver_window_end_date"
 WINDOW_START_DONE = "_screensaver_window_start_done"
 WINDOW_END_DONE = "_screensaver_window_end_done"
-MINUTE = 60
 #: ``holiday_theme_flag``: 0 until first evaluated, then 1 the holiday, 2 not.
 HOLIDAY_FLAG = "_holiday_theme_flag"
 HOLIDAY_SHOWN = 1
@@ -1598,53 +1864,93 @@ def _weekly_bound(state: Mapping[str, Value]) -> int:
     return min(rtc + (edge * MINUTE - rtc % DAY - 1) % DAY + 1 for edge in edges)
 
 
+def _window_pass(state: Mapping[str, Value], at: float) -> float:
+    """Return the delay to the first pass's window evaluation at or after ``at``."""
+    return grid_delay(state, PASS_PERIOD, AFTER_TICK_GROUPS + AFTER_PASS, at)
+
+
+def _window_at(bound: int, state: Mapping[str, Value]) -> Timed:
+    """Return the window evaluation on the first pass that sees the RTC at ``bound``.
+
+    The RTC's step within its second is off the state, so it lands up to 1 s
+    early and runs each pass until the RTC reads ``bound``.
+    """
+    now = float(state[CLOCK])
+    ahead = max(bound - int(state[RTC]) - 1, 0)
+    reached = partial(_window_reached, bound)
+    return Timed(_window_pass(state, now + ahead), WINDOW_KEY, reached)
+
+
+def _window_reached(
+    bound: int, values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Evaluate the window if the RTC reads ``bound``; else wait a pass more."""
+    if int(state[RTC]) < bound:
+        return Step(then=(_window_at(bound, state),))
+    return _window_eval(values, state)
+
+
+def _window_next(state: Mapping[str, Value]) -> Timed:
+    """Return the window evaluation on the next pass."""
+    return Timed(_window_pass(state, float(state[CLOCK])), WINDOW_KEY, _window_eval)
+
+
 def _once_tick(state: Mapping[str, Value]) -> tuple[dict[str, Value], list[Timed]]:
     """Return a once window's tick: its changes and the next tick it needs.
 
-    Inside only at the exact start minute, outside at the exact end minute; a
-    start or end found passed is latched as handled with no move. The end turns
-    the clock off (``screen_target_set(0, theme)``, source 2), which reports
-    ``030b`` and moves the screensaver to black.
+    Inside only at the exact start date and minute, outside at the exact end
+    ones (``date_cmp?``, then ``time_cmp?``); a start or end found passed is
+    latched as handled with no move. The end turns the clock off
+    (``screen_target_set(0, theme)``, source 2), which reports ``030b`` and
+    moves the screensaver to black.
     """
     rtc = int(state[RTC])
+    now = (rtc_date(rtc), rtc % DAY // MINUTE)
+    start, end, _ = _window(state)
     phase = state.get(WINDOW_PHASE)
     if phase == WINDOW_OUTSIDE and not state.get(WINDOW_START_DONE):
-        start_at = int(state[WINDOW_START_AT])
-        if rtc < start_at:
-            return {}, [_at_rtc(start_at, "screensaver_window", _window_eval, state)]
+        bound = (int(state[WINDOW_START_DATE]), start)
+        if now < bound:
+            return {}, [_window_at(date_rtc(*bound), state)]
         changes: dict[str, Value] = {WINDOW_START_DONE: 1}
-        if rtc < start_at + MINUTE:
+        if now == bound:
             changes[WINDOW_PHASE] = WINDOW_INSIDE
         more, then = _once_tick({**state, **changes})
         return {**changes, **more}, then
     if phase == WINDOW_INSIDE and not state.get(WINDOW_END_DONE):
-        end_at = int(state[WINDOW_END_AT])
-        if rtc < end_at:
-            return {}, [_at_rtc(end_at, "screensaver_window", _window_eval, state)]
+        bound = (int(state[WINDOW_END_DATE]), end)
+        if now < bound:
+            return {}, [_window_at(date_rtc(*bound), state)]
         changes = {WINDOW_END_DONE: 1, CLOCK_SWITCH: False}
-        if rtc < end_at + MINUTE:
+        if now == bound:
             changes[WINDOW_PHASE] = WINDOW_OUTSIDE
         if not state[CLOCK_SWITCH]:
             return changes, []
-        report = Timed(SCREEN_REPORT_DEBOUNCE, _report_key(0x30B), _theme_report)
+        report = Timed(report_delay(state), _report_key(0x30B), _theme_report)
         black = Timed(DISPLAY_TICK, "display_black", _screensaver_left)
         return changes, [report, black]
     return {}, []
 
 
 def _once_dates(state: Mapping[str, Value]) -> dict[str, Value]:
-    """Return a once window's bounds: its first occurrence ending after now.
+    """Return a once window's dates by now's hh:mm against its start and end.
 
-    ``screensaver_window_store``'s next-occurrence dates.
+    ``screensaver_window_store`` (doc "``4213`` window dates"): every
+    "tomorrow" is a plain day + 1 with no month carry.
     """
     rtc = int(state[RTC])
+    today, now = rtc_date(rtc), rtc % DAY // MINUTE
+    tomorrow = today + 1
     start, end, _ = _window(state)
-    midnight = rtc - rtc % DAY
-    start_at = midnight + start * MINUTE
-    end_at = midnight + end * MINUTE + (DAY if end <= start else 0)
-    if end_at <= rtc:
-        start_at, end_at = start_at + DAY, end_at + DAY
-    return {WINDOW_START_AT: start_at, WINDOW_END_AT: end_at}
+    if now < start and now < end:
+        dates = (today, tomorrow if end <= start else today)
+    elif now >= start and now >= end:
+        dates = (tomorrow if start < end else today, tomorrow)
+    elif now >= start:
+        dates = (today, today)
+    else:
+        dates = (today, tomorrow)
+    return {WINDOW_START_DATE: dates[0], WINDOW_END_DATE: dates[1]}
 
 
 def _window_evaluated(state: Mapping[str, Value], changes: Mapping[str, Value]) -> Step:
@@ -1653,9 +1959,7 @@ def _window_evaluated(state: Mapping[str, Value], changes: Mapping[str, Value]) 
     if _window(after)[2]:
         phase = WINDOW_INSIDE if _weekly_inside(after) else WINDOW_OUTSIDE
         values = {**changes, WINDOW_PHASE: phase}
-        then = [
-            _at_rtc(_weekly_bound(after), "screensaver_window", _window_eval, after)
-        ]
+        then = [_window_at(_weekly_bound(after), after)]
     else:
         once, then = _once_tick(after)
         values = {**changes, **once}
@@ -1665,26 +1969,29 @@ def _window_evaluated(state: Mapping[str, Value], changes: Mapping[str, Value]) 
 
 
 def _window_eval(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
-    """Re-evaluate the window phase at a minute bound or a clock set."""
+    """Re-evaluate the window phase on a pass: a minute bound or a clock set's."""
     return _window_evaluated(state, {})
 
 
 def _window_store(state: Mapping[str, Value], *, first: bool) -> Step:
     """``screensaver_window_store``, and the first evaluation, which stores again.
 
-    A once window gets its dates, its latches cleared and its phase at once
-    (inside from the start's occurrence to the end's); a weekly one is
-    evaluated on the next tick, once a first evaluation has run.
+    A once window gets its dates, its latches cleared and its phase at once:
+    inside for start <= now < end (start < end), or now >= start (start >=
+    end), by hh:mm. A weekly one gets no phase from the store: the next pass
+    evaluates it, once a first evaluation has run.
     """
-    if _window(state)[2]:
-        if not first and not state.get(WINDOW_PHASE):
+    start, end, weekdays = _window(state)
+    if weekdays:
+        if first:
+            return _window_evaluated(state, {})
+        if not state.get(WINDOW_PHASE):
             return Step()
-        return _window_evaluated(state, {})
-    dates = _once_dates(state)
-    rtc = int(state[RTC])
-    inside = int(dates[WINDOW_START_AT]) <= rtc < int(dates[WINDOW_END_AT])
+        return Step(then=(_window_next(state),))
+    now = int(state[RTC]) % DAY // MINUTE
+    inside = start <= now < end if start < end else now >= start
     stored = {
-        **dates,
+        **_once_dates(state),
         WINDOW_START_DONE: 0,
         WINDOW_END_DONE: 0,
         WINDOW_PHASE: WINDOW_INSIDE if inside else WINDOW_OUTSIDE,
@@ -1753,7 +2060,8 @@ def _display_events(
 
     A wake, or any valid ``b0`` write while on (``screen_timeout_set`` zeroes
     the count before its unchanged check), starts the count over; a clock set
-    evaluates the window (its first, a second on) and the holiday flag; a
+    evaluates the window on the next pass (once its first has run) and the
+    holiday flag; a
     window change stores it; the clock switch moves black and the screensaver.
     """
     events = []
@@ -1765,11 +2073,8 @@ def _display_events(
     if woken or (shown == DISPLAY_ON and timeout_set):
         events.append(_blank_timer(after))
     clock_set = before[RTC] != after[RTC]
-    if clock_set and int(after[RTC]) > CLOCK_FLOOR:
-        if after.get(WINDOW_PHASE):
-            events.append(Timed(0, "screensaver_window", _window_eval))
-        else:
-            events.append(Timed(WINDOW_FIRST, "screensaver_window", _window_first))
+    if clock_set and int(after[RTC]) > CLOCK_FLOOR and after.get(WINDOW_PHASE):
+        events.append(_window_next(after))
     if any(before[name] != after[name] for name in SCREENSAVER_FIELDS):
         events.append(Timed(0, "screensaver_window_store", _window_stored))
     switched = before[CLOCK_SWITCH] != after[CLOCK_SWITCH]
@@ -2373,7 +2678,7 @@ COMMAND_EFFECTS: dict[int, SideEffect] = {
     0x205: _theme_set,
     0x206: _leave_port_priority,
     0x207: _app_port_switch,
-    0x208: _timed_task_conflict,
+    0x208: _timed_task_written,
     0x20A: _owner_change,
     0x20D: _secret_prompt,
     0x211: _custom_mode_switch_off,
@@ -2444,7 +2749,6 @@ class A2345Layout(TableLayout):
             0x205: ((0x311, _theme_selected),),
             0x206: ((0x30F, _designated_ports_change),),
             0x208: ((0x308, _timed_task_push),),
-            0x209: ((0x307, _countdown_push),),
             0x20C: ((0x30F, _designated_ports_change),),
             0x221: ((0x311, _upload_done),),
         }
@@ -2469,31 +2773,26 @@ class A2345Layout(TableLayout):
     def names(self, msgtype: int) -> frozenset[str]:
         """Return the names a frame reads.
 
-        ``4a02`` adds the holiday record's; the snapshot the hidden switch tick
+        ``4a02`` adds the holiday record's; the snapshot the hidden SysTick
         phase.
         """
         names = super().names(msgtype)
         if msgtype == MSGTYPE_A02:
             return names | {*HOLIDAY_ERASED, STORED_COUNTRY, HOLIDAY_FLAG}
         if msgtype == MSGTYPE_A00:
-            return names | {SWITCH_TICK_PHASE}
+            return names | {SYSTICK_PHASE}
         return names
 
     def resolve(
         self, values: Mapping[str, Value], state: Mapping[str, Value]
     ) -> dict[str, Value]:
-        """Return what ``values`` set, the switch tick phase checked.
+        """Return what ``values`` set, the SysTick phase checked.
 
         Raises:
-            TypeError: If the switch tick phase is outside 0-0.1 s or not a number.
+            TypeError: If the SysTick phase is outside 0-3 s or not a number.
 
         """
-        phase = values.get(SWITCH_TICK_PHASE)
-        if phase is not None and (
-            isinstance(phase, bytes) or not 0 <= phase <= SWITCH_TICK
-        ):
-            msg = f"{SWITCH_TICK_PHASE} is 0 to {SWITCH_TICK} s"
-            raise TypeError(msg)
+        check_systick_phase(values)
         return super().resolve(values, state)
 
     def finish(
@@ -2535,22 +2834,18 @@ class A2345Layout(TableLayout):
     ) -> tuple[Timed, ...]:
         """Return the events a change starts.
 
-        Those are countdowns, timed tasks, screen reports and a mode change's. A
+        Those are countdown steps, once-slot dates, the next 150 ms pass, screen
+        reports and a mode change's. A
         mode change sends ``030d`` once it settles and zeroes the ports while
         they renegotiate. The zero is documented for ``4206`` (doc "Commands");
         it is assumed for ``420c`` entry too, the same mode-apply path (doc "MCU
         pushes" ``030f``).
         """
         events = (
-            *countdown_timers(
-                PORT_BY_SELECT,
-                before,
-                after,
-                disarm_clears=DISARM_CLEARS,
-                remaining_first=False,
-                switch_watch=SWITCH_WATCH,
-            ),
-            *schedule_timers(PORT_BY_SELECT, before, after, switch_watch=SWITCH_WATCH),
+            *_countdown_steps(before, after),
+            *countdown_shown_events(PORT_BY_SELECT, before, after, _pass_plan),
+            *date_once_slots(PORT_BY_SELECT, before, after, _pass_plan),
+            *_pass_plan(after),
             *_screen_reports(before, after),
             *_switch_watch(before, after),
             *_attach_events(before, after),
