@@ -126,6 +126,17 @@ def snapshot(device: EmulatedDevice) -> ParameterDict:
     return Parameters.parse(reply.payload)
 
 
+def usbc_budgets(device: EmulatedDevice) -> tuple[int, ...]:
+    """Return the pd1-pd4 budgets (field5) a ``4a18`` would carry now.
+
+    Its ``a2`` has no type byte, so the parse's type byte is pd1's budget.
+    """
+    module = device.negotiated_module
+    reply = module.mcu.respond(0x218, values=module.values, rtc=module.rtc)[0]
+    field = Parameters.parse(reply.payload)["a2"]
+    return (field["type"], *field["value"][:3])
+
+
 def screensaver(device: EmulatedDevice) -> ParameterDict:
     """Return the ``4a02`` screensaver read's fields as the device would answer now."""
     module = device.negotiated_module

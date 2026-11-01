@@ -37,7 +37,7 @@ from anker_ble_emulator.layouts import (
     ui,
 )
 from anker_ble_emulator.live import LiveSource
-from anker_ble_emulator.mcu import BOUND, COMMAND, GIVEN, UNIT_EVENT, name_set
+from anker_ble_emulator.mcu import BOUND, COMMAND, GIVEN, UNIT_EVENT, given, name_set
 from anker_ble_emulator.module import AuthMode
 from anker_ble_emulator.parameters import (
     FieldGroup,
@@ -1258,6 +1258,9 @@ RENEGOTIATED = tuple(
 )
 #: Set while the ports renegotiate: a further mode change keeps the one window.
 RENEGOTIATING = "_ports_renegotiating"
+#: The port-block fields set during the window, as ``GIVEN`` joins names: each
+#: keeps its set value at the window's end, 0 included.
+SET_IN_WINDOW = "_ports_set_renegotiating"
 
 
 def _mode_report(
@@ -2740,24 +2743,15 @@ def _secret_features(
 ) -> tuple[Timed, ...]:
     """Return the Secret Feature inputs a change makes (doc "Secret Features").
 
-    A nonzero ``420d``, a screen switch (``unit_event("switch_screen")``), a
-    USB-C attach rise (read on the next 100 ms tick) and a ``420c``'s
-    designations. An app setting's wake from 1-3, or with the inhibit set,
-    stops an overlay.
+    A nonzero ``420d``, a screen switch (``unit_event("switch_screen")``) and a
+    ``420c``'s designations. An app setting's wake from 1-3, or with the
+    inhibit set, stops an overlay. Port changes go to ``_port_watchers``.
     """
     events = []
     if after.get(PROMPTS) != before.get(PROMPTS):
         events.append(Timed(0, "secret_prompt", partial(_trigger, SECRET_PROMPT)))
     if after.get(UNIT_EVENT) == b"switch_screen":
         events.append(Timed(0, "screen_switch", _screen_switched))
-    for port in USBC_PORTS:
-        status = f"{port}_output_status"
-        if bool(after[status]) != bool(before[status]):
-            marked = partial(_plug_marked, port, bool(before[status]))
-            events.append(Timed(0, f"{port}_plug_mark", marked))
-    usbc = [f"{port}_output_{part}" for port in USBC_PORTS for part in PORT_READS]
-    if any(before[name] != after[name] for name in usbc):
-        events.append(Timed(_in_tick(after), "power_count", _power_count))
     if after.get(COMMAND) == 0x20C:  # noqa: PLR2004  # 420c, the designations
         counted = _counted_designations(before, after)
         if counted:
@@ -2767,6 +2761,35 @@ def _secret_features(
     if woken and not awake:
         events.append(_overlay_stop())
     return tuple(events)
+
+
+def _port_watchers(
+    before: Mapping[str, Value], after: Mapping[str, Value]
+) -> tuple[Timed, ...]:
+    """Return what the ticks that read the ports do for a change in them.
+
+    Feature 2's edge loop and Power Expert's count on the next 100 ms tick, the
+    port-activity scan and the budget switch on the next 300 ms pass.
+    """
+    events = []
+    for port in USBC_PORTS:
+        status = f"{port}_output_status"
+        if bool(after[status]) != bool(before[status]):
+            marked = partial(_plug_marked, port, bool(before[status]))
+            events.append(Timed(0, f"{port}_plug_mark", marked))
+    usbc = [f"{port}_output_{part}" for port in USBC_PORTS for part in PORT_READS]
+    if any(before[name] != after[name] for name in usbc):
+        events.append(Timed(_in_tick(after), "power_count", _power_count))
+    return (*events, *_port_scan_events(before, after), *_budget_events(before, after))
+
+
+def _port_watch(
+    before: Mapping[str, Value],
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Start the port watchers for a timed step's port change, once it applied."""
+    return Step(then=_port_watchers(before, state))
 
 
 def _port_scan_events(
@@ -2837,30 +2860,61 @@ def _port_scan(
 
 def _renegotiate(
     values: Mapping[str, Value],
-    state: Mapping[str, Value],  # noqa: ARG001  # keeps only what was set
+    state: Mapping[str, Value],
 ) -> Step:
-    """Zero every port block, then give each back what it had when the window ends."""
+    """Zero every port block, then give each back what it had when the window ends.
+
+    The ticks that read the ports see both changes.
+    """
     prior = {name: values[name] for name in RENEGOTIATED if name in values}
     return Step(
         values={**dict.fromkeys(RENEGOTIATED, 0), RENEGOTIATING: True},
-        then=(Timed(RENEGOTIATION, "renegotiation", partial(_renegotiated, prior)),),
+        then=(
+            Timed(RENEGOTIATION, "renegotiation", partial(_renegotiated, prior)),
+            Timed(0, "renegotiation_watch", partial(_port_watch, dict(state))),
+        ),
     )
 
 
 def _renegotiated(
     prior: Mapping[str, Value],
     values: Mapping[str, Value],
-    state: Mapping[str, Value],  # noqa: ARG001  # restores only what was set
+    state: Mapping[str, Value],
 ) -> Step:
     """Restore each zeroed field: its set value back, else its recording.
 
-    A field set during the window keeps that value.
+    A field set during the window keeps that value, 0 included.
     """
-    zeroed = [name for name in RENEGOTIATED if values.get(name) == 0]
+    kept = name_set(state, SET_IN_WINDOW)
+    zeroed = [
+        name for name in RENEGOTIATED if values.get(name) == 0 and name not in kept
+    ]
     return Step(
         values={name: prior[name] for name in zeroed if name in prior},
-        unset=(RENEGOTIATING, *(name for name in zeroed if name not in prior)),
+        unset=(
+            RENEGOTIATING,
+            SET_IN_WINDOW,
+            *(name for name in zeroed if name not in prior),
+        ),
+        then=(Timed(0, "renegotiation_watch", partial(_port_watch, dict(state))),),
     )
+
+
+def _set_in_window_events(after: Mapping[str, Value]) -> tuple[Timed, ...]:
+    """Return the record of port-block fields a change sets during the window."""
+    names = name_set(after, GIVEN) & frozenset(RENEGOTIATED)
+    if not after.get(RENEGOTIATING) or not names:
+        return ()
+    return (Timed(0, "renegotiation_set", partial(_set_in_window, names)),)
+
+
+def _set_in_window(
+    names: frozenset[str],
+    values: Mapping[str, Value],  # noqa: ARG001  # adds to a known set
+    state: Mapping[str, Value],
+) -> Step:
+    """Add ``names`` to the fields set during the window."""
+    return Step(values={SET_IN_WINDOW: given(name_set(state, SET_IN_WINDOW) | names)})
 
 
 def _designated_ports_change(
@@ -2957,24 +3011,224 @@ def _get_usbc_status(
     return {}
 
 
-_IDLE_OR_ONE = (140, 100, 100, 100)
-#: Each USB-C port's offered power-sharing budget in W, pd1-pd4, by the active
-#: pd1-pd4 bitmap: (no USB-A active, a USB-A active). Baseline (ungrouped)
-#: profile of 0x000114b0 (prime-a2345-a91b2.md "4218 field5 power-sharing budget").
-POWER_SHARING_BUDGET: dict[int, tuple[tuple[int, ...], tuple[int, ...]]] = {
-    **dict.fromkeys((0, 1, 2, 4, 8), (_IDLE_OR_ONE, _IDLE_OR_ONE)),
-    0x3: ((140, 100, 45, 45), (100, 100, 30, 30)),
-    0x5: ((140, 65, 100, 45), (100, 90, 100, 30)),
-    0x6: ((140, 100, 100, 45), (100, 100, 100, 30)),
-    0x7: ((140, 65, 45, 30), (100, 90, 30, 30)),
-    0x9: ((140, 65, 65, 100), (100, 90, 90, 100)),
-    0xA: ((140, 100, 100, 100), (100, 100, 90, 100)),
-    0xB: ((140, 65, 30, 45), (100, 90, 45, 30)),
-    0xC: ((140, 100, 100, 100), (100, 100, 100, 100)),
-    0xD: ((140, 100, 65, 45), (100, 65, 90, 30)),
-    0xE: ((100, 100, 100, 45), (70, 100, 90, 30)),
-    0xF: ((100, 100, 30, 20), (70, 65, 45, 45)),
+#: A pd1-pd4 budget in W; None leaves that slot's last value (the doc's ``=``).
+Budget = tuple[int | None, ...]
+BudgetTable = dict[int, tuple[Budget, Budget]]
+
+
+def _rows(*rows: tuple[tuple[int, ...], Budget, Budget]) -> BudgetTable:
+    """Return a budget table from (pd1-pd4 bitmaps, no USB-A active, a USB-A) rows."""
+    return {
+        bitmap: (plain, usba) for bitmaps, plain, usba in rows for bitmap in bitmaps
+    }
+
+
+_FULL = (140, 100, 100, 100)
+_SHARED = (135, 100, 100, 100)
+_ONE_OR_NONE = (0, 1, 2, 4, 8)
+_WITHOUT_PD1 = (0, 1, 2, 4, 6, 8, 0xA, 0xC)
+#: Each USB-C port's reported budget (``4218`` field5, record +0x1a) in W, by
+#: mode (doc "4218 field5 power-sharing budget", "Applied cap and the other
+#: modes"). 0 from boot; modes 2-5 write it on every 300 ms pass, and mode 1
+#: never does. Hidden. The recording boots in mode 1, so only a change of the
+#: pass's inputs needs one.
+BUDGET = tuple(f"_{port}_power_sharing_budget" for port in USBC_PORTS)
+#: Mode 2 (``port_power_budget_set`` 0x000114b0) with no designated port.
+POWER_SHARING_BUDGET: BudgetTable = _rows(
+    (_ONE_OR_NONE, _FULL, _FULL),
+    ((0x3,), (140, 100, 45, 45), (100, 100, 30, 30)),
+    ((0x5,), (140, 65, 100, 45), (100, 90, 100, 30)),
+    ((0x6,), (140, 100, 100, 45), (100, 100, 100, 30)),
+    ((0x7,), (140, 65, 45, 30), (100, 90, 30, 30)),
+    ((0x9,), (140, 65, 65, 100), (100, 90, 90, 100)),
+    ((0xA,), _FULL, (100, 100, 90, 100)),
+    ((0xB,), (140, 65, 30, 45), (100, 90, 45, 30)),
+    ((0xC,), _FULL, (100, 100, 100, 100)),
+    ((0xD,), (140, 100, 65, 45), (100, 65, 90, 30)),
+    ((0xE,), (100, 100, 100, 45), (70, 100, 90, 30)),
+    ((0xF,), (100, 100, 30, 20), (70, 65, 45, 45)),
+)
+#: Mode 2 with designated ports (``af24..af27``), by the first match of the
+#: designated pd1-pd4 indices in this order.
+DESIGNATED_BUDGET: dict[frozenset[int], BudgetTable] = {
+    frozenset({0, 1}): _rows(
+        (_WITHOUT_PD1, _FULL, _FULL),
+        ((0x3,), (140, 100, 45, 45), (140, 90, 45, 45)),
+        ((0x5, 0x9), _FULL, _SHARED),
+        ((0x7,), (100, 100, 45, 20), (100, 90, 45, 20)),
+        ((0xB,), (100, 100, 45, 45), (100, 90, 45, 45)),
+        ((0xD,), (140, 100, 55, 55), (140, 100, 45, 45)),
+        ((0xE,), (100, 100, 75, 75), (100, 100, 65, 65)),
+        ((0xF,), (100, 85, 45, 20), (100, 70, 45, 20)),
+    ),
+    frozenset({0, 2}): _rows(
+        (_WITHOUT_PD1, _FULL, _FULL),
+        ((0x3, 0x9), _FULL, _SHARED),
+        ((0x5,), (140, 45, 100, 45), (140, 45, 90, 45)),
+        ((0x7,), (100, 45, 100, 20), (100, 45, 90, 20)),
+        ((0xB,), (140, 55, 100, 55), (140, 45, 100, 45)),
+        ((0xD,), (100, 45, 100, 45), (100, 45, 90, 45)),
+        ((0xE,), (100, 75, 100, 75), (100, 65, 100, 65)),
+        ((0xF,), (100, 45, 85, 20), (100, 45, 70, 20)),
+    ),
+    frozenset({0, 3}): _rows(
+        (_WITHOUT_PD1, _FULL, _FULL),
+        ((0x3, 0x5), _FULL, _SHARED),
+        ((0x7,), (140, 55, 55, 100), (140, 45, 45, 100)),
+        ((0x9,), (140, 45, 45, 100), (140, 45, 45, 90)),
+        ((0xB,), (100, 45, 20, 100), (100, 45, 20, 90)),
+        ((0xD,), (100, 45, 45, 100), (100, 45, 45, 90)),
+        ((0xE,), (100, 75, 75, 100), (100, 65, 65, 100)),
+        ((0xF,), (100, 45, 20, 85), (100, 45, 20, 70)),
+    ),
+    frozenset({1, 2}): _rows(
+        (_ONE_OR_NONE, _FULL, _FULL),
+        ((0x3, 0x5, 0x9, 0xA, 0xC), _FULL, _SHARED),
+        ((0x6,), (45, 100, 100, 45), (45, 100, 100, 45)),
+        ((0x7,), (45, 100, 100, 20), (45, 100, 90, 20)),
+        ((0xB,), (75, 100, 100, 75), (65, 100, None, 65)),
+        ((0xD,), (75, 100, 100, 75), (65, 100, 100, 65)),
+        ((0xE,), (45, 100, 100, 45), (45, 100, 90, 45)),
+        ((0xF,), (45, 100, 85, 20), (45, 100, 70, 20)),
+    ),
+    frozenset({1, 3}): _rows(
+        (_ONE_OR_NONE, _FULL, _FULL),
+        ((0x3, 0x5, 0x6, 0x9, 0xC), _FULL, _SHARED),
+        ((0x7, 0xD), (75, 100, 75, 100), (65, 100, 65, 100)),
+        ((0xA,), (45, 100, 45, 100), (45, 100, 45, 100)),
+        ((0xB,), (45, 100, 20, 100), (45, 100, 20, 90)),
+        ((0xE,), (45, 100, 45, 100), (45, 100, 45, 90)),
+        ((0xF,), (45, 100, 20, 85), (45, 100, 20, 70)),
+    ),
+    frozenset({2, 3}): _rows(
+        (_ONE_OR_NONE, _FULL, _FULL),
+        ((0x3, 0x5, 0x6, 0x9, 0xA), _FULL, _SHARED),
+        ((0x7, 0xB), (75, 75, 100, 100), (65, 65, 100, 100)),
+        ((0xC,), (45, 45, 100, 100), (45, 45, 100, 100)),
+        ((0xD,), (45, None, 100, 100), (45, None, 100, 90)),
+        ((0xE,), (45, 45, 100, 100), (45, 45, 100, 90)),
+        ((0xF,), (45, 20, 100, 85), (45, 20, 100, 70)),
+    ),
+    frozenset({0}): _rows(
+        (_WITHOUT_PD1, _FULL, _FULL),
+        ((0x3, 0x5, 0x9), _FULL, (140, 90, 90, 90)),
+        ((0x7, 0xB), (140, 55, 55, 55), (140, 45, 45, 45)),
+        ((0xD,), (140, 50, 55, 55), (140, 45, 45, 45)),
+        ((0xE,), (140, 100, 100, 50), (140, 100, 90, 45)),
+        ((0xF,), (100, 50, 50, 50), (100, 45, 45, 45)),
+    ),
+    frozenset({1}): _rows(
+        (_ONE_OR_NONE, _FULL, _FULL),
+        ((0x3, 0x5, 0x6, 0x9, 0xA), _FULL, _SHARED),
+        ((0x7,), (75, 100, 75, 50), (65, 100, 65, 45)),
+        ((0xB,), (75, 100, 50, 75), (65, 100, 45, 65)),
+        ((0xC,), (100, 100, 100, 100), (100, 100, 100, 100)),
+        ((0xD,), (100, 100, 100, 50), (100, 100, 90, 45)),
+        ((0xE,), (50, 100, 75, 75), (45, 100, 65, 65)),
+        ((0xF,), (50, 100, 50, 50), (45, 100, 45, 45)),
+    ),
+    frozenset({2}): _rows(
+        (_ONE_OR_NONE, _FULL, _FULL),
+        ((0x3, 0x5, 0x6, 0x9, 0xC), _FULL, _SHARED),
+        ((0x7,), (75, 75, 100, 50), (65, 65, 100, 45)),
+        ((0xA,), (100, 100, 100, 100), (100, 100, 100, 100)),
+        ((0xB,), (100, 100, 100, 50), (100, 90, 100, 45)),
+        ((0xD,), (75, 50, 100, 75), (65, 45, 100, 65)),
+        ((0xE,), (50, 75, 100, 75), (45, 65, 100, 65)),
+        ((0xF,), (50, 50, 100, 50), (45, 45, 100, 45)),
+    ),
+    frozenset({3}): _rows(
+        (_ONE_OR_NONE, _FULL, _FULL),
+        ((0x3, 0x5, 0x9, 0xA, 0xC), _FULL, _SHARED),
+        ((0x6,), (100, 100, 100, 100), (100, 100, 100, 100)),
+        ((0x7,), (100, 100, 50, 100), (100, 90, 45, 100)),
+        ((0xB,), (75, 75, 50, 100), (65, 65, 45, 100)),
+        ((0xD,), (75, 50, 75, 100), (65, 45, 65, 100)),
+        ((0xE,), (50, 75, 75, 100), (45, 65, 65, 100)),
+        ((0xF,), (50, 50, 50, 100), (45, 45, 45, 100)),
+    ),
 }
+#: Mode 3 (``budget_mode3_dual_laptop`` 0x00014d38): by the pd1-pd4 bitmap only.
+DUAL_LAPTOP_MODE = 3
+DUAL_LAPTOP_BUDGET: dict[int, Budget] = {
+    **dict.fromkeys(_ONE_OR_NONE, _FULL),
+    0x3: (140, 100, 20, 15),
+    0x5: (140, 100, 100, 15),
+    0x6: (100, 100, 100, 15),
+    0x9: (140, 100, 20, 100),
+    0xA: (100, 100, 20, 100),
+    0xC: (100, 100, 100, 100),
+    **dict.fromkeys((0x7, 0xB, 0xD, 0xE, 0xF), (100, 100, 20, 15)),
+}
+#: Mode 4 (``budget_mode4_low_current`` 0x00014f58): one budget for any ports.
+LOW_CURRENT_MODE = 4
+LOW_CURRENT_BUDGET = (65, 20, 20, 20)
+#: Mode 5 (``budget_mode5_custom`` 0x00010c60): the ``b8`` per-port limits
+#: (``0x20000fbc``), its bytes 2-5.
+CUSTOM_LIMITS = slice(2, 6)
+
+
+def _mode_budget(state: Mapping[str, Value]) -> Budget | None:
+    """Return the budget the 300 ms pass writes in the current mode; None in mode 1."""
+    bitmap = _port_bitmap(state)
+    usbc, usba = bitmap & USBC_BITS, bool(bitmap >> len(USBC_PORTS))
+    mode = int(state["charging_mode"])
+    if mode == PORT_PRIORITY_MODE:
+        designated = frozenset(
+            i
+            for i, port in enumerate(USBC_PORTS)
+            if state[f"{port}_port_priority"] == DESIGNATED
+        )
+        table = POWER_SHARING_BUDGET
+        if designated:
+            table = next(
+                DESIGNATED_BUDGET[ports]
+                for ports in DESIGNATED_BUDGET
+                if ports <= designated
+            )
+        return table[usbc][usba]
+    if mode == DUAL_LAPTOP_MODE:
+        return DUAL_LAPTOP_BUDGET[usbc]
+    if mode == LOW_CURRENT_MODE:
+        return LOW_CURRENT_BUDGET
+    if mode == CUSTOM_MODE:
+        return tuple(stored_bytes(state, "custom_charge_profile")[CUSTOM_LIMITS])
+    return None
+
+
+def _budget_pass(
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Write the mode's field5 on a 300 ms pass's budget switch; none in mode 1."""
+    budget = _mode_budget(state)
+    if budget is None:
+        return Step()
+    return Step(
+        values={
+            name: watts
+            for name, watts in zip(BUDGET, budget, strict=True)
+            if watts is not None
+        }
+    )
+
+
+def _budget_events(
+    before: Mapping[str, Value], after: Mapping[str, Value]
+) -> tuple[Timed, ...]:
+    """Return the next 300 ms pass's budget write when one of its inputs changed."""
+    inputs = (
+        "charging_mode",
+        "custom_charge_profile",
+        *(f"{port}_port_priority" for port in USBC_PORTS),
+    )
+    changed = any(before[name] != after[name] for name in inputs)
+    if not changed and _port_bitmap(before) == _port_bitmap(after):
+        return ()
+    delay = grid_delay(after, SCAN_PERIOD, AFTER_LOWER_GROUPS, float(after[CLOCK]))
+    return (Timed(delay, "budget_pass", _budget_pass),)
+
+
 #: ``4a18 a2``: pd1-pd4's budgets, then their ``0303`` output statuses.
 UsbcStatus = Struct(
     "power_sharing_budget" / Array(4, ui(1)), "output_status" / Array(4, ui(1))
@@ -2985,17 +3239,14 @@ def _usbc_status_read(
     request: ParameterDict,  # noqa: ARG001  # the reply carries no request field
     state: Mapping[str, Value],
 ) -> ParameterDict:
-    """``4a18``: each pd port's power budget, then its ``0303`` output status.
+    """``4a18``: each pd port's stored power budget, then its ``0303`` output status.
 
     ``a2`` is 8 raw bytes with no type byte (0x0001daf0).
     """
-    statuses = [state[f"pd{i + 1}_output_status"] for i in range(4)]
-    bitmap = sum(1 << i for i, status in enumerate(statuses) if status)
-    usba = any(state[f"usb{i}_output_status"] for i in (1, 2))
     value = UsbcStatus.build(
         {
-            "power_sharing_budget": POWER_SHARING_BUDGET[bitmap][usba],
-            "output_status": statuses,
+            "power_sharing_budget": [int(state.get(name, 0)) for name in BUDGET],
+            "output_status": [state[f"{port}_output_status"] for port in USBC_PORTS],
         }
     )
     return ParameterDict(
@@ -3196,12 +3447,13 @@ class A2345Layout(TableLayout):
             *_switch_watch(before, after),
             *_attach_events(before, after),
             *_secret_features(before, after),
-            *_port_scan_events(before, after),
+            *_port_watchers(before, after),
             *_theme_fetch(before, after),
             *_holiday_fetch(before, after),
             *_draw_events(before, after),
             *wifi_events(before, after, PERIODICS),
             *_display_events(before, after),
+            *_set_in_window_events(after),
         )
         if before["charging_mode"] == after["charging_mode"]:
             return events

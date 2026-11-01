@@ -21,8 +21,11 @@ from anker_ble_emulator.devices import COMPANY_ID
 from anker_ble_emulator.devices.a91b2 import A91B2Layout, Display, Timer
 from anker_ble_emulator.devices.a91b2 import ClockTheme as A91B2ClockTheme
 from anker_ble_emulator.devices.a2345 import (
+    DESIGNATED_BUDGET,
     DISPLAY,
     DISPLAY_TICK,
+    DUAL_LAPTOP_BUDGET,
+    POWER_SHARING_BUDGET,
     SCHEDULE_FROM,
     SCREEN_REQUEST,
     SCREENSAVER_FIELDS,
@@ -79,6 +82,7 @@ from tests.fixtures.prime import (
     upload_chunk,
     upload_prepare,
     upload_theme,
+    usbc_budgets,
     usbc_identity,
 )
 
@@ -925,19 +929,24 @@ def test_a2345_4222_sets_the_screensaver_reads_a6() -> None:
         pytest.param((0, 1, 2, 3), 1, "46412d2d01010101", id="all with usb-a"),
     ],
 )
-def test_an_a2345_usbc_status_read_reports_the_power_sharing_budget(
+def test_an_a2345_usbc_status_read_reports_the_port_priority_budget(
     active: tuple[int, ...], usb1: int, fields: str
 ) -> None:
-    """``4218`` 0x0001daf0: budgets by the active-port bitmap (0x000114b0), statuses.
+    """``4218`` 0x0001daf0: mode 2's stored budgets (0x000114b0), then statuses.
 
-    prime-a2345-a91b2.md "4218 field5 power-sharing budget".
+    prime-a2345-a91b2.md "4218 field5 power-sharing budget": written on the
+    300 ms pass, once the mode change's 8 s renegotiation has passed.
     """
-    device = A2345()
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
     device.set_values(
+        charging_mode=2,
         **{f"pd{i + 1}_output_status": int(i in active) for i in range(4)},
         usb1_output_status=usb1,
         usb2_output_status=0,
     )
+    advance(device, client, clock, 9.0)
 
     frames = device.mcu.respond(
         0x218, request=bytes.fromhex("a10121"), values=device.negotiated_module.values
@@ -946,6 +955,198 @@ def test_an_a2345_usbc_status_read_reports_the_power_sharing_budget(
     assert [(frame.cmd.msgtype, frame.payload.hex()) for frame in frames] == [
         (0xA18, "00a10131a208" + fields)
     ]
+
+
+def test_an_a2345_in_mode_1_reports_no_budget_from_boot() -> None:
+    """Mode 1 (AI Power, the recording's) never writes field5: 0 0 0 0 since boot.
+
+    doc "Applied cap and the other modes".
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    booted = usbc_budgets(device)
+    unit_change(device, client, pd1_output_status=1, pd3_output_status=1)
+    advance(device, client, clock, 10.0)
+
+    assert device.mcu.state(module.values)["charging_mode"] == 1
+    assert booted == usbc_budgets(device) == (0, 0, 0, 0)
+
+
+def test_an_a2345_mode_1_keeps_the_last_modes_budget() -> None:
+    """Back in mode 1, field5 keeps mode 2's values, whatever the ports do.
+
+    doc "Applied cap and the other modes": no mode change resets it.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(charging_mode=2, pd1_output_status=1, pd2_output_status=1)
+    advance(device, client, clock, 9.0)
+    priority = usbc_budgets(device)
+    unit_change(device, client, charging_mode=1)
+    advance(device, client, clock, 9.0)
+    unit_change(device, client, pd3_output_status=1)
+    advance(device, client, clock, 1.0)
+
+    assert priority == usbc_budgets(device) == (140, 100, 45, 45)
+
+
+@pytest.mark.parametrize(
+    ("mode", "values", "budget"),
+    [
+        pytest.param(4, {}, (65, 20, 20, 20), id="mode 4 Low Current"),
+        pytest.param(
+            5,
+            {"custom_charge_profile": bytes.fromhex("01005a3c281418")},
+            (90, 60, 40, 20),
+            id="mode 5 Custom: the b8 limits",
+        ),
+        pytest.param(3, {}, (140, 100, 100, 100), id="mode 3: the window's 0 bitmap"),
+    ],
+)
+def test_an_a2345_mode_changes_its_budget_on_the_next_300ms_pass(
+    mode: int, values: dict[str, Value], budget: tuple[int, ...]
+) -> None:
+    """From mode 2 at 9.05 s: the 9.3 s pass writes the new mode's field5.
+
+    doc "Applied cap and the other modes": a reply before that pass still has
+    mode 2's. Mode 3 reads the ports, which the change's renegotiation has
+    zeroed for its 8 s.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(charging_mode=2, pd1_output_status=1, pd2_output_status=1)
+    advance(device, client, clock, 9.05)
+    unit_change(device, client, charging_mode=mode, **values)
+    advance(device, client, clock, 0.2)
+    before_pass = usbc_budgets(device)
+    advance(device, client, clock, 0.1)
+
+    assert before_pass == (140, 100, 45, 45)
+    assert usbc_budgets(device) == budget
+
+
+@pytest.mark.parametrize(
+    ("ports", "budget"),
+    [
+        pytest.param({"pd1": 1, "pd2": 1}, (140, 100, 20, 15), id="3: pd1 pd2"),
+        pytest.param({"pd2": 1, "pd3": 1}, (100, 100, 100, 15), id="6: pd2 pd3"),
+        pytest.param(
+            {"pd1": 1, "pd2": 1, "pd4": 1}, (100, 100, 20, 15), id="b: three ports"
+        ),
+    ],
+)
+def test_an_a2345_dual_laptop_budget_follows_the_ports_on_the_pass(
+    ports: dict[str, int], budget: tuple[int, ...]
+) -> None:
+    """Mode 3 by the pd1-pd4 bitmap only (``budget_mode3_dual_laptop``).
+
+    doc "Applied cap and the other modes" mode 3 table, with a USB-A port on
+    (no USB-A axis). From all pd ports off, the ports change at 10.05 s, after
+    the mode's renegotiation; the 10.2 s pass writes it.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(
+        charging_mode=3,
+        usb1_output_status=1,
+        **{f"pd{i}_output_status": 0 for i in range(1, 5)},
+    )
+    advance(device, client, clock, 10.05)
+    idle = usbc_budgets(device)
+    unit_change(device, client, **{f"{port}_output_status": 1 for port in ports})
+    advance(device, client, clock, 0.1)
+    before_pass = usbc_budgets(device)
+    advance(device, client, clock, 0.1)
+
+    assert idle == before_pass == (140, 100, 100, 100)
+    assert usbc_budgets(device) == budget
+
+
+@pytest.mark.parametrize(
+    ("mask", "first", "then", "budget"),
+    [
+        pytest.param(
+            0b0010,
+            {"pd1": 1, "pd2": 1, "pd3": 1},
+            {},
+            (75, 100, 75, 50),
+            id="{pd2}, bitmap 7",
+        ),
+        pytest.param(
+            0b1100,
+            {"pd1": 1, "pd4": 1},
+            {"pd3": 1},
+            (45, 100, 100, 100),
+            id="{pd3, pd4}, bitmap 9 then d keeps pd2",
+        ),
+    ],
+)
+def test_an_a2345_designated_ports_pick_their_budget_table(
+    mask: int, first: dict[str, int], then: dict[str, int], budget: tuple[int, ...]
+) -> None:
+    """``420c``'s designations select one of the ten designated tables.
+
+    doc "4218 field5" designated tables; ``=`` leaves the slot as it was, so
+    {pd3, pd4} at bitmap d keeps pd2's 100 from bitmap 9. The other pd ports
+    are off (the recording has pd2 on), set inside the mode's renegotiation,
+    which they outlast.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    command(device, client, 0x20C, [(0xA2, bytes([1, mask]))])
+    unit_change(
+        device,
+        client,
+        **{f"pd{i}_output_status": int(f"pd{i}" in first) for i in range(1, 5)},
+    )
+    advance(device, client, clock, 9.0)
+    unit_change(device, client, **{f"{port}_output_status": 1 for port in then})
+    advance(device, client, clock, 1.0)
+
+    assert usbc_budgets(device) == budget
+
+
+def test_an_a2345_port_set_during_renegotiation_keeps_that_value() -> None:
+    """A field set in the 8 s window keeps it, 0 included; an untouched one returns.
+
+    design.md "Prime timed events": each block gets back its set value, else its
+    recording; one set during the window keeps that value. The recording has pd2
+    on at 10 W; pd2 is unplugged at 2 s, inside the mode change's 1-9 s window,
+    and pd1 (set on before it) gets 17 W. The ticks see the return: pd1 rises
+    again, pd2 doesn't, and mode 3's budget reads pd1 alone.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    unit_change(device, client, pd1_output_status=1)
+    advance(device, client, clock, 1.0)
+    unit_change(device, client, charging_mode=3)
+    advance(device, client, clock, 1.0)
+    unit_change(device, client, pd2_output_status=0, pd1_output_power=17)
+    advance(device, client, clock, 8.0)
+    state = device.mcu.state(module.values)
+
+    assert (state["pd2_output_status"], state["pd2_output_power"]) == (0, 10)
+    assert (state["pd1_output_status"], state["pd1_output_power"]) == (1, 17)
+    assert module.values.get("_pd1_plug_rises") == 2
+    assert not module.values.get("_pd2_plug_rises")
+    assert usbc_budgets(device) == (140, 100, 100, 100)
+
+
+def test_the_a2345_budget_tables_cover_every_pd_bitmap() -> None:
+    """Every mode 2 and mode 3 table has a row for each of the 16 pd1-pd4 bitmaps."""
+    every = set(range(16))
+
+    assert set(POWER_SHARING_BUDGET) == set(DUAL_LAPTOP_BUDGET) == every
+    assert all(set(table) == every for table in DESIGNATED_BUDGET.values())
+    assert len(DESIGNATED_BUDGET) == 10
 
 
 @pytest.mark.parametrize(

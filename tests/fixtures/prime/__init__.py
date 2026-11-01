@@ -27,6 +27,7 @@ from .prime_fixtures import (
     upload_chunk,
     upload_prepare,
     upload_theme,
+    usbc_budgets,
     usbc_identity,
 )
 
@@ -57,5 +58,6 @@ __all__ = [
     "upload_chunk",
     "upload_prepare",
     "upload_theme",
+    "usbc_budgets",
     "usbc_identity",
 ]
