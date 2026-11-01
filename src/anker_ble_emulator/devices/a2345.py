@@ -2131,13 +2131,30 @@ def _transition_requested(
 
 
 def _transition_ended(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
-    """Leave state 3 for 0, its ``b0`` count started over."""
+    """Leave state 3 for 0, its ``b0`` count started over; an overlay stops."""
     if _display(state) != DISPLAY_TRANSITION:
         return Step()
     return Step(
         values={DISPLAY: DISPLAY_ON},
-        then=(_blank_timer(state), Timed(0, "display_transition", drop_queued)),
+        then=(
+            _blank_timer(state),
+            Timed(0, "display_transition", drop_queued),
+            _overlay_stop(),
+        ),
     )
+
+
+def _refresh_wake(
+    state: Mapping[str, Value],
+) -> tuple[dict[str, Value], tuple[Timed, ...]]:
+    """``display_wake_refresh_mark?``: the ``b0`` count restarted, 1-3 moved to 0.
+
+    It leaves the screen-off inhibit as it is.
+    """
+    if _display(state) == DISPLAY_ON:
+        return {}, (_blank_timer(state),)
+    drop = Timed(0, "display_transition", drop_queued)
+    return {DISPLAY: DISPLAY_ON}, (_blank_timer(state), drop)
 
 
 def _knob_held(_values: Mapping[str, Value], _state: Mapping[str, Value]) -> Step:
@@ -2159,13 +2176,18 @@ def _knob_activity_wake(
 ) -> Step:
     """``knob_activity_wake?``: from 1-3 or with the inhibit set, the display on.
 
-    It clears the inhibit and starts the ``b0`` count over.
+    It clears the inhibit, starts the ``b0`` count over and stops a Secret
+    Feature overlay.
     """
     if _display(state) == DISPLAY_ON and not state.get(SCREENSAVER_INHIBIT):
         return Step()
     return Step(
         values={DISPLAY: DISPLAY_ON, SCREENSAVER_INHIBIT: 0},
-        then=(_blank_timer(state), Timed(0, "display_transition", drop_queued)),
+        then=(
+            _blank_timer(state),
+            Timed(0, "display_transition", drop_queued),
+            _overlay_stop(),
+        ),
     )
 
 
@@ -2224,6 +2246,14 @@ def _display_events(
 #: The ports ``0304``'s bitmask covers, bit 0 first: assumed the ``0300``
 #: active-port bitmap's order (bit 0 C1 ... bit 5 A2), set where attached.
 ATTACH_PORTS = (*USBC_PORTS, "usb1", "usb2")
+ALL_ACTIVE = (1 << len(ATTACH_PORTS)) - 1
+USBC_BITS = (1 << len(USBC_PORTS)) - 1
+#: ``tick_300ms_group`` (SysTick bit 4): passes 300 ms apart from boot, after
+#: the 100 ms group and the 150 ms pass at a shared instant. Its
+#: ``port_activity_scan_dispatch`` acts on the bitmap it last saw (hidden).
+SCAN_PERIOD = 0.3
+AFTER_LOWER_GROUPS = 4e-6
+SCAN_SEEN = "_port_activity_seen"
 #: A plugged device's identity reaches ``bd`` this long after attach, and ``be``
 #: one ``0303`` frame later (doc ``bd`` row: 20:05:26.6 -> 30.6 -> 31.6).
 IDENTIFY = 4.0
@@ -2275,13 +2305,17 @@ def _port_change(
     Firmware-only (``port_change_push_0304``); no ``0304`` is recorded, so its
     shape is the doc's ``0304`` row.
     """
-    mask = sum(
+    fields = {"a2": container("a2", TYPE_VAR, ui(2).build(_port_bitmap(state)))}
+    return Step(frames=(timed_push(0x304, fields, state),))
+
+
+def _port_bitmap(state: Mapping[str, Value]) -> int:
+    """Return the six ports' activity, USB-C 1-4 then USB-A 1-2, from bit 0."""
+    return sum(
         1 << bit
         for bit, port in enumerate(ATTACH_PORTS)
         if state[f"{port}_output_status"]
     )
-    fields = {"a2": container("a2", TYPE_VAR, ui(2).build(mask))}
-    return Step(frames=(timed_push(0x304, fields, state),))
 
 
 def _identified(
@@ -2339,7 +2373,7 @@ def _unidentified(
 
 #: Secret Features' ``0305 a2`` codes (doc "Secret Features"): the ``420d``
 #: prompt, Feature Expert, Power Expert, Device Expert, Feature 1 (screen
-#: switches) and Feature 2 (plugs), serviced in this order, one a second.
+#: switches) and Feature 2 (plugs), serviced in this order, one a grid point.
 SECRET_PROMPT = 0
 FEATURE_EXPERT = 1
 POWER_EXPERT = 2
@@ -2355,15 +2389,37 @@ SERVICE_ORDER = (
     FEATURE_PLUGS,
 )
 #: Power Expert: 3 USB-C ports in a high-voltage class above 18 000 mV. The
-#: class is 0 for 21 s after the active-port count changes, and while fewer
-#: than 2 are active (``usbc_hv_class_update`` 0x000110f8).
-POWER_PORTS, HIGH_VOLTAGE, HV_SETTLE = 3, 18000, 21.0
+#: class (``usbc_hv_class_update`` 0x000110f8, ``DAT_2000af10``) is 0 until
+#: pass 70, the pass that sees the active-port count change being pass 1, and
+#: while fewer than 2 are active; from then on each 300 ms pass classes a port
+#: it samples above 18 000 mV, until the next reset. Hidden: the classed
+#: ports, bit 0 C1.
+POWER_PORTS, HIGH_VOLTAGE, HV_SETTLE = 3, 18000, 69 * SCAN_PERIOD
 HV_SETTLED, POWER_COUNT = "_usbc_hv_settled", "_power_expert_ports"
-#: A trigger inside its feature's cooldown is dropped, not queued.
-COOLDOWNS = {DEVICE_EXPERT: 24 * 3600.0, FEATURE_SCREEN: 60.0, FEATURE_PLUGS: 300.0}
+HV_CLASSED = "_usbc_hv_classed"
+PORT_READS = ("status", "voltage")
+#: ``secret_features_tick`` counts Power Expert and runs Feature 2's edge loop
+#: before its service check, so a flag they raise on a service point goes out
+#: on it.
+IN_TICK_LEAD = 1e-7
+#: Cooldowns, in 100 ms passes, loaded at the feature's send. Each pass while
+#: one runs wipes its flag, the send's own pass counting one, so a trigger up
+#: to the last of them is dropped, not queued.
+COOLDOWN_PASSES = {DEVICE_EXPERT: 864_000, FEATURE_SCREEN: 600, FEATURE_PLUGS: 3_000}
+#: Features 1-5 draw an animation that holds the pass count until its last
+#: frame (``0x2000088c``): frames x 33 ms nominal. The ``420d`` prompt holds none.
+OVERLAY_FRAMES = {
+    FEATURE_EXPERT: 150,
+    POWER_EXPERT: 150,
+    DEVICE_EXPERT: 150,
+    FEATURE_SCREEN: 125,
+    FEATURE_PLUGS: 125,
+}
+OVERLAY_FRAME = 0.033
 #: Feature 1: 20 main-tile focus events within 10 s, a sliding window.
 SCREEN_SWITCHES, SCREEN_WINDOW = 20, 10.0
-#: Feature 2: 10 attach rises of one USB-C port within 60 s of the first.
+#: Feature 2: 10 attach rises of one USB-C port within 60 s (600 passes) of
+#: the first; an edge that leaves the count at 1 restarts the window.
 PLUGS, PLUG_WINDOW = 10, 60.0
 #: Feature Expert: every 10th counted designation since boot.
 DESIGNATIONS = 10
@@ -2372,6 +2428,14 @@ SCREEN_COUNT, SCREEN_SERIAL = "_screen_switches", "_screen_switch_serial"
 PROMPTS = "_secret_prompts"
 DESIGNATION_COUNT = "_designations"
 SERVICING = "_secret_servicing"
+#: ``secret_features_tick``'s pass count (``DAT_2000141f``) services on every
+#: 10th 100 ms pass, idle or not, and holds while an overlay shows. Its points
+#: sit whole seconds after its start: boot, or after an overlay the tick
+#: before the first pass it counts again.
+SERVICE_PERIOD = 10 * TICK_100MS
+SERVICE_GRID = "_secret_grid"
+OVERLAY = "_secret_overlay"
+OVERLAY_END = "secret_overlay"
 
 
 def _pending(code: int) -> str:
@@ -2389,26 +2453,39 @@ def _plug_count(port: str) -> str:
     return f"_{port}_plug_rises"
 
 
+def _plug_seen(port: str) -> str:
+    """Return the hidden attach state ``port``'s edge loop last saw."""
+    return f"_{port}_plug_seen"
+
+
+def _in_tick(state: Mapping[str, Value]) -> float:
+    """Return the delay to the next 100 ms tick's in-tick work, before its service."""
+    now = float(state[CLOCK])
+    return on_grid(state, TICK_100MS, now, at_or_after=False) - IN_TICK_LEAD - now
+
+
 def _triggered(
     code: int, state: Mapping[str, Value]
 ) -> tuple[dict[str, Value], tuple[Timed, ...]]:
     """Return a Secret Feature trigger's values and events: pending, unless cooling.
 
-    It starts the feature's cooldown, and the service if none is running.
+    It starts the service at the next grid point, unless one is queued or an
+    overlay holds the count.
     """
     if state.get(_cooling(code)):
         return {}, ()
     values: dict[str, Value] = {_pending(code): True}
-    events = []
-    if code in COOLDOWNS:
-        values[_cooling(code)] = True
-        events.append(
-            Timed(COOLDOWNS[code], f"secret_cooldown_{code}", partial(_cooled, code))
-        )
-    if not state.get(SERVICING):
-        values[SERVICING] = True
-        events.append(Timed(0, "secret_service", _service))
-    return values, tuple(events)
+    if state.get(SERVICING) or state.get(OVERLAY):
+        return values, ()
+    return values | {SERVICING: True}, (_next_service(state),)
+
+
+def _next_service(state: Mapping[str, Value]) -> Timed:
+    """Return the service at the grid's first point after now."""
+    now = float(state[CLOCK])
+    start = {SYSTICK_PHASE: state.get(SERVICE_GRID, state.get(SYSTICK_PHASE, 0.0))}
+    point = on_grid(start, SERVICE_PERIOD, now, at_or_after=False)
+    return Timed(point - now, "secret_service", _service)
 
 
 def _cooled(
@@ -2424,22 +2501,69 @@ def _service(
     values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
     state: Mapping[str, Value],
 ) -> Step:
-    """Send one pending Secret Feature's ``0305``, then look again a second on.
+    """Send the first pending Secret Feature's ``0305`` and run its action.
 
-    ``secret_features_tick`` services one a second while no overlay is shown;
-    the emulator models no overlay. An idle service sends at once; after a send
-    it stays busy a second, so a trigger in that second waits for the next.
+    It runs on a grid point, with at least one pending. Its cooldown starts;
+    its render wakes the display (``display_wake_refresh_mark?``); features 1-5
+    show their overlay, whose end starts the next service, and after the
+    ``420d`` prompt the next goes a point on. The overlay is always drawn:
+    display state 4, ``ota_apply_screen?`` and an OTA, which skip it, aren't
+    modeled.
     """
-    waiting = [code for code in SERVICE_ORDER if state.get(_pending(code))]
-    if not waiting:
-        return Step(unset=(SERVICING,))
-    code = waiting[0]
+    code, *rest = [code for code in SERVICE_ORDER if state.get(_pending(code))]
     fields = {"a2": container("a2", TYPE_UI, ui(1).build(code))}
+    woke, refreshed = _refresh_wake(state)
+    changes: dict[str, Value] = dict(woke)
+    unset = [_pending(code)]
+    then = list(refreshed)
+    if code in COOLDOWN_PASSES:
+        changes[_cooling(code)] = True
+        cooled = (COOLDOWN_PASSES[code] - 1) * TICK_100MS
+        then.append(Timed(cooled, f"secret_cooldown_{code}", partial(_cooled, code)))
+    if code in OVERLAY_FRAMES:
+        changes[OVERLAY] = True
+        shown = OVERLAY_FRAMES[code] * OVERLAY_FRAME
+        then.append(Timed(shown, OVERLAY_END, _overlay_ended))
+        unset.append(SERVICING)
+    elif rest:
+        then.append(Timed(SERVICE_PERIOD, "secret_service", _service))
+    else:
+        unset.append(SERVICING)
     return Step(
-        unset=(_pending(code),),
+        values=changes,
+        unset=tuple(unset),
         frames=(timed_push(0x305, fields, state),),
-        then=(Timed(1.0, "secret_service", _service),),
+        then=tuple(then),
     )
+
+
+def _overlay_ended(
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """End a Secret Feature's overlay: its last frame or ``secret_overlay_stop?``.
+
+    The pass count resumes on the next 100 ms tick, so the grid's points move
+    to whole seconds from the tick before it; a pending feature waits for the
+    first.
+    """
+    if not state.get(OVERLAY):
+        return Step()
+    now = float(state[CLOCK])
+    grid = on_grid(state, TICK_100MS, now, at_or_after=False) - TICK_100MS
+    resumed = {**state, SERVICE_GRID: grid}
+    if not any(state.get(_pending(code)) for code in SERVICE_ORDER):
+        return Step(values={SERVICE_GRID: grid}, unset=(OVERLAY,))
+    return Step(
+        values={SERVICE_GRID: grid, SERVICING: True},
+        unset=(OVERLAY,),
+        then=(_next_service(resumed),),
+    )
+
+
+def _overlay_stop() -> Timed:
+    """Return ``secret_overlay_stop?`` now: an overlay showing ends early."""
+    return Timed(0, OVERLAY_END, _overlay_ended)
 
 
 def _trigger(
@@ -2481,26 +2605,44 @@ def _screen_switch_aged(
     return Step(values={SCREEN_COUNT: int(state[SCREEN_COUNT]) - 1})
 
 
-def _plug_rise(
+def _plug_marked(
+    port: str,
+    prior: bool,  # noqa: FBT001  # bound by partial
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Keep the attach state the next edge loop compares against; queue it."""
+    seen = {_plug_seen(port): state.get(_plug_seen(port), prior)}
+    edge = Timed(_in_tick(state), f"{port}_plug_edge", partial(_plug_edge, port))
+    return Step(values=seen, then=(edge,))
+
+
+def _plug_edge(
     port: str,
     values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
     state: Mapping[str, Value],
 ) -> Step:
-    """Count a USB-C port's attach rise; the 10th within 60 s triggers Feature 2.
+    """Feature 2's edge loop for a USB-C port, on a 100 ms tick: the 10th rise fires.
 
-    The window is fixed from the first rise and clears the count when it ends;
-    the 10th clears it too (doc "Secret Features").
+    It compares the attach state with the one it last saw, so a change undone
+    within the tick is unseen. A rise counts; an edge that leaves the count at
+    1 restarts the 60 s window, whose end clears the count; the 10th clears it
+    too. A detach never fires (doc "Secret Features" Feature 2).
     """
-    count = int(state.get(_plug_count(port), 0)) + 1
+    attached = bool(state[f"{port}_output_status"])
+    if attached == state[_plug_seen(port)]:
+        return Step()
+    count = int(state.get(_plug_count(port), 0)) + attached
     window = f"{port}_plug_window"
+    changes: dict[str, Value] = {_plug_seen(port): attached, _plug_count(port): count}
     events: tuple[Timed, ...] = ()
     if count == 1:
         events = (Timed(PLUG_WINDOW, window, partial(_plug_window_ended, port)),)
     if count < PLUGS:
-        return Step(values={_plug_count(port): count}, then=events)
+        return Step(values=changes, then=events)
     fired, more = _triggered(FEATURE_PLUGS, state)
     return Step(
-        values={_plug_count(port): 0} | fired,
+        values=changes | {_plug_count(port): 0} | fired,
         then=(Timed(0, window, drop_queued), *more),
     )
 
@@ -2527,52 +2669,51 @@ def _designated(
     return Step(values={DESIGNATION_COUNT: count - DESIGNATIONS} | fired, then=events)
 
 
-def _power_ports(state: Mapping[str, Value], *, settled: bool) -> int:
-    """Return the USB-C ports Power Expert counts: high-voltage class, > 18 V.
+def _high_ports(state: Mapping[str, Value]) -> int:
+    """Return the active USB-C ports above 18 000 mV now, bit 0 C1."""
+    return sum(
+        1 << bit
+        for bit, port in enumerate(USBC_PORTS)
+        if state[f"{port}_output_status"]
+        and int(state[f"{port}_output_voltage"]) > HIGH_VOLTAGE
+    )
 
-    A port's class is non-zero once settled with 2 or more active when its peak
-    is above 18 000 mV, which a voltage above 18 000 mV already implies; the PD
-    codes that also raise it (record +0x18) aren't modeled.
+
+def _classed(state: Mapping[str, Value]) -> dict[str, Value]:
+    """Return a settled pass's classes: each port it samples above 18 000 mV joins.
+
+    A class only rises until the next reset, as its peak since pass 20 does;
+    which of 1 or 2 isn't kept, since nothing modeled reads it. The PD codes
+    that also raise it (record +0x18) aren't modeled.
     """
-    active = [port for port in USBC_PORTS if state[f"{port}_output_status"]]
-    if not settled or len(active) < 2:  # noqa: PLR2004  # the class needs 2 active
-        return 0
-    return sum(int(state[f"{port}_output_voltage"]) > HIGH_VOLTAGE for port in active)
+    return {HV_CLASSED: int(state.get(HV_CLASSED, 0)) | _high_ports(state)}
 
 
-def _power_check(
-    settled: bool,  # noqa: FBT001  # bound by partial
+def _power_count(
     values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
     state: Mapping[str, Value],
 ) -> Step:
-    """Recount Power Expert's ports; a rise to 3 or more triggers it (no cooldown)."""
-    count = _power_ports(state, settled=settled)
-    changes: dict[str, Value] = {HV_SETTLED: settled, POWER_COUNT: count}
-    events: tuple[Timed, ...] = ()
+    """Count Power Expert's ports in a tick: classed and above 18 000 mV now.
+
+    A rise of the count to 3 or more triggers it (no cooldown).
+    """
+    count = (int(state.get(HV_CLASSED, 0)) & _high_ports(state)).bit_count()
+    changes: dict[str, Value] = {POWER_COUNT: count}
     if count >= POWER_PORTS > int(state.get(POWER_COUNT, 0)):
         fired, events = _triggered(POWER_EXPERT, state)
-        changes |= fired
-    return Step(values=changes, then=events)
+        return Step(values=changes | fired, then=events)
+    return Step(values=changes)
 
 
-def _power_expert(
-    before: Mapping[str, Value], after: Mapping[str, Value]
-) -> tuple[Timed, ...]:
-    """Return Power Expert's recount.
-
-    A change in the active USB-C port count zeroes the class for 21 s; a
-    voltage change while settled recounts at once.
-    """
-    active = [f"{port}_output_status" for port in USBC_PORTS]
-    if sum(bool(before[n]) for n in active) != sum(bool(after[n]) for n in active):
-        return (
-            Timed(0, "usbc_hv_reset", partial(_power_check, False)),  # noqa: FBT003
-            Timed(HV_SETTLE, "usbc_hv_settle", partial(_power_check, True)),  # noqa: FBT003
-        )
-    voltages = [f"{port}_output_voltage" for port in USBC_PORTS]
-    if after.get(HV_SETTLED) and any(before[n] != after[n] for n in voltages):
-        return (Timed(0, "power_expert", partial(_power_check, True)),)  # noqa: FBT003
-    return ()
+def _power_settled(
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Pass 70 after a USB-C count change: the first classes, counted a tick on."""
+    return Step(
+        values={HV_SETTLED: True, **_classed(state)},
+        then=(Timed(_in_tick(state), "power_count", _power_count),),
+    )
 
 
 def _counted_designations(
@@ -2600,8 +2741,9 @@ def _secret_features(
     """Return the Secret Feature inputs a change makes (doc "Secret Features").
 
     A nonzero ``420d``, a screen switch (``unit_event("switch_screen")``), a
-    USB-C attach rise, a ``420c``'s designations, and all six ports turning
-    active.
+    USB-C attach rise (read on the next 100 ms tick) and a ``420c``'s
+    designations. An app setting's wake from 1-3, or with the inhibit set,
+    stops an overlay.
     """
     events = []
     if after.get(PROMPTS) != before.get(PROMPTS):
@@ -2610,16 +2752,87 @@ def _secret_features(
         events.append(Timed(0, "screen_switch", _screen_switched))
     for port in USBC_PORTS:
         status = f"{port}_output_status"
-        if after[status] and not before[status]:
-            events.append(Timed(0, f"{port}_plug_rise", partial(_plug_rise, port)))
+        if bool(after[status]) != bool(before[status]):
+            marked = partial(_plug_marked, port, bool(before[status]))
+            events.append(Timed(0, f"{port}_plug_mark", marked))
+    usbc = [f"{port}_output_{part}" for port in USBC_PORTS for part in PORT_READS]
+    if any(before[name] != after[name] for name in usbc):
+        events.append(Timed(_in_tick(after), "power_count", _power_count))
     if after.get(COMMAND) == 0x20C:  # noqa: PLR2004  # 420c, the designations
         counted = _counted_designations(before, after)
         if counted:
             events.append(Timed(0, "designations", partial(_designated, counted)))
-    active = [f"{port}_output_status" for port in ATTACH_PORTS]
-    if all(after[name] for name in active) and not all(before[name] for name in active):
-        events.append(Timed(0, "device_expert", partial(_trigger, DEVICE_EXPERT)))
+    woken = before.get(DISPLAY_WAKES) != after.get(DISPLAY_WAKES)
+    awake = _display(before) == DISPLAY_ON and not before.get(SCREENSAVER_INHIBIT)
+    if woken and not awake:
+        events.append(_overlay_stop())
     return tuple(events)
+
+
+def _port_scan_events(
+    before: Mapping[str, Value], after: Mapping[str, Value]
+) -> tuple[Timed, ...]:
+    """Return the 300 ms pass a port change needs: activity, or a settled voltage."""
+    prior = _port_bitmap(before)
+    voltages = [f"{port}_output_voltage" for port in USBC_PORTS]
+    voltage_changed = any(before[name] != after[name] for name in voltages)
+    if prior == _port_bitmap(after) and not (voltage_changed and after.get(HV_SETTLED)):
+        return ()
+    return (Timed(0, "port_scan_mark", partial(_port_scan_marked, prior)),)
+
+
+def _port_scan_marked(
+    prior: int,
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Keep the bitmap the next scan compares against, then queue that scan."""
+    delay = grid_delay(state, SCAN_PERIOD, AFTER_LOWER_GROUPS, float(state[CLOCK]))
+    return Step(
+        values={SCAN_SEEN: state.get(SCAN_SEEN, prior)},
+        then=(Timed(delay, "port_scan", _port_scan),),
+    )
+
+
+def _port_scan(
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """``port_activity_scan_dispatch`` on a 300 ms pass, with what it sees then.
+
+    A change undone before the pass is unseen. A changed bitmap wakes the
+    display (``display_wake_refresh_mark?``, from 1-3 also an overlay stop)
+    and raises Device Expert on a change into or out of all six active
+    (``device_expert_check``). ``usbc_hv_class_update`` zeroes the classes on
+    a USB-C count change, settling 69 passes on with 2 or more active, else
+    classes the ports it samples once settled; Power Expert counts a tick on.
+    """
+    seen, bitmap = int(state[SCAN_SEEN]), _port_bitmap(state)
+    changes: dict[str, Value] = {}
+    then: tuple[Timed, ...] = ()
+    if seen != bitmap:
+        woke, then = _refresh_wake(state)
+        changes = {**woke, SCAN_SEEN: bitmap}
+        if _display(state) != DISPLAY_ON:
+            then += (_overlay_stop(),)
+        if (seen == ALL_ACTIVE) != (bitmap == ALL_ACTIVE):
+            fired, more = _triggered(DEVICE_EXPERT, state)
+            changes |= fired
+            then += more
+    active = (bitmap & USBC_BITS).bit_count()
+    count = Timed(_in_tick(state), "power_count", _power_count)
+    if (seen & USBC_BITS).bit_count() != active:
+        changes |= {HV_SETTLED: False, HV_CLASSED: 0}
+        settle = (
+            Timed(HV_SETTLE, "usbc_hv_settle", _power_settled)
+            if active >= 2  # noqa: PLR2004  # the class needs 2 active
+            else Timed(0, "usbc_hv_settle", drop_queued)
+        )
+        then += (settle, count)
+    elif state.get(HV_SETTLED):
+        changes |= _classed(state)
+        then += (count,)
+    return Step(values=changes, then=then)
 
 
 def _renegotiate(
@@ -2702,8 +2915,8 @@ def _secret_prompt(
     """Count a ``420d`` whose first value byte is nonzero: Secret Feature 0.
 
     ``cmd20d_secret_features`` (0x00043938) stores only that byte (0x0001475c);
-    its ``0305`` waits for the service tick, first in its order (doc "Secret
-    Features"; no capture shows it beside the ack).
+    its ``0305`` waits for the next service grid point, first in its order
+    (doc "Secret Features").
     """
     if not decode_field(request, "a2", ui(1)):
         return {}
@@ -2983,7 +3196,7 @@ class A2345Layout(TableLayout):
             *_switch_watch(before, after),
             *_attach_events(before, after),
             *_secret_features(before, after),
-            *_power_expert(before, after),
+            *_port_scan_events(before, after),
             *_theme_fetch(before, after),
             *_holiday_fetch(before, after),
             *_draw_events(before, after),

@@ -1,6 +1,7 @@
 # Copyright (c) 2026 Shawn Stricker
 """The Prime devices (A110B, A2345, A25X7, A2687, A91B2) over bleak."""
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import pytest
@@ -3693,12 +3694,12 @@ def test_a2345_secret_feature_1_fires_on_20_screen_switches_in_10_s() -> None:
     def switch() -> list[tuple[str, str]]:
         return pushed_by(device, client, lambda: device.unit_event("switch_screen"))
 
-    def burst(gap: float, times: int) -> list[tuple[str, str]]:
+    def burst(gap: float, times: int) -> list[str]:
         pushes = []
         for _ in range(times):
             pushes += switch()
-            advance(device, client, clock, gap)
-        return pushes
+            pushes += advance(device, client, clock, gap)
+        return [payload[:14] for cmd, payload in pushes if cmd == "4305"]
 
     slow = burst(0.55, 20)  # the 20th-newest 10.45 s before the newest
     clock.advance(30)
@@ -3706,12 +3707,10 @@ def test_a2345_secret_feature_1_fires_on_20_screen_switches_in_10_s() -> None:
     cooling = burst(0.5, 20)
     clock.advance(60)
     again = burst(0.5, 20)
+    again += burst(1, 1)  # sent on the grid shifted by the first one's overlay
 
     assert slow == cooling == []
-    assert [(cmd, payload[:14]) for cmd, payload in fired] == [
-        ("4305", "a10131a2020104")
-    ]
-    assert [cmd for cmd, _ in again] == ["4305"]
+    assert fired == again == ["a10131a2020104"]
 
 
 def test_a2345_secret_feature_2_fires_on_10_plugs_of_one_port_in_60_s() -> None:
@@ -3727,8 +3726,9 @@ def test_a2345_secret_feature_2_fires_on_10_plugs_of_one_port_in_60_s() -> None:
         pushes = []
         for _ in range(times):
             pushes += pushed_by(device, client, lambda: device.plug(1, 0x05AC, 0x7117))
+            pushes += advance(device, client, clock, 0.5)
             device.unplug(1)
-            advance(device, client, clock, 1)
+            pushes += advance(device, client, clock, 0.5)
         return pushes
 
     nine = plug_cycles(9)
@@ -3747,11 +3747,13 @@ def test_a2345_feature_expert_fires_on_every_10th_designation() -> None:
     ``420c`` counts one per set bit, but none made with 2 or more ports
     already designated.
     """
-    device = A2345(clock=ManualClock())
+    clock = ManualClock()
+    device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
 
     def designate(mask: int) -> list[str]:
         replies = command(device, client, 0x20C, [(0xA2, bytes([1, mask]))])
+        replies += advance(device, client, clock, 1)
         return [payload[:14] for cmd, payload in replies if cmd == "4305"]
 
     three = designate(0b0111)  # counts 2: the third has 2 already designated
@@ -3768,9 +3770,10 @@ def test_a2345_feature_expert_fires_on_every_10th_designation() -> None:
 def test_a2345_power_expert_fires_21_s_after_a_third_high_voltage_port() -> None:
     """``0305 a2`` 02 when 3 USB-C ports run above 18 V, once their class settles.
 
-    doc "Secret Features" Power Expert: the class is 0 for 21 s after the
-    active-port count changes; each rise of the count to 3 fires, no cooldown.
-    The recording has C2 active at 19 760 mV.
+    doc "Secret Features" Power Expert: the class is 0 until pass 70, the
+    300 ms pass that sees the active-port count change being pass 1; each rise
+    of the count to 3 fires, no cooldown. The recording has C2 active at
+    19 760 mV.
     """
     clock = ManualClock()
     device = A2345(clock=clock)
@@ -3783,27 +3786,35 @@ def test_a2345_power_expert_fires_21_s_after_a_third_high_voltage_port() -> None
     two_settled = advance(device, client, clock, 30)
     three = unit_change(device, client, pd3_output_status=1, pd3_output_voltage=20000)
     settling = advance(device, client, clock, 20.9)
-    settled = advance(device, client, clock, 0.2)
+    settled = advance(device, client, clock, 1.2)  # settled 20.7 s on, sent at 51 s
     idle = advance(device, client, clock, 2)
     dip = unit_change(device, client, pd1_output_voltage=5000)
+    dip += advance(device, client, clock, 0.3)  # a pass sees the dip
     recovered = unit_change(device, client, pd1_output_voltage=20000)
+    recovered += advance(device, client, clock, 4)  # held by the first one's overlay
 
     assert power_expert(two + two_settled + three + settling + idle + dip) == []
     assert power_expert(settled) == power_expert(recovered) == ["a10131a2020102"]
 
 
 def test_a2345_device_expert_fires_when_all_six_ports_are_active() -> None:
-    """``0305 a2`` 03 on each change into all six ports active; then 24 h off."""
+    """``0305 a2`` 03 on each change into all six ports active; then 24 h off.
+
+    Leaving the state inside the cooldown is dropped too. Each change is held
+    past a 300 ms pass, which is what sees it.
+    """
     clock = ManualClock()
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
     ports = ("pd1", "pd2", "pd3", "pd4", "usb1", "usb2")
 
     def all_active() -> list[str]:
-        device.set_values(pd1_output_status=0)
-        pushes = unit_change(
+        pushes = unit_change(device, client, pd1_output_status=0)
+        pushes += advance(device, client, clock, 0.3)
+        pushes += unit_change(
             device, client, **{f"{port}_output_status": 1 for port in ports}
         )
+        pushes += advance(device, client, clock, 1)
         return [payload[:14] for cmd, payload in pushes if cmd == "4305"]
 
     first = all_active()
@@ -3816,11 +3827,12 @@ def test_a2345_device_expert_fires_when_all_six_ports_are_active() -> None:
     assert cooling == []
 
 
-def test_a2345_secret_features_are_sent_one_a_second_in_their_order() -> None:
-    """Two pending at once: Device Expert (3) at once, Feature 2 (5) 1 s on.
+def test_a2345_secret_features_are_sent_in_their_order() -> None:
+    """Two pending at once: Device Expert (3), then Feature 2 (5) behind its overlay.
 
-    doc "Secret Features": one pending feature serviced a second, in the order
-    ``420d``, 1, 2, 3, 4, 5.
+    doc "Secret Features": one pending feature serviced on each grid point, in
+    the order ``420d``, 1, 2, 3, 4, 5; Device Expert's 150-frame overlay holds
+    the count, so the next goes 10 passes after it ends, 5.9 s after the send.
     """
     clock = ManualClock()
     device = A2345(clock=clock)
@@ -3828,19 +3840,442 @@ def test_a2345_secret_features_are_sent_one_a_second_in_their_order() -> None:
     device.set_values(pd3_output_status=1, pd4_output_status=1, usb1_output_status=1)
     for _ in range(9):
         device.plug(1, 0x05AC, 0x7117)
+        advance(device, client, clock, 0.5)
         device.unplug(1)
-        advance(device, client, clock, 1)
+        advance(device, client, clock, 0.5)
     device.set_values(usb2_output_status=1)
 
-    tenth = pushed_by(device, client, lambda: device.plug(1, 0x05AC, 0x7117))
-    next_second = advance(device, client, clock, 1)
+    clock.advance(0.5)
 
-    assert [payload[:14] for cmd, payload in tenth if cmd == "4305"] == [
-        "a10131a2020103"
-    ]
-    assert [payload[:14] for cmd, payload in next_second if cmd == "4305"] == [
-        "a10131a2020105"
-    ]
+    def secret(pushes: list[tuple[str, str]]) -> list[str]:
+        return [payload[:14] for cmd, payload in pushes if cmd == "4305"]
+
+    tenth = pushed_by(device, client, lambda: device.plug(1, 0x05AC, 0x7117))
+    first_point = advance(device, client, clock, 0.5)
+    held = advance(device, client, clock, 5.85)
+    next_point = advance(device, client, clock, 0.1)
+
+    assert secret(tenth) == secret(held) == []
+    assert secret(first_point) == ["a10131a2020103"]
+    assert secret(next_point) == ["a10131a2020105"]
+
+
+@pytest.mark.parametrize(
+    ("first", "code", "gap"),
+    [
+        pytest.param("device_expert", "03", 5.9, id="Device Expert, 150 frames"),
+        pytest.param("switch_screen", "04", 5.1, id="Feature 1, 125 frames"),
+    ],
+)
+def test_a2345_a_feature_overlay_holds_the_next_service(
+    first: str, code: str, gap: float
+) -> None:
+    """A ``420d`` pending behind a feature's overlay goes 10 passes after it ends.
+
+    doc "Secret Features": frames x 33 ms, 4.95 s for 1-3, 4.125 s for 4 and
+    5; the count resumes on the next 100 ms tick. Sent at 10 s here.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    clock.advance(9.0)
+    if first == "device_expert":
+        device.set_values(
+            **{
+                f"{port}_output_status": 1
+                for port in ("pd1", "pd2", "pd3", "pd4", "usb1", "usb2")
+            }
+        )
+    else:
+        for _ in range(20):
+            device.unit_event("switch_screen")
+            advance(device, client, clock, 0.01)
+
+    def secret(pushes: list[tuple[str, str]]) -> list[str]:
+        return [payload[:14] for cmd, payload in pushes if cmd == "4305"]
+
+    sent = advance(device, client, clock, 10.0 - clock.now())
+    clock.advance(1.0)
+    command(device, client, 0x20D, [(0xA2, b"\x02\x01")])
+    held = advance(device, client, clock, gap - 1.05)
+    due = advance(device, client, clock, 0.1)
+
+    assert secret(sent) == [f"a10131a20201{code}"]
+    assert secret(held) == []
+    assert secret(due) == ["a10131a2020100"]
+
+
+@pytest.mark.parametrize(
+    ("stop", "sent_at"),
+    [
+        pytest.param(None, 15.9, id="no stop: the overlay's end"),
+        pytest.param(
+            lambda device, client: device.unit_event("knob_activity"),
+            15.9,
+            id="knob activity in plain state 0: runs on",
+        ),
+        pytest.param(
+            lambda device, client: command(
+                device, client, 0x203, [(0xA2, b"\x01\x01")]
+            ),
+            15.9,
+            id="a waking 4203 in plain state 0: runs on",
+        ),
+        pytest.param(
+            lambda device, client: (
+                device.unit_event("knob_hold"),
+                device.unit_event("knob_activity"),
+            ),
+            12.6,
+            id="knob activity with the inhibit set, read on the 11.6 s tick",
+        ),
+        pytest.param(
+            lambda device, client: (
+                device.unit_event("knob_hold"),
+                command(device, client, 0x203, [(0xA2, b"\x01\x01")]),
+            ),
+            12.5,
+            id="a waking 4203 with the inhibit set, at 11.55 s",
+        ),
+        pytest.param(
+            lambda device, client: device.unit_event("knob_click"),
+            12.6,
+            id="a click: state 3 ends at 11.65 s, bound",
+        ),
+    ],
+)
+def test_a2345_an_early_overlay_stop_restarts_the_service_count(
+    stop: Callable[[A2345, AppClient], object] | None, sent_at: float
+) -> None:
+    """``secret_overlay_stop?`` ends Device Expert's overlay; 10 passes on, the next.
+
+    doc "Secret Features": the knob and app-setting wakes stop it only from
+    1-3 or with the inhibit set (an overlay runs in 0); the display's 3 -> 0
+    exit stops it. ``secret_features_tick`` runs first in a tick, so a stop on
+    tick N gives the service at N + 10. Device Expert is sent at 10 s and a
+    ``420d`` waits behind it.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    exchange(device.negotiated_module, client, 0x023, [(0xA2, ACCOUNT)])
+    clock.advance(9.5)
+    device.set_values(
+        **{
+            f"{port}_output_status": 1
+            for port in ("pd1", "pd2", "pd3", "pd4", "usb1", "usb2")
+        }
+    )
+    advance(device, client, clock, 0.5)
+    clock.advance(1.0)
+    command(device, client, 0x20D, [(0xA2, b"\x02\x01")])
+    clock.advance(0.55)
+    if stop is not None:
+        stop(device, client)
+
+    def secret(pushes: list[tuple[str, str]]) -> list[str]:
+        return [payload[:14] for cmd, payload in pushes if cmd == "4305"]
+
+    held = advance(device, client, clock, sent_at - 0.05 - clock.now())
+    due = advance(device, client, clock, 0.1)
+
+    assert secret(held) == []
+    assert secret(due) == ["a10131a2020100"]
+
+
+@pytest.mark.parametrize(
+    ("last", "sent"),
+    [
+        pytest.param(0.05, False, id="59.85 s after the send: dropped"),
+        pytest.param(0.15, True, id="59.95 s after the send: sent"),
+    ],
+)
+def test_a2345_a_cooldown_runs_from_the_send(last: float, *, sent: bool) -> None:
+    """Feature 1's 600-pass cooldown is loaded at its send and wipes a raise.
+
+    doc "Secret Features": the send's own pass counts one, so the last pass
+    that wipes is 59.9 s after the send. Sent at 10 s (its 20th switch at
+    9.5 s); the re-trigger's point is 70.1 s, on the grid its overlay shifted.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+
+    def burst(times: int) -> list[str]:
+        pushes = []
+        for _ in range(times):
+            pushes += pushed_by(
+                device, client, lambda: device.unit_event("switch_screen")
+            )
+            pushes += advance(device, client, clock, 0.5)
+        return [payload[:14] for cmd, payload in pushes if cmd == "4305"]
+
+    fired = burst(20)
+    clock.advance(50.3)
+    nineteen = burst(19)
+    clock.advance(last)
+    retriggered = burst(1)
+    later = advance(device, client, clock, 1)
+
+    assert fired == ["a10131a2020104"]
+    assert nineteen == []
+    assert retriggered == (["a10131a2020104"] if sent else [])
+    assert "4305" not in [cmd for cmd, _ in later]
+
+
+def test_a2345_device_expert_fires_on_leaving_all_six_active() -> None:
+    """``0305 a2`` 03 on a change out of all six active, once the 24 h are over.
+
+    doc "Secret Features" Device Expert: raised on each change into or out of it.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    ports = ("pd1", "pd2", "pd3", "pd4", "usb1", "usb2")
+
+    def secret(pushes: list[tuple[str, str]]) -> list[str]:
+        return [payload[:14] for cmd, payload in pushes if cmd == "4305"]
+
+    entered = unit_change(device, client, **{f"{p}_output_status": 1 for p in ports})
+    entered += advance(device, client, clock, 1)
+    clock.advance(24 * 3600)
+    left = unit_change(device, client, pd1_output_status=0)
+    left += advance(device, client, clock, 1)
+
+    assert secret(entered) == secret(left) == ["a10131a2020103"]
+
+
+def test_a2345_device_expert_is_raised_on_the_300ms_pass() -> None:
+    """All six active at 0.95 s: the 1.2 s pass raises it, so the 2 s point sends it.
+
+    doc "Scheduler groups": ``port_activity_scan_dispatch`` runs every 300 ms
+    from boot, and ``device_expert_check`` on the pass that sees the change.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    ports = ("pd1", "pd2", "pd3", "pd4", "usb1", "usb2")
+
+    def secret(pushes: list[tuple[str, str]]) -> list[str]:
+        return [payload[:14] for cmd, payload in pushes if cmd == "4305"]
+
+    clock.advance(0.95)
+    changed = unit_change(device, client, **{f"{p}_output_status": 1 for p in ports})
+    early = advance(device, client, clock, 1.0)
+    due = advance(device, client, clock, 0.1)
+
+    assert secret(changed) == secret(early) == []
+    assert secret(due) == ["a10131a2020103"]
+
+
+@pytest.mark.parametrize(
+    ("at", "sent_at"),
+    [
+        pytest.param(29.95, 51.0, id="30 s pass: classed at 50.7 s, sent at 51 s"),
+        pytest.param(30.05, 52.0, id="30.3 s pass: classed at 51 s, sent at 52 s"),
+    ],
+)
+def test_a2345_power_expert_settles_70_passes_after_the_pass_that_sees_it(
+    at: float, sent_at: float
+) -> None:
+    """A third port at ``at``: the next 300 ms pass is pass 1, pass 70 classes it.
+
+    doc Power Expert row: 69 passes (20.7 s) after the pass that sees the
+    change, then counted on the next 100 ms tick. 21 s would make the first
+    case 52 s; 20.7 s from the change itself would make the second 51 s.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+
+    def secret(pushes: list[tuple[str, str]]) -> list[str]:
+        return [payload[:14] for cmd, payload in pushes if cmd == "4305"]
+
+    unit_change(device, client, pd1_output_status=1, pd1_output_voltage=20000)
+    advance(device, client, clock, at)
+    unit_change(device, client, pd3_output_status=1, pd3_output_voltage=20000)
+    early = advance(device, client, clock, sent_at - 0.05 - at)
+    due = advance(device, client, clock, 0.1)
+
+    assert secret(early) == []
+    assert secret(due) == ["a10131a2020102"]
+
+
+def test_a2345_power_expert_counts_a_rise_after_its_pass_a_recovery_at_once() -> None:
+    """A first rise above 18 V counts a tick after the 300 ms pass that classes it.
+
+    doc Power Expert row: the class is set on the 300 ms pass and only rises,
+    while ``secret_features_tick`` counts every 100 ms. C3 rises at 40.95 s:
+    classed on the 41.1 s pass, counted at 41.2 s, sent at 42 s. After a dip
+    at 50 s, the classed C3 counts again on the next tick: back at 50.75 s,
+    counted at 50.8 s and sent at the 50.9 s point (the first overlay moved
+    the grid).
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+
+    def secret(pushes: list[tuple[str, str]]) -> list[str]:
+        return [payload[:14] for cmd, payload in pushes if cmd == "4305"]
+
+    unit_change(
+        device,
+        client,
+        pd1_output_status=1,
+        pd1_output_voltage=20000,
+        pd3_output_status=1,
+        pd3_output_voltage=15000,
+    )
+    settled = advance(device, client, clock, 40.95)
+    unit_change(device, client, pd3_output_voltage=20000)
+    unclassed = advance(device, client, clock, 1.0)
+    first = advance(device, client, clock, 0.1)
+    clock.advance(7.95)
+    unit_change(device, client, pd3_output_voltage=15000)
+    dipped = advance(device, client, clock, 0.75)
+    unit_change(device, client, pd3_output_voltage=20000)
+    held = advance(device, client, clock, 0.1)
+    recovered = advance(device, client, clock, 0.1)
+
+    assert secret(settled) == secret(unclassed) == secret(dipped) == []
+    assert secret(held) == []
+    assert secret(first) == secret(recovered) == ["a10131a2020102"]
+
+
+def test_a2345_a_feature_2_rise_on_a_service_tick_goes_out_on_it() -> None:
+    """The 10th rise read on the 10 s tick is served on that tick.
+
+    doc Feature 2 row: the edge loop runs before ``secret_features_tick``'s
+    service check. Plugged at 9.95 s; one raised outside the tick waits 1 s.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+
+    def secret(pushes: list[tuple[str, str]]) -> list[str]:
+        return [payload[:14] for cmd, payload in pushes if cmd == "4305"]
+
+    for _ in range(9):
+        unit_change(device, client, pd1_output_status=1)
+        advance(device, client, clock, 0.5)
+        unit_change(device, client, pd1_output_status=0)
+        advance(device, client, clock, 0.5)
+    clock.advance(0.95)
+    unit_change(device, client, pd1_output_status=1)
+    early = advance(device, client, clock, 0.04)
+    due = advance(device, client, clock, 0.02)
+
+    assert secret(early) == []
+    assert secret(due) == ["a10131a2020105"]
+
+
+@pytest.mark.parametrize(
+    ("before_fall", "fires"),
+    [
+        pytest.param(1, True, id="fall at count 1: window restarts at 50.1 s"),
+        pytest.param(2, False, id="fall at count 2: window ends 60.6 s on"),
+    ],
+)
+def test_a2345_a_feature_2_fall_at_count_1_restarts_the_window(
+    before_fall: int, *, fires: bool
+) -> None:
+    """A detach that leaves the count at 1 restarts the 60 s window.
+
+    doc Feature 2 row: after any edge with the count at 1, the window resets;
+    a detach never counts or fires. ``before_fall`` rises, a detach at 50 s,
+    then the rest of 10 rises from 100 s.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    pushes = []
+
+    def cycle() -> None:
+        pushes.extend(unit_change(device, client, pd1_output_status=1))
+        pushes.extend(advance(device, client, clock, 0.5))
+        pushes.extend(unit_change(device, client, pd1_output_status=0))
+        pushes.extend(advance(device, client, clock, 0.5))
+
+    for _ in range(before_fall - 1):
+        cycle()
+    unit_change(device, client, pd1_output_status=1)
+    advance(device, client, clock, 50.0 - clock.now())
+    unit_change(device, client, pd1_output_status=0)
+    advance(device, client, clock, 100.0 - clock.now())
+    for _ in range(10 - before_fall):
+        cycle()
+    pushes.extend(advance(device, client, clock, 2))
+
+    sent = [payload[:14] for cmd, payload in pushes if cmd == "4305"]
+    assert sent == (["a10131a2020105"] if fires else [])
+
+
+@pytest.mark.parametrize(
+    ("start", "hold"),
+    [
+        pytest.param("black", False, id="black"),
+        pytest.param("black", True, id="black, inhibit set"),
+        pytest.param("transition", False, id="transition screen"),
+    ],
+)
+def test_a2345_a_secret_feature_render_wakes_the_display(
+    start: str, *, hold: bool
+) -> None:
+    """Each service's render (``display_wake_refresh_mark?``) moves 1-3 to 0.
+
+    doc "Display state" row 0: it restarts the ``b0`` count and leaves the
+    screen-off inhibit as it is. ``b0`` 1 (30 s); a ``420d`` at 31 s is
+    served at 32 s, so the screen goes dark again at 62 s.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(screen_timeout=1)
+    advance(device, client, clock, 31.0)
+    if start == "transition":
+        device.unit_event("knob_click")
+    if hold:
+        device.unit_event("knob_hold")
+    waiting = module.values[DISPLAY]
+    command(device, client, 0x20D, [(0xA2, b"\x02\x01")])
+    advance(device, client, clock, 1.0)
+    woken = (module.values[DISPLAY], module.values.get(SCREENSAVER_INHIBIT, 0))
+    advance(device, client, clock, 29.9)
+    still_on = module.values[DISPLAY]
+    advance(device, client, clock, 0.2)
+
+    assert waiting != 0
+    assert woken == (0, int(hold))
+    assert still_on == 0
+    assert module.values[DISPLAY] != 0
+
+
+def test_a2345_a_port_change_wakes_the_display_on_the_300ms_pass() -> None:
+    """A plug wakes 1-3 to 0 on the 300 ms pass that sees the changed bitmap.
+
+    doc "Display state" row 0 (``port_activity_scan_dispatch`` ->
+    ``display_wake_refresh_mark?``) and "Scheduler groups": a plug and unplug
+    between two passes wakes nothing; a plug at 31.35 s wakes on the 31.5 s pass.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(screen_timeout=1)
+    advance(device, client, clock, 31.0)
+    unit_change(device, client, pd3_output_status=1)
+    unit_change(device, client, pd3_output_status=0)
+    advance(device, client, clock, 0.35)
+    glitched = module.values[DISPLAY]
+    unit_change(device, client, pd3_output_status=1)
+    advance(device, client, clock, 0.1)
+    early = module.values[DISPLAY]
+    advance(device, client, clock, 0.1)
+
+    assert glitched != 0
+    assert early != 0
+    assert module.values[DISPLAY] == 0
 
 
 def test_a2345_420d_of_zero_acks_and_prompts_nothing() -> None:
@@ -3856,10 +4291,10 @@ def test_a2345_420d_of_zero_acks_and_prompts_nothing() -> None:
 
 
 def test_a2345_420d_prompt_goes_out_through_the_secret_feature_service() -> None:
-    """A nonzero ``420d``'s ``0305`` (trigger 0) waits for the service tick.
+    """A nonzero ``420d``'s ``0305`` (trigger 0) waits for the next grid point.
 
-    doc "Secret Features": one pending feature a second, ``420d`` first. Idle,
-    it goes out at once; behind Device Expert, a second later.
+    doc "Secret Features": one pending feature a grid point, ``420d`` first, so
+    it goes out ahead of a Device Expert pending before it.
     """
     clock = ManualClock()
     device = A2345(clock=clock)
@@ -3867,7 +4302,9 @@ def test_a2345_420d_prompt_goes_out_through_the_secret_feature_service() -> None
     prompt = [(0xA2, b"\x02\x01")]
 
     alone = command(device, client, 0x20D, prompt)
-    clock.advance(5)
+    waiting = advance(device, client, clock, 0.9)
+    sent = advance(device, client, clock, 0.1)
+    clock.advance(5.5)
     unit_change(
         device,
         client,
@@ -3877,14 +4314,49 @@ def test_a2345_420d_prompt_goes_out_through_the_secret_feature_service() -> None
         },
     )
     behind = command(device, client, 0x20D, prompt)
-    next_second = advance(device, client, clock, 1)
+    first_point = advance(device, client, clock, 0.5)
+    next_point = advance(device, client, clock, 1)
 
-    assert alone == [
-        ("4a0d", "00a10131"),
-        ("4305", f"a10131a2020100{device_clock(0)}"),
+    assert alone == behind == [("4a0d", "00a10131")]
+    assert waiting == []
+    assert sent == [("4305", f"a10131a2020100{device_clock(1)}")]
+    assert first_point == [("4305", f"a10131a2020100{device_clock(7)}")]
+    assert [payload[:14] for cmd, payload in next_point if cmd == "4305"] == [
+        "a10131a2020103"
     ]
-    assert behind == [("4a0d", "00a10131")]
-    assert next_second == [("4305", f"a10131a2020100{device_clock(6)}")]
+
+
+@pytest.mark.parametrize(
+    ("phase", "at", "gap"),
+    [
+        pytest.param(0.05, 0.1, 0.95, id="0.95 s, as recorded"),
+        pytest.param(0.5, 0.6, 0.9, id="phase 0.5"),
+        pytest.param(0.0, 2.75, 0.25, id="phase 0"),
+    ],
+)
+def test_a2345_a_420d_0305_lands_on_the_next_1s_grid_point(
+    phase: float, at: float, gap: float
+) -> None:
+    """A ``420d``'s ``0305`` waits for the next point of the 1 s grid from boot.
+
+    doc "Secret Features": the pass counter resets on every 10th 100 ms tick,
+    idle or not, so the points sit at whole seconds from boot (``systick_phase``).
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(systick_phase=phase)
+    clock.advance(at)
+
+    def secret(pushes: list[tuple[str, str]]) -> list[str]:
+        return [payload[:14] for cmd, payload in pushes if cmd == "4305"]
+
+    acked = command(device, client, 0x20D, [(0xA2, b"\x02\x01")])
+    early = advance(device, client, clock, gap - 0.01)
+    due = advance(device, client, clock, 0.02)
+
+    assert secret(acked) == secret(early) == []
+    assert secret(due) == ["a10131a2020100"]
 
 
 @pytest.mark.parametrize(
