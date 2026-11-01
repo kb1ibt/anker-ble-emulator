@@ -74,6 +74,9 @@ def name_set(state: Mapping[str, Value], name: str) -> frozenset[str]:
 #: The state name a frame built for MQTT finds set: the unit is bound and on
 #: WiFi to the cloud, where it has no BLE link.
 CLOUD = "cloud"
+#: The state name a timed event or side effect finds 1 under once an account is
+#: bound to the module (``0x023``): what the module's bind status reports.
+BOUND = "bound"
 #: The state name a timed event finds 1 under while an authorized BLE link is up
 #: (the module's wireless-state bit 0, set on authorizing).
 LINK = "link"

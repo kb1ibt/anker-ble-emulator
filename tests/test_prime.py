@@ -23,7 +23,9 @@ from anker_ble_emulator.devices.a2345 import (
     DISPLAY,
     DISPLAY_TICK,
     SCHEDULE_FROM,
+    SCREEN_REQUEST,
     SCREENSAVER_FIELDS,
+    SCREENSAVER_INHIBIT,
     WINDOW_END_DATE,
     WINDOW_PHASE,
     WINDOW_START_DATE,
@@ -56,6 +58,7 @@ from tests.fixtures.prime import (
     CUSTOM_PHOTO_2,
     HOLIDAY_URL,
     PRIME_EPOCH,
+    SCREENSAVER_AFTER,
     advance,
     arm,
     baseline_jpeg,
@@ -4536,8 +4539,8 @@ def test_a2345_other_commands_and_unit_changes_leave_the_screensaver(
 ) -> None:
     """A ``04``, a handler that doesn't call the wake, and an on-unit setting.
 
-    ``cmd205`` wakes only on a clock-on ``a2`` while the screen-off inhibit is 1,
-    which no input sets.
+    ``cmd205`` wakes only on a clock-on ``a2`` while the screen-off inhibit is 1
+    (the knob hold's).
     """
     clock = ManualClock()
     device = A2345(clock=clock)
@@ -4550,6 +4553,245 @@ def test_a2345_other_commands_and_unit_changes_leave_the_screensaver(
     advance(device, client, clock, 1)
 
     assert module.values[DISPLAY] == 1
+
+
+def test_a2345_a_knob_hold_keeps_black_from_the_screensaver() -> None:
+    """``knob_hold_screen_off?`` sets the screen-off inhibit, which holds 2 from 1.
+
+    prime-a2345-a91b2.md "Display state" (state 2) and the knob-hold bullet.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+
+    device.unit_event("knob_hold")
+    into_screensaver(device, client, clock)
+    advance(device, client, clock, 1)
+
+    assert (module.values[DISPLAY], module.values[SCREENSAVER_INHIBIT]) == (2, 1)
+
+
+def test_a2345_an_app_setting_wake_clears_the_screen_off_inhibit() -> None:
+    """``display_wake_to_active?`` clears it: black moves on again after its count."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.unit_event("knob_hold")
+    into_screensaver(device, client, clock)
+
+    command(device, client, 0x204, [(0xA2, b"\x01\x32")])
+    woken = (module.values[DISPLAY], module.values[SCREENSAVER_INHIBIT])
+    advance(device, client, clock, SCREENSAVER_AFTER)
+
+    assert woken == (0, 0)
+    assert module.values[DISPLAY] == 1
+
+
+@pytest.mark.parametrize(
+    ("a2", "shown"),
+    [
+        pytest.param(0x82, 0, id="clock on: woken"),
+        pytest.param(0x02, 2, id="clock off: left black"),
+    ],
+)
+def test_a2345_4205_clock_on_wakes_while_the_inhibit_is_1(a2: int, shown: int) -> None:
+    """``cmd205`` calls the wake only on a clock-on ``a2`` while the inhibit is 1.
+
+    prime-a2345-a91b2.md "Display state" wake bullet (0x00043b5c).
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.unit_event("knob_hold")
+    into_screensaver(device, client, clock)
+
+    command(device, client, 0x205, [(0xA2, bytes([1, a2]))])
+
+    assert module.values[DISPLAY] == shown
+    assert module.values[SCREENSAVER_INHIBIT] == (0 if shown == 0 else 1)
+
+
+def test_a2345_a_knob_click_shows_the_transition_screen_until_its_timeout() -> None:
+    """A click (events 1 / 0xb) -> 3, where ``b0`` isn't counted; > 0x707 ticks -> 0.
+
+    prime-a2345-a91b2.md "Display state" state 3: clicked at 10 s, the 30 s
+    blank doesn't come; at 190 s (1 800 ticks on) it is back to 0, its count
+    started over. The screen-request exit isn't modeled.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(screen_timeout=1)
+    advance(device, client, clock, 10)
+
+    device.unit_event("knob_click")
+    states = [module.values[DISPLAY]]
+    for seconds in (25, 154.9, 0.2, 29.7, 0.5):
+        advance(device, client, clock, seconds)
+        states.append(module.values[DISPLAY])
+
+    assert states == [3, 3, 3, 0, 0, 1]
+
+
+def test_a2345_an_app_wake_ends_the_transition_screen_early() -> None:
+    """A wake in state 3 puts it on; the 180 s timeout then changes nothing.
+
+    Woken at 1 s, the display blanks at 31 s and shows the screensaver, which
+    the stale timeout at 180 s leaves.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(screen_timeout=1)
+    device.unit_event("knob_click")
+    advance(device, client, clock, 1)
+
+    command(device, client, 0x204, [(0xA2, b"\x01\x32")])
+    woken = module.values[DISPLAY]
+    advance(device, client, clock, 180)
+
+    assert (woken, module.values[DISPLAY]) == (0, 1)
+
+
+def test_a2345_a_bound_unit_leaves_the_transition_screen_on_the_next_tick() -> None:
+    """Bound, the screen-request snapshot reads 5, so state 3 ends a tick on.
+
+    prime-a2345-a91b2.md "Display state" state 3: the bind handler keeps 5.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    exchange(module, client, 0x023, [(0xA2, ACCOUNT)])
+
+    device.unit_event("knob_click")
+    shown = module.values[DISPLAY]
+    advance(device, client, clock, 0.15)
+
+    assert (shown, module.values[DISPLAY]) == (3, 0)
+
+
+def test_a2345_a_420a_while_unbound_ends_the_transition_screen() -> None:
+    """``cmd20a`` requests screen 4 while unbound; state 3 reads it a tick on."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.unit_event("knob_click")
+    advance(device, client, clock, 10)
+    waiting = module.values[DISPLAY]
+
+    command(device, client, 0x20A, [(0xA2, b"\x02US"), (0xA3, b"\x04" + ACCOUNT)])
+    advance(device, client, clock, 0.15)
+
+    assert (waiting, module.values[DISPLAY]) == (3, 0)
+
+
+def test_a2345_a_bind_ends_the_transition_screen_on_the_next_tick() -> None:
+    """Unbound in state 3, a ``0x023`` bind makes the snapshot read 5 a tick on."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.unit_event("knob_click")
+    advance(device, client, clock, 10)
+    waiting = module.values[DISPLAY]
+
+    exchange(module, client, 0x023, [(0xA2, ACCOUNT)])
+    advance(device, client, clock, 0.15)
+
+    assert (waiting, module.values[DISPLAY]) == (3, 0)
+
+
+def test_a2345_a_420a_while_bound_leaves_the_screen_request() -> None:
+    """``cmd20a`` requests screen 4 only while unbound; a bound unit keeps 5."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    exchange(module, client, 0x023, [(0xA2, ACCOUNT)])
+
+    command(device, client, 0x20A, [(0xA2, b"\x02US"), (0xA3, b"\x04" + ACCOUNT)])
+
+    assert SCREEN_REQUEST not in module.values
+
+
+@pytest.mark.parametrize(
+    ("phase", "tick"),
+    [(0.0, 0.07), (0.05, 0.02)],
+    ids=["phase 0: tick at 30.3 s", "phase 0.05: tick at 30.25 s"],
+)
+def test_a2345_knob_activity_wakes_on_the_next_100ms_tick(
+    phase: float, tick: float
+) -> None:
+    """``knob_activity_wake?``: from black with the inhibit, to 0 a tick on.
+
+    The inhibit clears and the ``b0`` count starts over at the tick.
+
+    prime-a2345-a91b2.md "Knob activity flag": the flag is consumed on the
+    ``tick_100ms_group`` tick; the knob-hold bullet: it clears the inhibit.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(systick_phase=phase)
+    device.unit_event("knob_hold")
+    into_screensaver(device, client, clock)
+    advance(device, client, clock, 0.03)
+
+    device.unit_event("knob_activity")
+    at_once = module.values[DISPLAY]
+    advance(device, client, clock, tick - 0.01)
+    before_tick = module.values[DISPLAY]
+    advance(device, client, clock, 0.02)
+    woken = (module.values[DISPLAY], module.values[SCREENSAVER_INHIBIT])
+    advance(device, client, clock, 29.97)
+    still_on = module.values[DISPLAY]
+    advance(device, client, clock, 0.2)
+
+    assert (at_once, before_tick, woken) == (2, 2, (0, 0))
+    assert (still_on, module.values[DISPLAY]) == (0, 1)
+
+
+def test_a2345_knob_activity_while_on_without_the_inhibit_changes_nothing() -> None:
+    """``knob_activity_wake?`` acts from states 1-3 or with the inhibit set only."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(screen_timeout=1)
+    advance(device, client, clock, 20)
+
+    device.unit_event("knob_activity")
+    advance(device, client, clock, 10.2)
+
+    assert module.values[DISPLAY] == 1
+
+
+def test_a2345_a_full_knob_press_wakes_at_press_down_then_the_click_wins() -> None:
+    """Press-down wakes 1 to 0 on the next tick; the click on release goes to 3.
+
+    prime-a2345-a91b2.md "Knob activity flag": LVGL fires the click on release.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    into_screensaver(device, client, clock)
+
+    device.unit_event("knob_activity")
+    advance(device, client, clock, 0.15)
+    pressed = module.values[DISPLAY]
+    device.unit_event("knob_click")
+    advance(device, client, clock, 0.3)
+
+    assert (pressed, module.values[DISPLAY]) == (0, 3)
 
 
 def test_a2345_the_clock_switch_moves_the_screensaver_to_black_and_back() -> None:

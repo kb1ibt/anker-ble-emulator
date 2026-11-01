@@ -43,7 +43,7 @@ from .frame import (
     reply_frame,
 )
 from .layouts import CLOCK, EPOCH, RTC, RTC_SECOND_AT
-from .mcu import CLOUD, COMMAND, GIVEN, LINK, UNIT_EVENT, given, mcu_frame
+from .mcu import BOUND, CLOUD, COMMAND, GIVEN, LINK, UNIT_EVENT, given, mcu_frame
 from .messages import (
     AUTH_PENDING_REPLY,
     BIND_REPLY,
@@ -470,6 +470,7 @@ class Module:
         unit_event: str | None = None,
         at: float | None = None,
         names: Iterable[str] = (),
+        bound: int | None = None,
     ) -> None:
         """Queue the timed events the layout starts for a change of state.
 
@@ -481,6 +482,7 @@ class Module:
             unit_event: The on-unit event that made it, by name; None for none.
             at: The device-clock instant of the change; now if None.
             names: The names the change set directly, under ``GIVEN``.
+            bound: The bind status before the change; None if it didn't change.
 
         """
         layout = self.mcu.layout
@@ -490,8 +492,9 @@ class Module:
         rtc, epoch = (
             (self._rtc_at(now), self._epoch_at(now)) if clock is None else clock
         )
-        prior = {**self.mcu.state(before), RTC: rtc, EPOCH: epoch}
         after = self._state(now)
+        was_bound = after[BOUND] if bound is None else bound
+        prior = {**self.mcu.state(before), RTC: rtc, EPOCH: epoch, BOUND: was_bound}
         if command is not None:
             after[COMMAND] = command
         if unit_event is not None:
@@ -561,6 +564,7 @@ class Module:
             CLOCK: now,
             RTC_SECOND_AT: set_at + int(now - set_at),
             CLOUD: int(self.cloud),
+            BOUND: int(bool(self._account)),
             LINK: int(self.authorized),
         }
 
@@ -1051,9 +1055,12 @@ class Module:
             self.start_timed(self.values, clock=before, at=change)
 
     def _bind(self, request: _Request) -> _Reply:
+        """Bind the account; the MCU hears the bind status, so the layout re-times."""
         if request.fields.account is None:
             return _status(STATUS_PARAMETER)
+        was_bound = int(bool(self._account))
         self._account = request.fields.account
+        self.start_timed(self.values, bound=was_bound)
         return _Reply(
             BIND_REPLY.build({"status": STATUS_OK, "serial": self.config.serial})
         )

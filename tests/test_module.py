@@ -411,6 +411,7 @@ def test_an_action_gets_the_set_values_and_the_whole_state() -> None:
         "device_clock": 7.0,
         "rtc_second_at": 7.0,
         "cloud": 0,
+        "bound": 0,
     }
     assert seen == [({"level": 1}, {**whole, "link": 0})]
     rig.module.cloud = True

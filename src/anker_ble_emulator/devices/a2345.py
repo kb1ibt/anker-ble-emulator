@@ -37,7 +37,7 @@ from anker_ble_emulator.layouts import (
     ui,
 )
 from anker_ble_emulator.live import LiveSource
-from anker_ble_emulator.mcu import COMMAND, GIVEN, UNIT_EVENT, name_set
+from anker_ble_emulator.mcu import BOUND, COMMAND, GIVEN, UNIT_EVENT, name_set
 from anker_ble_emulator.module import AuthMode
 from anker_ble_emulator.parameters import (
     FieldGroup,
@@ -80,6 +80,7 @@ from .prime import (
     SWITCH,
     SWITCH_SOURCE,
     SYSTICK_PHASE,
+    TICK_100MS,
     TIMED_TASK_LEADS,
     WEEK,
     WIFI_UP,
@@ -1081,6 +1082,20 @@ def _owner_change(
     return changes
 
 
+def _region_owner_set(
+    request: ParameterDict, state: Mapping[str, Value]
+) -> dict[str, Value]:
+    """``cmd20a_set_region_owner``: the owner's resets, and screen 4 while unbound.
+
+    ``screen_request?(4)``, which ends the transition screen (doc "Display
+    state" state 3); a bound unit keeps 5.
+    """
+    changes = _owner_change(request, state)
+    if not state[BOUND]:
+        changes[SCREEN_REQUEST] = SCREEN_REGION
+    return changes
+
+
 def _leave_custom_mode(state: Mapping[str, Value]) -> dict[str, Value]:
     """Return custom charging mode 5's exit: the last mode below 5 that was active.
 
@@ -1300,10 +1315,13 @@ def _theme_set(request: ParameterDict, state: Mapping[str, Value]) -> dict[str, 
     """``4205``: stage or show the theme; the source byte where it applies a change.
 
     ``cmd205_set_theme`` writes it for a preset, clock off, or an already-stored
-    network or custom theme, not for one it stages, fetches or drops.
+    network or custom theme, not for one it stages, fetches or drops. A
+    clock-on ``a2`` while the screen-off inhibit is 1 wakes the display.
     """
     staging = _theme_staging(request, state)
     packed = decode_field(request, "a2", ScreensaverRequest)
+    if packed.screen_saver_switch and state.get(SCREENSAVER_INHIBIT):
+        staging |= _woken(None)(request, state)
     preset = packed.screen_saver_theme not in IMAGE_THEMES
     if not packed.screen_saver_switch or preset or "screen_saver_theme" in staging:
         return staging | _source_write(0x30B, request, state)
@@ -1687,14 +1705,16 @@ def _theme_report(
 # --- Display state -------------------------------------------------------------
 
 #: The display state (doc "Display state", ``DAT_20001aec``), 0 at boot: 0 on,
-#: 2 black, 1 the screensaver. The wake steps 3 and 4 need a knob click or an
-#: OTA apply, which no input makes, and the screen-off inhibit (set by the
-#: knob's > 2 s hold) stays unset, so it never holds black.
+#: 2 black, 1 the screensaver, 3 the transition screen. State 4 needs an OTA
+#: apply, which the emulator has no path for.
 DISPLAY = "_display_state"
 DISPLAY_ON = 0
 DISPLAY_SCREENSAVER = 1
 DISPLAY_BLACK = 2
 DISPLAY_TICK = 0.1
+#: The screen-off inhibit (``DAT_20000b1c``, 0 at boot): the knob hold sets it,
+#: and it keeps black from moving to the screensaver.
+SCREENSAVER_INHIBIT = "_screensaver_inhibit"
 #: ``b0`` 1-4: the seconds on before black (0 never), counted only while on.
 BLANK_AFTER = {1: 30, 2: 60, 3: 300, 4: 1800}
 #: The wakes to 0, counted in no frame: each starts the ``b0`` count over.
@@ -1771,6 +1791,7 @@ def _screensaver_move(_values: Mapping[str, Value], state: Mapping[str, Value]) 
         state[CLOCK_SWITCH]
         and int(state[RTC]) > CLOCK_FLOOR
         and state.get(WINDOW_PHASE) == WINDOW_INSIDE
+        and not state.get(SCREENSAVER_INHIBIT)
     )
     if _display(state) != DISPLAY_BLACK or not allowed:
         return Step()
@@ -1785,13 +1806,17 @@ def _screensaver_left(_values: Mapping[str, Value], state: Mapping[str, Value]) 
 
 
 def _woken(effect: SideEffect | None) -> SideEffect:
-    """Return ``effect`` with ``display_wake_to_active?`` after it: the display on."""
+    """Return ``effect`` with ``display_wake_to_active?`` after it.
+
+    The display goes on and the screen-off inhibit clears.
+    """
 
     def woken(request: ParameterDict, state: Mapping[str, Value]) -> dict[str, Value]:
         """Apply the command's own effect, then wake the display."""
         changes = {} if effect is None else effect(request, state)
         wakes = int(state.get(DISPLAY_WAKES, 0)) + 1
-        return changes | {DISPLAY: DISPLAY_ON, DISPLAY_WAKES: wakes}
+        woke = {DISPLAY: DISPLAY_ON, DISPLAY_WAKES: wakes, SCREENSAVER_INHIBIT: 0}
+        return changes | woke
 
     return woken
 
@@ -2053,6 +2078,107 @@ def _holiday_eval(_values: Mapping[str, Value], state: Mapping[str, Value]) -> S
     return _holiday_evaluated(state, {})
 
 
+#: State 3 (the transition screen) goes back to 0 when the screen-request
+#: snapshot reads 4 or 5, else after > 0x707 display ticks (doc "Display
+#: state" state 3).
+DISPLAY_TRANSITION = 3
+TRANSITION_TIMEOUT = (0x707 + 1) * DISPLAY_TICK
+#: ``screen_request?``'s value (``DAT_2000bd4a``), hidden: a click requests 1
+#: and ``cmd20a`` 4 while unbound; the bind status keeps 5 bound, 6 unbound.
+SCREEN_REQUEST = "_screen_request"
+SCREEN_CLICKED = 1
+SCREEN_REGION = 4
+SCREEN_BOUND = 5
+SCREEN_UNBOUND = 6
+TRANSITION_EXITS = frozenset({SCREEN_REGION, SCREEN_BOUND})
+
+
+def _screen_request(state: Mapping[str, Value]) -> int:
+    """Return the screen-request snapshot: 5 while bound, else the last request."""
+    if state[BOUND]:
+        return SCREEN_BOUND
+    return int(state.get(SCREEN_REQUEST, SCREEN_UNBOUND))
+
+
+def _knob_clicked(_values: Mapping[str, Value], _state: Mapping[str, Value]) -> Step:
+    """Events 1 / 0xb (``lcd_click_wake_evt1?`` / ``evtb?``): the transition screen.
+
+    From any state; the click requests screen 1, and the ``b0`` count stops.
+    State 3 checks the request on the next tick; the timeout brings 0 back.
+    """
+    return Step(
+        values={DISPLAY: DISPLAY_TRANSITION, SCREEN_REQUEST: SCREEN_CLICKED},
+        then=(
+            Timed(0, "display_blank", drop_queued),
+            _transition_check(),
+            Timed(TRANSITION_TIMEOUT, "display_transition", _transition_ended),
+        ),
+    )
+
+
+def _transition_check() -> Timed:
+    """Return state 3's read of the screen-request snapshot on the next tick."""
+    return Timed(DISPLAY_TICK, "display_request", _transition_requested)
+
+
+def _transition_requested(
+    _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Leave state 3 if the snapshot reads 4 or 5."""
+    if _screen_request(state) not in TRANSITION_EXITS:
+        return Step()
+    return _transition_ended({}, state)
+
+
+def _transition_ended(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Leave state 3 for 0, its ``b0`` count started over."""
+    if _display(state) != DISPLAY_TRANSITION:
+        return Step()
+    return Step(
+        values={DISPLAY: DISPLAY_ON},
+        then=(_blank_timer(state), Timed(0, "display_transition", drop_queued)),
+    )
+
+
+def _knob_held(_values: Mapping[str, Value], _state: Mapping[str, Value]) -> Step:
+    """``knob_hold_screen_off?``: the screen-off inhibit set (doc knob-hold bullet).
+
+    Its backlight 0 (the stored brightness kept) is in no frame, so isn't kept.
+    """
+    return Step(values={SCREENSAVER_INHIBIT: 1})
+
+
+def _knob_activity(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Flag a press-down or turn (``DAT_200003aa``), read on the next 100 ms tick."""
+    delay = grid_delay(state, TICK_100MS, 0, float(state[CLOCK]))
+    return Step(then=(Timed(delay, "display_knob_activity", _knob_activity_wake),))
+
+
+def _knob_activity_wake(
+    _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """``knob_activity_wake?``: from 1-3 or with the inhibit set, the display on.
+
+    It clears the inhibit and starts the ``b0`` count over.
+    """
+    if _display(state) == DISPLAY_ON and not state.get(SCREENSAVER_INHIBIT):
+        return Step()
+    return Step(
+        values={DISPLAY: DISPLAY_ON, SCREENSAVER_INHIBIT: 0},
+        then=(_blank_timer(state), Timed(0, "display_transition", drop_queued)),
+    )
+
+
+#: The on-unit display events ``unit_event`` makes, by name.
+UNIT_DISPLAY_EVENTS: dict[
+    bytes, Callable[[Mapping[str, Value], Mapping[str, Value]], Step]
+] = {
+    b"knob_click": _knob_clicked,
+    b"knob_hold": _knob_held,
+    b"knob_activity": _knob_activity,
+}
+
+
 def _display_events(
     before: Mapping[str, Value], after: Mapping[str, Value]
 ) -> tuple[Timed, ...]:
@@ -2065,7 +2191,14 @@ def _display_events(
     window change stores it; the clock switch moves black and the screensaver.
     """
     events = []
+    event = after.get(UNIT_EVENT)
+    unit_event = UNIT_DISPLAY_EVENTS.get(event) if isinstance(event, bytes) else None
+    if unit_event is not None:
+        events.append(Timed(0, "display_unit_event", unit_event))
     shown = _display(after)
+    requested = before.get(SCREEN_REQUEST) != after.get(SCREEN_REQUEST)
+    if shown == DISPLAY_TRANSITION and (requested or before[BOUND] != after[BOUND]):
+        events.append(_transition_check())
     woken = before.get(DISPLAY_WAKES) != after.get(DISPLAY_WAKES)
     written = "screen_timeout" in name_set(after, GIVEN)
     written = written or before["screen_timeout"] != after["screen_timeout"]
@@ -2679,7 +2812,7 @@ COMMAND_EFFECTS: dict[int, SideEffect] = {
     0x206: _leave_port_priority,
     0x207: _app_port_switch,
     0x208: _timed_task_written,
-    0x20A: _owner_change,
+    0x20A: _region_owner_set,
     0x20D: _secret_prompt,
     0x211: _custom_mode_switch_off,
     0x212: _holiday_schedule,

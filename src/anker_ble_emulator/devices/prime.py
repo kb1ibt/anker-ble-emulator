@@ -632,8 +632,8 @@ SOURCE_UNIT = 2
 SYSTICK_PHASE = "systick_phase"
 SYSTICK_CYCLE = 3.0
 #: ``tick_100ms_group``: the grid the screen reports and switch watcher run on.
-#: ``screen_report_service_tick`` skips while ``FUN_0001c758()`` reads
-#: nonzero, unexplained in the doc and not modeled.
+#: ``screen_report_service_tick`` skips while ``knob_gesture_bright_flag_get?``
+#: (0x0001c758) reads nonzero, which isn't modeled.
 TICK_100MS = 0.1
 #: A mark writes count 0 and each tick counts 1 up; the 5th sends (doc
 #: "Report timing").
