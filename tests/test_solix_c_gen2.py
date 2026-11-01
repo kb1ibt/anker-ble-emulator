@@ -5743,6 +5743,135 @@ def test_inputs_no_unit_could_carry_are_refused_and_set_nothing(
 
 
 @pytest.mark.parametrize(
+    ("current", "power", "voltage"),
+    [
+        pytest.param(817, 125, 1530, id="15-19-125-w-at-15.30-v"),
+        pytest.param(814, 119, 1462, id="17-07-119-w-at-14.62-v"),
+        pytest.param(817, 0, 1690, id="at-rest-16.9-v"),
+    ],
+)
+def test_the_car_cable_voltage_follows_its_power_replays_2026_10_31(
+    current: int, power: int, voltage: int
+) -> None:
+    """``.23.6`` is the power over the cable's current, the socket's rest at 0 W.
+
+    a1783-telemetry.md "Car input": the cable holds ~8.1-8.2 A, so 125 W reads
+    15.30 V (15:19, 8.17 A) and 119 W 14.62 V (17:07, 8.14 A); ~16.9 V at rest.
+    """
+    device = A1783(clock=ManualClock())
+
+    device.set_values(
+        pv1_charge_status=1, car_cable_current=current, pv1_input_power=power
+    )
+
+    posted = next_0490(device)
+    assert (posted["pv1_input_power"], posted["dc_input_voltage"]) == (power, voltage)
+
+
+@pytest.mark.parametrize(
+    ("change", "shown"),
+    [
+        pytest.param({"pv1_input_power": 129}, (129, 1579), id="129-w-no-100-w-cap"),
+        pytest.param(
+            {"dc_input_voltage": 1530, "pv1_input_power": 125},
+            (125, 1530),
+            id="125-w-at-15.30-v-set",
+        ),
+        pytest.param({"pv1_input_power": 490}, (490, 5998), id="490-w-under-60-v"),
+    ],
+)
+def test_a_car_cable_power_up_to_8_2_a_at_the_socket_voltage_is_taken(
+    change: dict[str, Value], shown: tuple[int, int]
+) -> None:
+    """Only 8.2 A at the socket's voltage, up to the XT-60i's 60 V, bounds it.
+
+    An over-100 W reading is the cable at a 15 V-class socket, not a fault.
+    """
+    device = A1783(clock=ManualClock())
+    device.set_values(pv1_charge_status=1)
+
+    device.set_values(**change)
+
+    posted = next_0490(device)
+    assert (posted["pv1_input_power"], posted["dc_input_voltage"]) == shown
+
+
+@pytest.mark.parametrize(
+    ("change", "match"),
+    [
+        pytest.param(
+            {"dc_input_voltage": 1530, "pv1_input_power": 126},
+            "a car cable carries at most 8.2 A at the socket's 15.30 V",
+            id="126-w-at-15.30-v",
+        ),
+        pytest.param(
+            {"pv1_input_power": 491},
+            "a car cable's 491 W at 8.17 A needs 60.10 V, past the DC input's 60 V",
+            id="491-w-past-60-v",
+        ),
+    ],
+)
+def test_a_car_cable_power_no_cable_could_carry_is_refused(
+    change: dict[str, Value], match: str
+) -> None:
+    """A power past 8.2 A at the socket's voltage, or past 60 V, sets nothing."""
+    device = A1783(clock=ManualClock())
+    device.set_values(pv1_charge_status=1)
+    before = (next_0421(device)[0], next_0490(device))
+
+    with pytest.raises(TypeError, match=match):
+        device.set_values(**change)
+
+    assert (next_0421(device)[0], next_0490(device)) == before
+
+
+def test_a_car_socket_voltage_set_by_name_holds_until_the_power_moves() -> None:
+    """A ``.23.6`` set by name is taken; the next power change re-derives it."""
+    device = A1783(clock=ManualClock())
+    device.set_values(pv1_charge_status=1, pv1_input_power=125, dc_input_voltage=1600)
+    held = next_0490(device)["dc_input_voltage"]
+
+    device.set_values(pv1_input_power=120)
+
+    assert (held, next_0490(device)["dc_input_voltage"]) == (1600, 1469)
+
+
+@pytest.mark.parametrize(
+    "unit",
+    [
+        pytest.param({"dc_input_source": SOLAR, "pv1_charge_status": 1}, id="solar"),
+        pytest.param({}, id="nothing-on-the-input"),
+    ],
+)
+def test_the_dc_input_voltage_reads_as_recorded_off_the_car_cable(
+    unit: dict[str, Value],
+) -> None:
+    """Solar, or a car-socket input with no voltage on it, leaves ``.23.6`` alone."""
+    device = A1783(clock=ManualClock())
+    recorded = next_0490(device)["dc_input_voltage"]
+
+    device.set_values(**unit, car_cable_current=814)
+    if unit:
+        device.set_values(pv1_input_power=400)
+
+    assert next_0490(device)["dc_input_voltage"] == recorded == 43
+
+
+@pytest.mark.parametrize("current", [809, 821, b"\x03"], ids=["809", "821", "bytes"])
+def test_the_car_cable_current_holds_to_8_1_to_8_2_a(current: Value) -> None:
+    """The hidden ``car_cable_current`` is 810-820 (0.01 A); unset, 817."""
+    device = A1783()
+    unset = device.mcu.state({})["car_cable_current"]
+
+    with pytest.raises(TypeError, match="car_cable_current is 810 to 820"):
+        device.set_values(car_cable_current=current)
+
+    device.set_values(car_cable_current=810)
+    device.set_values(car_cable_current=820)
+    assert unset == 817
+
+
+@pytest.mark.parametrize(
     "out", [pytest.param(3815, id="overload-trip"), pytest.param(4000, id="peak")]
 )
 def test_ac_out_reads_up_to_its_peak_rating(out: int) -> None:

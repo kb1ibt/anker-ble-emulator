@@ -1013,6 +1013,26 @@ class DcInputSource(IntEnum):
 #: (11-60 V, 17 A, 800 W) that solar, the car cable and the alternator share
 #: (a1783-telemetry.md "C2000 Gen 2 input ratings").
 C2000_DC_INPUT_LIMIT = 800
+#: The car-charging cable into the XT-60i holds ~8.1-8.2 A (100 W at 12 V
+#: nominal), so its watts follow the socket's voltage (a1783-telemetry.md "Car
+#: input"). Hidden: the run's cable current, 0.01 A, 810-820; unset 817, the
+#: 15:19 frame's 125 W at 15.30 V (the 17:07 one's 119 W at 14.62 V is 814).
+CAR_CABLE_CURRENT = "car_cable_current"
+CAR_CABLE_CURRENTS = range(810, 821)
+CAR_CABLE_CURRENT_UNSET = 817
+#: The most the cable carries, 0.01 A: the row's 8.2 A.
+CAR_CABLE_CURRENT_MAX = 820
+#: ``.23.6``, the DC input's voltage (0.01 V), and the XT-60i's top (60 V).
+DC_INPUT_VOLTAGE = "dc_input_voltage"
+DC_INPUT_VOLTAGE_TOP = 6000
+#: ``.23.6`` with the car cable in at 0 W: the socket at rest, ~16.9 V (16.38 V
+#: just after a charge ended).
+CAR_SOCKET_REST_VOLTAGE = 1690
+CAR_VOLTAGE_EVENT = "car_socket_voltage"
+#: What ``.23.6`` follows on the car cable.
+CAR_VOLTAGE_INPUTS = frozenset(
+    {"pv1_input_power", "pv1_charge_status", DC_INPUT_SOURCE, CAR_CABLE_CURRENT}
+)
 #: Hidden: charge source 2 can charge (``chg_src2_can_charge``, ``0x200001e8``
 #: bit 1, set by ``alt_charge_enable_set?``); clear unless set. No field
 #: carries it. While clear, the AC charge request has a floor.
@@ -1137,6 +1157,83 @@ def _check_timing(given: Mapping[str, Value]) -> None:
     if report is not None and (isinstance(report, bytes) or report < 0):
         msg = f"{RETURN_REPORT} is 0 s or more"
         raise TypeError(msg)
+
+
+def _check_car_cable_current(given: Mapping[str, Value]) -> None:
+    """Check the hidden car cable current is 810-820 (0.01 A).
+
+    Raises:
+        TypeError: If it's set outside that, or not a whole number.
+
+    """
+    current = given.get(CAR_CABLE_CURRENT)
+    if current is not None and current not in CAR_CABLE_CURRENTS:
+        msg = f"{CAR_CABLE_CURRENT} is 810 to 820 (0.01 A), not {current!r}"
+        raise TypeError(msg)
+
+
+def _car_socket_voltage(state: Mapping[str, Value]) -> int | None:
+    """Return the ``.23.6`` the car cable makes; None off it or with no voltage in.
+
+    The power over the cable's current while charging, the socket's rest at 0 W.
+    """
+    if state[DC_INPUT_SOURCE] != DcInputSource.CAR_SOCKET:
+        return None
+    power = int(state["pv1_input_power"])
+    if power:
+        return round(power * 10000 / int(state[CAR_CABLE_CURRENT]))
+    return CAR_SOCKET_REST_VOLTAGE if state["pv1_charge_status"] else None
+
+
+def _check_car_cable(resolved: Mapping[str, Value], after: Mapping[str, Value]) -> None:
+    """Refuse a car-cable power no cable could carry.
+
+    Past 8.2 A at a ``.23.6`` set with it, or needing past the XT-60i's 60 V.
+
+    Raises:
+        TypeError: If the change sets such a power or voltage.
+
+    """
+    voltage = _car_socket_voltage(after)
+    if voltage is None or not resolved.keys() & {*CAR_VOLTAGE_INPUTS, DC_INPUT_VOLTAGE}:
+        return
+    power = int(after["pv1_input_power"])
+    if DC_INPUT_VOLTAGE in resolved:
+        voltage = int(after[DC_INPUT_VOLTAGE])
+        if power * 10000 > CAR_CABLE_CURRENT_MAX * voltage:
+            msg = (
+                f"a car cable carries at most 8.2 A at the socket's "
+                f"{voltage / 100:.2f} V, not {power} W"
+            )
+            raise TypeError(msg)
+    if voltage > DC_INPUT_VOLTAGE_TOP:
+        current = int(after[CAR_CABLE_CURRENT]) / 100
+        msg = (
+            f"a car cable's {power} W at {current:.2f} A needs {voltage / 100:.2f} V,"
+            " past the DC input's 60 V"
+        )
+        raise TypeError(msg)
+
+
+def _car_voltage_follows(
+    _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Set ``.23.6`` to what the car cable makes."""
+    voltage = _car_socket_voltage(state)
+    return Step(values={} if voltage is None else {DC_INPUT_VOLTAGE: voltage})
+
+
+def _car_voltage_events(
+    after: Mapping[str, Value], own: frozenset[str], given: frozenset[str]
+) -> tuple[Timed, ...]:
+    """Return the ``.23.6`` follow a change of the car cable's inputs starts.
+
+    One the change set by name holds until the next change of those inputs.
+    """
+    voltage = _car_socket_voltage(after)
+    if voltage is None or DC_INPUT_VOLTAGE in given or not own & CAR_VOLTAGE_INPUTS:
+        return ()
+    return (Timed(0.0, CAR_VOLTAGE_EVENT, _car_voltage_follows),)
 
 
 def _tou_inputs(params: ParameterDict, values: Mapping[str, Value]) -> dict[str, Value]:
@@ -3742,6 +3839,7 @@ class CGen2Layout(TableLayout):
     defaults = MappingProxyType(
         {
             DC_INPUT_SOURCE: DcInputSource.CAR_SOCKET,
+            CAR_CABLE_CURRENT: CAR_CABLE_CURRENT_UNSET,
             CHARGE_SOURCE_2: 0,
             BYPASS_POWER: C1000_BYPASS_POWER,
             ULTRAFAST_POWER: C1000_ULTRAFAST_POWER,
@@ -3772,7 +3870,7 @@ class CGen2Layout(TableLayout):
         """
         names = set(super().names(msgtype))
         if "pv1_input_power" in names:
-            names.add(DC_INPUT_SOURCE)
+            names |= {DC_INPUT_SOURCE, CAR_CABLE_CURRENT}
         if "ac_input_power" in names:
             names |= {CHARGE_SOURCE_2, FULL_CHARGE_BAND, ALERT_PHASE}
             names |= {LOSS_REPORT, RETURN_REPORT}
@@ -3876,6 +3974,7 @@ class CGen2Layout(TableLayout):
         if "pv1_input_power" in resolved and dc > limit:
             msg = f"the DC input takes at most {limit} W, not {dc} W"
             raise TypeError(msg)
+        _check_car_cable(resolved, after)
         _check_ports(self.PORT_LIMITS, self.SHARED_PORTS, resolved, after)
         return resolved
 
@@ -3925,6 +4024,7 @@ class CGen2Layout(TableLayout):
         events += _timers_started(own, after)
         events += _soc_floors_crossed(before, after)
         events += _screen_wakes(before, after, own, given)
+        events += _car_voltage_events(after, own, given)
         moved = _statuses(before) != _statuses(after)
         if moved or given & STATUS_NAMES:
             held = partial(_statuses_held, given & STATUS_NAMES, moved=moved)
@@ -3991,6 +4091,7 @@ class CGen2Layout(TableLayout):
         if FULL_CHARGE_BAND in given:
             ui(2).build(given[FULL_CHARGE_BAND])
         _check_timing(given)
+        _check_car_cable_current(given)
         for name in given.keys() & USB_C_DEVICES.keys():
             if name.endswith(DEVICE_PLUGGED):
                 _check_switch(name, given[name])
@@ -4109,6 +4210,7 @@ class CGen2ExpansionLayout(CGen2Layout):
     defaults = MappingProxyType(
         {
             DC_INPUT_SOURCE: DcInputSource.CAR_SOCKET,
+            CAR_CABLE_CURRENT: CAR_CABLE_CURRENT_UNSET,
             CHARGE_SOURCE_2: 0,
             PACK_CHARGE_LIMIT: C2000_PACK_CHARGE_LIMIT,
         }
