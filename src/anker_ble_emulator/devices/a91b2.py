@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 from construct import (
     BitsInteger,
     BitStruct,
-    ExprValidator,
     Flag,
     Nibble,
     Padding,
@@ -70,9 +69,7 @@ from .prime import (
     TIMED_TASK_LEADS,
     WEEK,
     WIFI_UP,
-    Countdown,
     CountdownRecordRemainingFirst,
-    ac_port_countdown_task,
     ac_port_timed_task,
     check_systick_phase,
     countdown_shown_events,
@@ -168,12 +165,9 @@ USB_C = frozenset({"pd1", "pd2", "pd3", "pd4"})
 LAST_THEME = 2
 #: ``4204 a2``: the firmware keeps the low nibble.
 Brightness = BitStruct(Padding(4), "screen_brightness" / Nibble)
-#: ``4206 a2``: mode 0 or 1; mode 1 takes submode 0-2.
-ChargingRequest = Struct(
-    "charging_mode" / OptionsValidator(ui(1), 0, 1),
-    "charging_submode"
-    / ExprValidator(ui(1), lambda obj, ctx: ctx.charging_mode != 1 or obj <= 2),  # noqa: PLR2004
-)
+#: ``4206 a2``: ``mode16_set`` takes mode 0 (byte1 unchecked) or mode 1 with
+#: sub-mode 0-2.
+HIGH_POWER, LAST_SUBMODE = 1, 2
 #: ``0a00 a2``: the module firmware version (type ``02``).
 SW_VERSION = ui(2)
 
@@ -225,8 +219,16 @@ def _set_screensaver(request: ParameterDict) -> dict[str, Value] | None:
 
 
 def _set_charging_mode(request: ParameterDict) -> dict[str, Value] | None:
-    """Return the charging mode/submode if ``a2``'s values are accepted."""
-    parsed = decode_field(request, "a2", ChargingRequest)
+    """Return the charging mode and sub-mode ``mode16_set`` stores.
+
+    ``cmd206_set_mode16`` acks first; a mode past 1, or mode 1 with a
+    sub-mode past 2, then changes nothing (doc A91B2 ``4206`` row).
+    """
+    parsed = decode_field(request, "a2", Charging)
+    if parsed.charging_mode > HIGH_POWER or (
+        parsed.charging_mode == HIGH_POWER and parsed.charging_submode > LAST_SUBMODE
+    ):
+        return {}
     return {
         "charging_mode": parsed.charging_mode,
         "charging_submode": parsed.charging_submode,
@@ -239,15 +241,27 @@ def _set_relay_switch(request: ParameterDict) -> dict[str, Value] | None:
     return {f"{name}_relay_switch": bool(decode_field(request, "a3", SWITCH))}
 
 
-def _ac_disarm_restores_remaining(
-    request: ParameterDict, state: Mapping[str, Value]
-) -> dict[str, Value]:
-    """Copy an AC countdown's seconds into its remaining time on disarm (0x08004f3c)."""
-    name = PORT_BY_SELECT[decode_field(request, "a2", PORT_SELECT)]
-    if decode_field(request, "a3", Countdown).switch or name in USB_C:
+#: ``4209 a3``: the enable, then the seconds (doc A91B2 ``4209`` row).
+CountdownSet = Struct("switch" / Flag, "seconds" / ui(4))
+
+
+def _set_countdown(request: ParameterDict) -> dict[str, Value] | None:
+    """Return a port's countdown: the enable, and the seconds into set and remaining.
+
+    ``ac_countdown_set`` / ``usbc_countdown_set`` write them for every
+    ``4209``, armed or not; a port past 5 is acked and dropped (doc A91B2
+    ``4209`` row). The next timer pass settles a disarm.
+    """
+    select = decode_field(request, "a2", ui(1))
+    countdown = decode_field(request, "a3", CountdownSet)
+    if select not in PORT_BY_SELECT:
         return {}
-    seconds = state[f"{name}_countdown_task_seconds"]
-    return {f"{name}_countdown_task_remaining_seconds": seconds}
+    name = PORT_BY_SELECT[select]
+    return {
+        f"{name}_countdown_task_switch": countdown.switch,
+        f"{name}_countdown_task_seconds": countdown.seconds,
+        f"{name}_countdown_task_remaining_seconds": countdown.seconds,
+    }
 
 
 def _set_time_format(request: ParameterDict) -> dict[str, Value] | None:
@@ -321,7 +335,15 @@ def _switch_sent(
     values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
     state: Mapping[str, Value],
 ) -> Step:
-    """Send a marked USB-C port's ``0302``, its switch as it stands."""
+    """Send a marked USB-C port's ``0302``: the shadow its last marking set.
+
+    The pass compares before it counts, so a switch off its shadow here is
+    marked again instead (doc A91B2 "MCU pushes", the USB-C shadow bullet).
+    """
+    port = PORT_BY_SELECT[select]
+    shadow = bool(state[_shadow(port)])
+    if bool(state[f"{port}_relay_switch"]) != shadow:
+        return Step()
     return Step(frames=(_switch_push(select, state),))
 
 
@@ -405,14 +427,29 @@ def _timer_plan(state: Mapping[str, Value]) -> tuple[Timed, ...]:
     return (Timed(delay, TIMER_KEY, _timer_pass),)
 
 
+def _disarmed_remaining(state: Mapping[str, Value], port: str) -> int | None:
+    """Return the ``remaining`` a pass gives a disarmed countdown, if it changes.
+
+    0 on USB-C, the seconds set on AC (``usbc/ac_countdown_tick``).
+    """
+    if state[f"{port}_countdown_task_switch"]:
+        return None
+    settled = 0 if port in USB_C else int(state[f"{port}_countdown_task_seconds"])
+    if int(state[f"{port}_countdown_task_remaining_seconds"]) == settled:
+        return None
+    return settled
+
+
 def _countdown_due(state: Mapping[str, Value], port: str) -> float | None:
     """Return when a port's countdown next needs the timer group.
 
-    At once for an edge not shown yet or a 0; else the RTC edge it steps to 0.
+    At once for an edge not shown yet, a 0 or a disarm to settle; else the
+    RTC edge it steps to 0.
     """
     armed = bool(state[f"{port}_countdown_task_switch"])
     shown = state.get(countdown_shown_name(port))
-    if shown is not None and bool(shown) != armed:
+    edge = shown is not None and bool(shown) != armed
+    if edge or _disarmed_remaining(state, port) is not None:
         return float(state[CLOCK])
     if not armed:
         return None
@@ -486,18 +523,20 @@ class _TimerRun:
     def countdown(self, select: int) -> None:
         """``ac/usbc_countdown_tick_push_0307?``: expire one at 0, then show the edge.
 
-        At 0 the port switches off and the countdown disarms, ``remaining`` 0
-        on USB-C and the seconds set on AC. A switch that differs from the one
-        last shown pushes ``0307`` (doc "Countdown timing", ``0307`` row).
+        At 0 the port switches off and the countdown disarms. A disarmed
+        countdown's ``remaining`` is 0 on USB-C and the seconds set on AC. A
+        switch that differs from the one last shown pushes ``0307`` (doc
+        "Countdown timing", ``0307`` row, ``4209`` row).
         """
         port = PORT_BY_SELECT[select]
         switch = f"{port}_countdown_task_switch"
         remaining = f"{port}_countdown_task_remaining_seconds"
         if self.work[switch] and not int(self.work[remaining]):
-            seconds = self.work[f"{port}_countdown_task_seconds"]
             self.switch(select, on=False)
             self.put(switch, value=False)
-            self.put(remaining, 0 if port in USB_C else seconds)
+        settled = _disarmed_remaining(self.work, port)
+        if settled is not None:
+            self.put(remaining, settled)
         armed = bool(self.work[switch])
         shown = self.work.get(countdown_shown_name(port))
         if shown is None or bool(shown) == armed:
@@ -519,8 +558,8 @@ class _TimerRun:
 
         A repeating one fires when its hour and minute match, the seconds read
         0 and its weekday bit is set, latched until a call that doesn't match;
-        a once one fires at its date and minute, and fired or passed is
-        disabled with a ``0308``.
+        a once one fires in second 0 of its date and minute, and fired or
+        passed is disabled with a ``0308``.
         """
         port = PORT_BY_SELECT[select]
         slot = schedule_slot(self.work, port, half)
@@ -542,7 +581,7 @@ class _TimerRun:
             elif not match and latched:
                 self.put(latch_name(port, half), value=False)
             return
-        compared = once_compare(self.work, port, half)
+        compared = once_compare(self.work, port, half, seconds=True)
         if compared < 0:
             return
         if not compared:
@@ -594,7 +633,7 @@ class A91B2Layout(TableLayout):
             0x206: _set_charging_mode,
             0x207: _set_relay_switch,
             0x208: ac_port_timed_task(PORT_BY_SELECT),
-            0x209: ac_port_countdown_task(PORT_BY_SELECT, disarm_clears=USB_C),
+            0x209: _set_countdown,
             0x210: _set_time_format,
             0x214: _set_ac_light_mode,
         }
@@ -606,7 +645,6 @@ class A91B2Layout(TableLayout):
     SIDE_EFFECTS = MappingProxyType(
         {
             0x208: slot_written(PORT_BY_SELECT),
-            0x209: _ac_disarm_restores_remaining,
         }
     )
     #: ``0308``: a timed-task half a ``4208`` collision disabled (doc "MCU

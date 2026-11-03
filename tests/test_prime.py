@@ -18,13 +18,14 @@ from anker_ble_emulator import (
     Outer,
 )
 from anker_ble_emulator.devices import COMPANY_ID
-from anker_ble_emulator.devices.a91b2 import A91B2Layout, Display, Timer
+from anker_ble_emulator.devices.a91b2 import A91B2Layout, Charging, Display, Timer
 from anker_ble_emulator.devices.a91b2 import ClockTheme as A91B2ClockTheme
 from anker_ble_emulator.devices.a2345 import (
     DESIGNATED_BUDGET,
     DISPLAY,
     DISPLAY_TICK,
     DUAL_LAPTOP_BUDGET,
+    HOLIDAY_FLAG,
     POWER_SHARING_BUDGET,
     SCHEDULE_FROM,
     SCREEN_REQUEST,
@@ -54,6 +55,7 @@ from tests.fixtures.client import (
     BleakLink,
     cmd_hex,
     exchange,
+    negotiation_steps,
     pattern_hex,
     settle,
 )
@@ -74,6 +76,7 @@ from tests.fixtures.prime import (
     prime_client,
     published,
     pushed_by,
+    resized_segment,
     screensaver,
     screensaver_window,
     snapshot,
@@ -397,26 +400,43 @@ async def test_a91b2_screen_timeout_set_matches_the_captured_byte() -> None:
     assert Parameter.build(ad) == bytes.fromhex("ad020124")
 
 
-async def test_a91b2_charging_mode_rejects_an_invalid_submode() -> None:
-    device = A91B2()
-    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
-        link = BleakLink(client, AppClient(encrypted_outer=False))
-        await link.start()
-        await link.negotiate(TOKEN)
+@pytest.mark.parametrize(
+    ("a2", "applied"),
+    [
+        pytest.param(b"\x02\x01\x01", (1, 1), id="High-Power sub-mode 1"),
+        pytest.param(b"\x02\x01\x05", None, id="sub-mode past 2 dropped"),
+        pytest.param(b"\x02\x02\x00", None, id="byte0 2 dropped"),
+        pytest.param(
+            b"\x02\x00\x07", (0, 7), id="Smart Dynamic stores byte1 unchecked"
+        ),
+    ],
+)
+def test_an_a91b2_4206_acks_00_then_applies_or_drops(
+    a2: bytes, applied: tuple[int, int] | None
+) -> None:
+    """``cmd206_set_mode16`` acks ``00`` first; ``mode16_set`` then drops silently.
 
-        high_power = await link.send(
-            0x206, [(0xA1, b"\x21"), (0xA2, b"\x02\x01\x01")], SESSION
-        )
-        bad_submode = await link.send(
-            0x206, [(0xA1, b"\x21"), (0xA2, b"\x02\x01\x05")], SESSION
-        )
+    prime-a2345-a91b2.md A91B2 ``4206`` row: byte0 >= 2, or byte0 1 with
+    byte1 >= 3, changes nothing; byte0 0 stores byte1 unchecked.
+    """
+    device = A91B2(clock=ManualClock())
+    client = prime_client(device, TOKEN)
+    before = decode_field(snapshot(device), "ae", Charging)
 
-    assert high_power[0].plaintext == bytes.fromhex("00a10131")
-    assert bad_submode[0].plaintext == bytes.fromhex("04a10131")
+    replies = command(device, client, 0x206, [(0xA2, a2)])
+
+    after = decode_field(snapshot(device), "ae", Charging)
+    kept = (before.charging_mode, before.charging_submode)
+    assert replies == [("4a06", "00a10131")]
+    assert (after.charging_mode, after.charging_submode) == (applied or kept)
 
 
-async def test_a91b2_countdown_disarm_keeps_the_seconds() -> None:
-    """PiField/docs/re/prime-a2345-a91b2.md: "en = 0 disarms and keeps the seconds"."""
+async def test_a91b2_countdown_disarm_writes_the_frame_s_seconds() -> None:
+    """prime-a2345-a91b2.md A91B2 ``4209`` row: a disarm writes its own seconds.
+
+    ``ac_countdown_set`` puts the frame's 3 600 s into set and remaining; the
+    10 800 s set before isn't kept.
+    """
     device = A91B2(clock=ManualClock())
     device.set_values(ac1_countdown_task_switch=True, ac1_countdown_task_seconds=10800)
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
@@ -426,7 +446,7 @@ async def test_a91b2_countdown_disarm_keeps_the_seconds() -> None:
 
         disarm = await link.send(
             0x209,
-            [(0xA1, b"\x21"), (0xA2, b"\x01\x00"), (0xA3, b"\x04\x00\x30\x2a\x00\x00")],
+            [(0xA1, b"\x21"), (0xA2, b"\x01\x00"), (0xA3, b"\x04\x00\x10\x0e\x00\x00")],
             SESSION,
         )
 
@@ -435,10 +455,13 @@ async def test_a91b2_countdown_disarm_keeps_the_seconds() -> None:
     params = Parameters.parse(snapshot.payload)
     timer = decode_field(params, "aa", Timer)
     assert not timer.countdown_task_switch
-    assert timer.countdown_task_seconds == 10800
+    assert (
+        timer.countdown_task_seconds == timer.countdown_task_remaining_seconds == 3600
+    )
 
 
-async def test_a91b2_countdown_arms_with_its_seconds_and_rejects_a_bad_port() -> None:
+async def test_a91b2_countdown_arms_with_its_seconds_and_drops_a_bad_port() -> None:
+    """A port past 5 is acked ``00`` and dropped (doc A91B2 ``4209`` row)."""
     device = A91B2(clock=ManualClock())
     async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
         link = BleakLink(client, AppClient(encrypted_outer=False))
@@ -457,26 +480,12 @@ async def test_a91b2_countdown_arms_with_its_seconds_and_rejects_a_bad_port() ->
         )
 
     assert armed[0].plaintext.hex() == "00a10131a2020100" + device_clock(0)
-    assert bad_port[0].plaintext == bytes.fromhex("04a10131")
+    assert bad_port[0].plaintext.hex() == "00a10131a2020106" + device_clock(0)
     snapshot = device.mcu.respond(0x200, values=device.negotiated_module.values)[0]
     params = Parameters.parse(snapshot.payload)
     timer = decode_field(params, "aa", Timer)
     assert timer.countdown_task_switch
     assert timer.countdown_task_seconds == 120
-
-
-async def test_a91b2_charging_mode_rejects_an_unsupported_mode() -> None:
-    device = A91B2()
-    async with BleakClient(device.ble_device, backend=EmulatedBleakBackend) as client:
-        link = BleakLink(client, AppClient(encrypted_outer=False))
-        await link.start()
-        await link.negotiate(TOKEN)
-
-        bad_mode = await link.send(
-            0x206, [(0xA1, b"\x21"), (0xA2, b"\x02\x02\x00")], SESSION
-        )
-
-    assert bad_mode[0].plaintext == bytes.fromhex("04a10131")
 
 
 async def test_a91b2_port_schedule_command_sets_the_full_quad() -> None:
@@ -2118,7 +2127,7 @@ def test_a2345_4209_refuses_an_a2_or_a3_of_another_length(
 @pytest.mark.parametrize(
     ("select", "disarmed", "kept"),
     [
-        pytest.param(0, "00201c0000201c0000", ("aa", 7200, 7200), id="AC keeps it"),
+        pytest.param(0, "00201c0000201c0000", ("aa", 7200, 7200), id="AC: set"),
         pytest.param(3, "0000000000201c0000", ("b1", 7200, 0), id="USB-C zeroes it"),
     ],
 )
@@ -2130,7 +2139,8 @@ def test_an_a91b2_pushes_0307_on_the_pass_after_an_arm_or_disarm(
     prime-a2345-a91b2.md A91B2 "Countdown timing" and ``0307`` row:
     ``cmd209_set_countdown`` only sets the record and replies; the edge is
     pushed by ``ac/usbc_countdown_tick_push_0307?``, a re-arm 1 -> 1 silent.
-    The record carries the remaining time first.
+    The record carries the remaining time first; the disarm's own 7 200 s go
+    into set, and the pass gives remaining 0 on USB-C, set on AC.
     """
     clock = ManualClock()
     device = A91B2(clock=clock)
@@ -2142,7 +2152,7 @@ def test_an_a91b2_pushes_0307_on_the_pass_after_an_arm_or_disarm(
     armed_pass = advance(device, client, clock, 0.15)
     rearmed = command(device, client, 0x209, [port, arm(7200)])
     rearmed += advance(device, client, clock, 0.15)
-    disarm = (0xA3, b"\x04\x00\x00\x00\x00\x00")
+    disarm = (0xA3, b"\x04\x00" + ui(4).build(7200))
     disarming = command(device, client, 0x209, [port, disarm])
     disarmed_pass = advance(device, client, clock, 0.15)
 
@@ -2158,6 +2168,44 @@ def test_an_a91b2_pushes_0307_on_the_pass_after_an_arm_or_disarm(
         countdown.countdown_task_seconds,
         countdown.countdown_task_remaining_seconds,
     ) == (seconds, remaining)
+
+
+@pytest.mark.parametrize(
+    ("select", "record", "en", "after"),
+    [
+        pytest.param(0, "aa", 1, (600, 600), id="AC armed"),
+        pytest.param(0, "aa", 0, (600, 600), id="AC disarmed: set copied"),
+        pytest.param(2, "b0", 1, (600, 600), id="USB-C armed"),
+        pytest.param(2, "b0", 0, (600, 0), id="USB-C disarmed: zeroed"),
+    ],
+)
+def test_an_a91b2_4209_writes_its_seconds_then_the_pass_settles_a_disarm(
+    select: int, record: str, en: int, after: tuple[int, int]
+) -> None:
+    """Every ``4209`` writes its seconds into both set and remaining, armed or not.
+
+    prime-a2345-a91b2.md A91B2 ``4209`` row (``ac_countdown_set`` /
+    ``usbc_countdown_set``): a ``4a00`` before the next 150 ms pass reads the
+    sent seconds; that pass zeroes a disarmed USB-C port's remaining and sets
+    an AC port's from set. Armed for 300 s first, then a 600 s ``4209``.
+    """
+    clock = ManualClock()
+    device = A91B2(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, bytes([1, select]))
+    advance(device, client, clock, 0.05)
+    command(device, client, 0x209, [port, arm(300)])
+    advance(device, client, clock, 0.15)
+
+    def countdown() -> tuple[int, int]:
+        timer = decode_field(snapshot(device), record, Timer)
+        return timer.countdown_task_seconds, timer.countdown_task_remaining_seconds
+
+    command(device, client, 0x209, [port, (0xA3, bytes((4, en)) + ui(4).build(600))])
+    before = countdown()
+    advance(device, client, clock, 0.15)
+
+    assert (before, countdown()) == ((600, 600), after)
 
 
 def test_an_a2345_pushes_0307_on_the_pass_after_an_arm_or_disarm() -> None:
@@ -2542,6 +2590,31 @@ def test_an_a91b2_repeating_slot_needs_second_0() -> None:
     assert decode_field(snapshot(device), "b0", Timer).relay_switch
 
 
+def test_an_a91b2_once_slot_passed_from_second_1_is_disabled_unfired() -> None:
+    """``time_cmp?`` compares seconds too, so 23:26:05 reads a 23:26 once slot passed.
+
+    prime-a2345-a91b2.md A91B2 "Schedule firing": from second 1 on it reads as
+    passed and is disabled with a ``0308``, without switching.
+    """
+    clock = ManualClock()
+    device = A91B2(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x02")
+    once_2326 = (0xA4, b"\x03\x01\x17\x1a\x00")
+    command(device, client, 0x208, [port, (0xA3, b"\x01\x00"), once_2326])
+    advance(device, client, clock, 2)
+
+    moved = ui(4).build(ui(4).parse(TIMESTAMP) + 2 + 49)
+    fields = [(0xA1, moved), (0xA3, UTC_OFFSET), (0xA5, TZ)]
+    exchange(device.negotiated_module, client, 0x022, fields)
+    pushed = advance(device, client, clock, 1)
+
+    timer = decode_field(snapshot(device), "b0", Timer)
+    assert [cmd for cmd, _ in pushed] == ["4308"]
+    assert timer.relay_switch
+    assert timer.timed_task_end_switch == 0
+
+
 def test_an_a91b2_repeating_slot_fires_on_the_first_pass_in_second_0() -> None:
     """At phase 0.05 the passes run at 0.05 + 0.15 k: 23:26:00 (45 s) fires at 45.05."""
     clock = ManualClock()
@@ -2643,7 +2716,7 @@ def test_an_a91b2_disarm_on_a_never_armed_ac_port_acks_and_draws_no_0307() -> No
 
 
 def test_an_a91b2_countdown_disarm_stops_its_steps() -> None:
-    """A ``4209`` disarm on ac_1 keeps the seconds as the remaining time, no step on.
+    """A ``4209`` disarm on ac_1 holds its seconds as the remaining time, no step on.
 
     The next pass shows the disarm; nothing follows.
     """
@@ -2654,7 +2727,7 @@ def test_an_a91b2_countdown_disarm_stops_its_steps() -> None:
     command(device, client, 0x209, [port, arm(5)])
     advance(device, client, clock, 0.5)
 
-    command(device, client, 0x209, [port, (0xA3, b"\x04\x00\x00\x00\x00\x00")])
+    command(device, client, 0x209, [port, (0xA3, b"\x04\x00" + ui(4).build(5))])
     later = advance(device, client, clock, 3)
 
     timer = decode_field(snapshot(device), "aa", Timer)
@@ -2679,6 +2752,40 @@ def test_an_a91b2_switch_flipped_back_within_a_pass_reports_nothing() -> None:
     later = advance(device, client, clock, 1)
 
     assert later == []
+
+
+@pytest.mark.parametrize(
+    ("back_at", "pushed"),
+    [
+        pytest.param(None, ["00"], id="off, unflipped: one 0302 off"),
+        pytest.param(0.0, [], id="back on before the marking pass: none"),
+        pytest.param(0.2, ["01"], id="back on inside the debounce: one 0302 on"),
+        pytest.param(0.43, ["01"], id="back on just before the send pass: one, on"),
+    ],
+)
+def test_an_a91b2_usbc_0302_sends_the_shadow_its_last_marking_set(
+    back_at: float | None, pushed: list[str]
+) -> None:
+    """``usbc_switch_push_0302?`` sets the shadow when it marks and sends it.
+
+    prime-a2345-a91b2.md A91B2 "MCU pushes", the USB-C ``0302`` shadow bullet:
+    usbc_1 off at 0.02 s is marked on the 0.1 s pass, due 4 passes on; a flip
+    back re-marks it on the pass that sees it, its count from 0 again.
+    """
+    clock = ManualClock()
+    device = A91B2(clock=clock)
+    client = prime_client(device, TOKEN)
+    port = (0xA2, b"\x01\x02")
+    advance(device, client, clock, 0.02)
+
+    command(device, client, 0x207, [port, (0xA3, b"\x01\x00")])
+    pushes = []
+    if back_at is not None:
+        pushes += advance(device, client, clock, back_at)
+        command(device, client, 0x207, [port, (0xA3, b"\x01\x01")])
+    pushes += advance(device, client, clock, 1.5)
+
+    assert [p[20:22] for cmd, p in pushes if cmd == "4302"] == pushed
 
 
 def test_a2345_a_clock_set_out_of_a_fired_minute_clears_its_latch() -> None:
@@ -2826,9 +2933,10 @@ def test_the_a2345_mcu_takes_no_utc_before_2024_04_30() -> None:
 
 
 def test_an_a91b2_ac_disarm_copies_the_seconds_into_the_remaining_time() -> None:
-    """The AC disarm path (0x08004f3c) restores the remaining time to the seconds.
+    """The AC tick (0x08004f3c) sets a disarmed countdown's remaining from its set.
 
-    The next timer pass shows the disarm with it.
+    The next timer pass shows the disarm with it: a remaining set to 100
+    after the disarm reads 7 200 again.
     """
     clock = ManualClock()
     device = A91B2(clock=clock)
@@ -2836,9 +2944,9 @@ def test_an_a91b2_ac_disarm_copies_the_seconds_into_the_remaining_time() -> None
     port = (0xA2, b"\x01\x00")
     command(device, client, 0x209, [port, arm(7200)])
     advance(device, client, clock, 0.2)
-    device.set_values(ac1_countdown_task_remaining_seconds=100)
 
-    command(device, client, 0x209, [port, (0xA3, b"\x04\x00\x00\x00\x00\x00")])
+    command(device, client, 0x209, [port, (0xA3, b"\x04\x00" + ui(4).build(7200))])
+    device.set_values(ac1_countdown_task_remaining_seconds=100)
     disarmed = advance(device, client, clock, 0.15)
 
     assert disarmed == [
@@ -3135,6 +3243,25 @@ def test_a2345_owner_change_resets_a_custom_theme_and_a_resend_does_nothing() ->
     assert owner_420a(b"e" * 36, 5, (0xA2, b"\x04GB")) == (True, 0)  # SolixBLE's
 
 
+def test_a2345_an_owner_change_s_theme_reset_reports_030b() -> None:
+    """``cmd20a`` writes no source byte, so its theme reset's ``030b`` goes out.
+
+    prime-a2345-a91b2.md "Screen and display", the "Source-byte order" bullet:
+    ``screen_target_set(clock, 0)`` with whatever byte stands (2 here, from
+    the on-unit change to the custom theme), reported 5 ticks on.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(screen_saver_theme=5)
+    advance(device, client, clock, REPORT_WAIT)
+
+    command(device, client, 0x20A, [(0xA2, b"\x02US"), (0xA3, b"\x04" + ACCOUNT)])
+    pushes = advance(device, client, clock, REPORT_WAIT)
+
+    assert [p[6:14] for cmd, p in pushes if cmd == "430b"] == ["a20201c0"]
+
+
 def test_a2345_owner_change_leaves_custom_mode_for_the_last_mode_held() -> None:
     """A new owner in custom mode 5 restores the last mode 1-4, then ``030d``.
 
@@ -3220,6 +3347,31 @@ def test_a2345_reports_a_screen_setting_changed_on_the_unit() -> None:
         ("430b", f"a10131a2020100{theme_id}{device_clock(2)}")
     ]
     assert settled(screen_timeout=2) == []
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param({"screen_saver_theme_id": 0x0E1AB88E}, id="theme id alone"),
+        pytest.param({"holiday_screensaver_switch": True}, id="holiday switch alone"),
+    ],
+)
+def test_a2345_030b_marks_only_on_a_screen_target_change(
+    change: dict[str, Value],
+) -> None:
+    """``theme_state_change_watch`` compares only ``DAT_200001a5`` (index | clock << 7).
+
+    prime-a2345-a91b2.md "Screen and display", the ``030b`` mark bullet: the
+    holiday switch or the theme id alone marks nothing.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+
+    device.set_values(**change)
+    pushes = advance(device, client, clock, REPORT_WAIT)
+
+    assert [cmd for cmd, _ in pushes if cmd == "430b"] == []
 
 
 def test_a2345_screen_report_waits_out_the_debounce() -> None:
@@ -3710,16 +3862,18 @@ def test_a2345_unpadded_custom_photo_fails_its_first_draw() -> None:
     doc "Theme upload", bench 2026-10-30 04:42-04:43: a 65-byte last
     chunk leaves the chained CBC's last block cut short in flash, so the decrypt
     misses the CRC. The repeat ``4205`` gets ``4311`` 4; ``4222`` draws nothing.
+    The draw comes on the screensaver the upload's preview brings 0.4 s on.
     """
     clock = ManualClock()
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
     module = device.negotiated_module
     custom = theme_select(CUSTOM_PHOTO, PHOTO_ID, theme=0x85)
+    advance(device, client, clock, WINDOW_FIRST_WAIT)
 
     selected = command(device, client, 0x205, custom)
     replies = upload_theme(device, client, CUSTOM_PHOTO, PHOTO_ID, kind=2)
-    advance(device, client, clock, 0)
+    advance(device, client, clock, 0.5)
     af = decode_field(snapshot(device), "af", Theme)
     draws = module.values["_screen_draws"]
     again = command(device, client, 0x205, custom)
@@ -3783,12 +3937,13 @@ def test_a2345_custom_photo_in_chunks_not_a_multiple_of_16_fails_its_draw() -> N
     clock = ManualClock()
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
+    advance(device, client, clock, WINDOW_FIRST_WAIT)
     command(device, client, 0x205, theme_select(CUSTOM_PHOTO, PHOTO_ID, theme=0x85))
 
     replies = upload_theme(
         device, client, CUSTOM_PHOTO, PHOTO_ID, kind=2, chunk=100, pad=True
     )
-    advance(device, client, clock, 0)
+    advance(device, client, clock, 0.5)
 
     assert replies[-1][1] == ("4a21", "10a10131a203025400")
     assert decode_field(snapshot(device), "af", Theme).screen_saver_theme == 1
@@ -3842,21 +3997,55 @@ def test_a2345_unpadded_network_photo_is_stored_as_sent() -> None:
         pytest.param(b"\x00" + baseline_jpeg()[1:], False, id="no SOI"),
         pytest.param(baseline_jpeg()[:108], False, id="ends before SOS"),
         pytest.param(baseline_jpeg()[:100], False, id="cut inside SOF0"),
+        pytest.param(
+            resized_segment(baseline_jpeg(), 0xC0, 8),
+            True,
+            id="SOF0 length short: read at fixed offsets",
+        ),
+        pytest.param(
+            resized_segment(baseline_jpeg(), 0xC0, 0x13, b"\x00\x00"),
+            False,
+            id="SOF0 length long: the walk resumes at +0x13",
+        ),
+        pytest.param(
+            resized_segment(baseline_jpeg(), 0xDA, 2),
+            True,
+            id="SOS empty: read at fixed offsets",
+        ),
+        pytest.param(
+            resized_segment(baseline_jpeg(), 0xDB, 0x44, b"\x00"),
+            False,
+            id="DQT not whole tables: read on until an id fails",
+        ),
+        pytest.param(
+            resized_segment(baseline_jpeg(), 0xC4, 0x15, b"\x00"),
+            False,
+            id="DHT not whole tables: read on until an id fails",
+        ),
     ],
 )
 def test_a2345_draw_checks_the_jpeg_markers(image: bytes, shown: bool) -> None:  # noqa: FBT001
-    """Doc "Theme image display": a failing header erases the slot, screen 1."""
+    """Doc "Theme image display": a failing header erases the slot, screen 1.
+
+    The draw comes in display state 1: the upload's end arms the preview
+    (``screensaver_preview_arm``), black 3 ticks on, the screensaver a tick
+    after. A failure falls back with the clock switch on.
+    """
     clock = ManualClock()
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
     module = device.negotiated_module
+    advance(device, client, clock, WINDOW_FIRST_WAIT)
     command(device, client, 0x205, theme_select(image, THEME_ID))
 
     upload_theme(device, client, image, THEME_ID, kind=0)
-    advance(device, client, clock, 0)
+    undrawn = decode_field(snapshot(device), "af", Theme).screen_saver_theme
+    advance(device, client, clock, 0.5)
 
     af = decode_field(snapshot(device), "af", Theme)
     stored = f"_theme_crc_{THEME_ID}" in module.values
+    shown_in = module.values.get(DISPLAY, 0)
+    assert (undrawn, shown_in, af.screen_saver_switch) == (3, 1, True)
     assert (af.screen_saver_theme, stored) == ((3, True) if shown else (1, False))
 
 
@@ -3873,13 +4062,106 @@ def test_a2345_draw_checks_the_stored_size(size: int, shown: bool) -> None:  # n
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
     image = baseline_jpeg(size)
+    advance(device, client, clock, WINDOW_FIRST_WAIT)
     command(device, client, 0x205, theme_select(image, THEME_ID, theme=0x85))
 
     upload_theme(device, client, image, THEME_ID, kind=2, pad=True)
-    advance(device, client, clock, 0)
+    advance(device, client, clock, 0.5)
 
     theme = decode_field(snapshot(device), "af", Theme).screen_saver_theme
     assert theme == (5 if shown else 1)
+
+
+def test_a2345_a_draw_fallback_inside_the_upload_s_030b_debounce_is_dropped() -> None:
+    """The fallback's mark restarts the upload's ``030b``, whose source 1 drops it.
+
+    prime-a2345-a91b2.md "Theme image display", the bullets under the table:
+    the preview draws 0.4 s after the upload's end, inside that ``030b``'s
+    5-tick debounce, and the fallback writes no source byte.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    advance(device, client, clock, WINDOW_FIRST_WAIT)
+    device.set_values(screen_timeout=1)
+    command(device, client, 0x205, theme_select(CUSTOM_PHOTO, THEME_ID, theme=0x85))
+    advance(device, client, clock, REPORT_WAIT)
+
+    upload_theme(device, client, CUSTOM_PHOTO, THEME_ID, kind=2)
+    pushes = advance(device, client, clock, 2)
+
+    assert decode_field(snapshot(device), "af", Theme).screen_saver_theme == 1
+    assert [cmd for cmd, _ in pushes if cmd == "430b"] == []
+
+
+def test_a2345_a_later_draw_fallback_reports_030b() -> None:
+    """With no preview armed, a failing image draws at a later 2 -> 1 move.
+
+    prime-a2345-a91b2.md "Theme image display", the bullets under the table:
+    ``b0`` 0 arms no preview, so the upload's ``030b`` (source 1) is dropped
+    and the byte reset; the fallback on the screensaver 30 s after ``b0`` 1
+    sends ``030b`` ``a2 c1`` (``81`` with the recording's holiday switch on).
+    The unpadded photo fails its draw.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_values(screen_timeout=0)
+    advance(device, client, clock, WINDOW_FIRST_WAIT)
+    command(device, client, 0x205, theme_select(CUSTOM_PHOTO, THEME_ID, theme=0x85))
+    upload_theme(device, client, CUSTOM_PHOTO, THEME_ID, kind=2)
+    uploaded = advance(device, client, clock, 2)
+
+    device.set_values(screen_timeout=1)
+    later = advance(device, client, clock, 31)
+
+    themes = [p[6:14] for cmd, p in later if cmd == "430b"]
+    assert [cmd for cmd, _ in uploaded if cmd == "430b"] == []
+    assert themes == ["a20201c1"]
+    assert decode_field(snapshot(device), "af", Theme).screen_saver_theme == 1
+
+
+def test_a2345_an_upload_ending_on_the_screensaver_draws_on_the_next_tick() -> None:
+    """In display state 1, ``display_mode_tick`` draws on a target change.
+
+    prime-a2345-a91b2.md "Theme image display": the upload's end sets screen 5;
+    no preview is needed, and the next 100 ms tick draws it and falls back.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    into_screensaver(device, client, clock)
+    command(device, client, 0x205, theme_select(CUSTOM_PHOTO, THEME_ID, theme=0x85))
+
+    upload_theme(device, client, CUSTOM_PHOTO, THEME_ID, kind=2)
+    undrawn = decode_field(snapshot(device), "af", Theme).screen_saver_theme
+    advance(device, client, clock, 0.15)
+
+    assert (undrawn, module.values[DISPLAY]) == (5, 1)
+    assert decode_field(snapshot(device), "af", Theme).screen_saver_theme == 1
+
+
+def test_a2345_a_clock_on_preset_arms_the_screensaver_preview() -> None:
+    """A ``4205`` preset ends with ``screensaver_preview_arm``: black 3 ticks on.
+
+    prime-a2345-a91b2.md "Theme image display", the bullets under the table:
+    in state 0 with the window inside and ``b0`` 1, the screensaver comes
+    0.4 s on instead of 30 s; with ``b0`` 0 nothing moves.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    advance(device, client, clock, WINDOW_FIRST_WAIT)
+    device.set_values(screen_timeout=1)
+
+    command(device, client, 0x205, [(0xA2, b"\x01\x81")])
+    advance(device, client, clock, 0.25)
+    early = module.values.get(DISPLAY, 0)
+    advance(device, client, clock, 0.25)
+
+    assert (early, module.values[DISPLAY]) == (0, 1)
 
 
 def test_a2345_secret_feature_1_fires_on_20_screen_switches_in_10_s() -> None:
@@ -3968,6 +4250,35 @@ def test_a2345_feature_expert_fires_on_every_10th_designation() -> None:
     assert tenth == ([], ["a10131a2020101"])
 
 
+def test_a2345_420c_clears_then_designates_at_most_two_ports() -> None:
+    """``cmd20c`` clears all four designations, then designates each set bit.
+
+    prime-a2345-a91b2.md Feature Expert row: a third bit is refused, neither
+    stored nor counted; a port designated again counts again. C1 + C2 (two of
+    three bits), C2 + C3, then 6 sends of C2 alone make the 10th designation.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+
+    def designate(mask: int) -> list[str]:
+        replies = command(device, client, 0x20C, [(0xA2, bytes([1, mask]))])
+        replies += advance(device, client, clock, 1)
+        return [payload[:14] for cmd, payload in replies if cmd == "4305"]
+
+    designate(0b0111)
+    stored = [
+        decode_field(snapshot(device), tag, Schedule).port_priority
+        for tag in ("aa", "ab", "ac", "ad")
+    ]
+    designate(0)
+    designate(0b0110)
+    again = [designate(0b0010) for _ in range(7)]
+
+    assert stored == [2, 2, 1, 1]
+    assert again == [[]] * 5 + [["a10131a2020101"], []]
+
+
 def test_a2345_power_expert_fires_21_s_after_a_third_high_voltage_port() -> None:
     """``0305 a2`` 02 when 3 USB-C ports run above 18 V, once their class settles.
 
@@ -4026,6 +4337,31 @@ def test_a2345_device_expert_fires_when_all_six_ports_are_active() -> None:
 
     assert first == again == ["a10131a2020103"]
     assert cooling == []
+
+
+def test_a2345_a_charging_mode_change_ends_a_secret_feature_overlay() -> None:
+    """``charging_mode_apply_push_030d`` calls ``secret_overlay_stop``.
+
+    prime-a2345-a91b2.md Secret Features, the overlay bullet: Device Expert's
+    overlay from its 1 s send would run to 5.95 s; a ``4206`` at 1.5 s
+    applies 3.3 s on, at 4.8 s, and ends it there.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    ports = ("pd1", "pd2", "pd3", "pd4", "usb1", "usb2")
+    unit_change(device, client, **{f"{port}_output_status": 1 for port in ports})
+    advance(device, client, clock, 1.5)
+    shown = "_secret_overlay" in module.values
+
+    command(device, client, 0x206, [(0xA2, b"\x01\x03")])
+    advance(device, client, clock, 3.25)
+    held = "_secret_overlay" in module.values
+    advance(device, client, clock, 0.1)
+
+    assert (shown, held) == (True, True)
+    assert "_secret_overlay" not in module.values
 
 
 def test_a2345_secret_features_are_sent_in_their_order() -> None:
@@ -4140,8 +4476,21 @@ def test_a2345_a_feature_overlay_holds_the_next_service(
         ),
         pytest.param(
             lambda device, client: device.unit_event("knob_click"),
+            15.9,
+            id="a click alone: state 3 holds, no stop",
+        ),
+        pytest.param(
+            lambda device, client: (
+                device.unit_event("knob_click"),
+                command(
+                    device,
+                    client,
+                    0x20A,
+                    [(0xA2, b"\x02US"), (0xA3, b"\x04" + ACCOUNT)],
+                ),
+            ),
             12.6,
-            id="a click: state 3 ends at 11.65 s, bound",
+            id="a click, then a 420a: state 3 ends at 11.65 s",
         ),
     ],
 )
@@ -4300,6 +4649,42 @@ def test_a2345_power_expert_settles_70_passes_after_the_pass_that_sees_it(
 
     assert secret(early) == []
     assert secret(due) == ["a10131a2020102"]
+
+
+@pytest.mark.parametrize(
+    ("dropped_at", "classed"),
+    [
+        pytest.param(3.0, 0b0011, id="dropped before pass 20: unrecorded"),
+        pytest.param(10.0, 0b0111, id="dropped after pass 20: its peak classes it"),
+    ],
+)
+def test_a2345_power_expert_classes_from_peaks_recorded_from_pass_20(
+    dropped_at: float, classed: int
+) -> None:
+    """Pass 70 classes each port from its peak since pass 20, not its voltage then.
+
+    doc Power Expert row (``usbc_hv_class_update``): peaks are recorded from
+    pass 20 (6.0 s here, pass 1 at 0.3 s). C3 runs at 20 V and drops to 15 V
+    before pass 70; C1 at 20 V and the recording's C2 at 19 760 mV stay.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    unit_change(
+        device,
+        client,
+        pd1_output_status=1,
+        pd1_output_voltage=20000,
+        pd3_output_status=1,
+        pd3_output_voltage=20000,
+    )
+    advance(device, client, clock, dropped_at)
+
+    unit_change(device, client, pd3_output_voltage=15000)
+    advance(device, client, clock, 22 - dropped_at)
+
+    assert module.values["_usbc_hv_classed"] == classed
 
 
 def test_a2345_power_expert_counts_a_rise_after_its_pass_a_recovery_at_once() -> None:
@@ -4767,7 +5152,7 @@ RHYTHMIC_HUE = 0x1D9EF8D4
 def test_a2345_fetches_a_network_theme_itself_with_wifi_up() -> None:
     """``0311`` 2, 3, then 1 at 0.38, 1.73 and 8.6 s; the theme then shows.
 
-    doc "``4311`` image state": 2026-09-08 16:17:43 MQTT ``a10164a20504d4f89e1d
+    doc "``4311`` theme image state": 2026-09-08 16:17:43 MQTT ``a10164a20504d4f89e1d
     a3020102a4020103`` (2), 44.809 (3), 51.694 (1); the app sends nothing.
     """
     clock = ManualClock()
@@ -4823,6 +5208,84 @@ def test_a2345_theme_request_during_a_fetch_answers_0() -> None:
         ("a20504d4f89e1d", "01", "03"),
     ]
     assert device.negotiated_module.values["screen_saver_theme_id"] == RHYTHMIC_HUE
+
+
+def test_a2345_a_busy_theme_request_erases_its_id_s_slot_of_another_crc() -> None:
+    """``4205`` while busy: ``0311`` 0, and a stored slot of another CRC is erased.
+
+    prime-a2345-a91b2.md "``4311`` theme image state" state 0. The padded photo
+    is stored; a busy ``4205`` for its id with another CRC erases it, so its
+    own ``4205`` after the fetch is fetched again, not shown (no ``0311`` 1).
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    stored = theme_select(CUSTOM_PHOTO_2, PHOTO_2_ID, theme=0x85)
+    command(device, client, 0x205, stored)
+    upload_theme(device, client, CUSTOM_PHOTO_2, PHOTO_2_ID, kind=2, pad=True)
+    device.set_wifi(True)
+    command(device, client, 0x205, theme_select(IMAGE, RHYTHMIC_HUE))
+    advance(device, client, clock, 1)
+
+    other = theme_select(CUSTOM_PHOTO, PHOTO_2_ID, theme=0x85)
+    command(device, client, 0x205, other)
+    advance(device, client, clock, 9)
+    command(device, client, 0x205, stored)
+    advance(device, client, clock, 1)
+
+    states = [
+        p[26:28] for m, p in published(device) if m == 0x311 and PHOTO_2_4311[6:] in p
+    ]
+    assert states == ["00", "02"]
+
+
+def test_a2345_theme_request_before_the_fetch_ack_restages_it() -> None:
+    """Before the module's ack (0.38 s) the busy flag is 0, so a ``4205`` re-stages.
+
+    prime-a2345-a91b2.md "``4311`` theme image state" state 2 and "Theme
+    upload", the Busy bullet: the ack's ``0311`` 2 names the second id, and
+    that image is the one stored.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    device.set_wifi(True)
+
+    command(device, client, 0x205, theme_select(IMAGE, RHYTHMIC_HUE))
+    advance(device, client, clock, 0.2)
+    command(device, client, 0x205, theme_select(IMAGE, THEME_ID, theme=0x85))
+    advance(device, client, clock, 9)
+
+    states = [(p[6:20], p[26:28]) for m, p in published(device) if m == 0x311]
+    assert states == [
+        ("a205048eb81a0e", "02"),
+        ("a205048eb81a0e", "03"),
+        ("a205048eb81a0e", "01"),
+    ]
+    assert device.negotiated_module.values["screen_saver_theme_id"] == THEME_ID
+
+
+def test_a2345_theme_request_during_a_holiday_fetch_answers_0() -> None:
+    """The holiday fetch holds the one fetch busy flag (``0x2000113c``) too.
+
+    prime-a2345-a91b2.md "``4311`` theme image state" state 0 and "Theme upload"
+    (``4212``): a ``4205`` 1 s into it gets ``0311`` 0 and starts no fetch.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_wifi(True)
+    now = module.rtc
+    command(device, client, 0x212, holiday_schedule(RHYTHMIC_HUE, now, now + 60))
+    advance(device, client, clock, 1)
+
+    command(device, client, 0x205, theme_select(IMAGE, THEME_ID, theme=0x85))
+    advance(device, client, clock, 9)
+
+    assert [
+        (p[6:20], p[26:28], p[34:36]) for m, p in published(device) if m == 0x311
+    ] == [("a205048eb81a0e", "00", "05")]
 
 
 def test_a2345_4212_fetches_the_holiday_image_with_wifi_up() -> None:
@@ -4888,6 +5351,111 @@ def test_a2345_4212_that_fetches_nothing(
 
     assert replies == []
     assert [name for name in module.values if "_holiday_" in name] == []
+
+
+@pytest.mark.parametrize(
+    ("dropped", "landed"),
+    [
+        pytest.param(0xA3, True, id="no a3: fetched, its CRC unknown"),
+        pytest.param(0xA7, False, id="no a7: a6 fails the URL length"),
+    ],
+)
+def test_a2345_4212_fetches_when_its_last_field_is_long_enough(
+    dropped: int, *, landed: bool
+) -> None:
+    """``cmd212`` logs a missing field and fetches if the last one found is > 15 B.
+
+    prime-a2345-a91b2.md "Theme upload", the ``4212`` fields bullet: a missing
+    field's value comes from unknown bytes, so the record doesn't carry it.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_wifi(True)
+    window = holiday_schedule(RHYTHMIC_HUE, module.rtc, module.rtc + 60)
+
+    command(device, client, 0x212, [f for f in window if f[0] != dropped])
+    advance(device, client, clock, 9)
+
+    assert (module.values.get("_holiday_id") == RHYTHMIC_HUE) is landed
+    assert "_holiday_crc" not in module.values
+
+
+def test_a2345_4212_for_the_landed_id_and_country_is_skipped() -> None:
+    """``holiday_theme_stage`` skips an unchanged id and country: no second fetch."""
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_wifi(True)
+    window = holiday_schedule(RHYTHMIC_HUE, module.rtc, module.rtc + 60)
+    command(device, client, 0x212, window)
+    advance(device, client, clock, 9)
+
+    command(device, client, 0x212, window)
+    advance(device, client, clock, 9)
+
+    assert module.values["_holiday_fetches"] == 1
+
+
+@pytest.mark.parametrize(
+    ("second_at", "landed_id"),
+    [
+        pytest.param(0.2, 2, id="before the module's ack: replaces it"),
+        pytest.param(1.0, 1, id="after the ack: busy, dropped"),
+    ],
+)
+def test_a2345_4212_during_a_fetch(second_at: float, landed_id: int) -> None:
+    """Busy (``0x2000113c``) from the module's op ``0x3d`` ack, 0.38 s on.
+
+    prime-a2345-a91b2.md "Theme upload", the ``4212`` fields and Busy bullets:
+    before it a new id replaces the staged fetch; after it one is dropped.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_wifi(True)
+    command(device, client, 0x212, holiday_schedule(1, module.rtc, module.rtc + 60))
+    advance(device, client, clock, second_at)
+
+    command(device, client, 0x212, holiday_schedule(2, module.rtc, module.rtc + 60))
+    advance(device, client, clock, 10)
+
+    assert module.values["_holiday_id"] == landed_id
+
+
+@pytest.mark.parametrize(
+    ("fields", "next_at"),
+    [
+        pytest.param([(0xA2, b"\x03" + ui(4).build(0))], 3630.0, id="a2 0: 1 h"),
+        pytest.param([(0xA2, b"\x03" + ui(4).build(9))], 90.0, id="URL short: 60 s"),
+    ],
+)
+def test_a2345_4212_reloads_the_0312_countdown(
+    fields: list[tuple[int, bytes]], next_at: float
+) -> None:
+    """``tick_0312_countdown_set``: 36 000 ticks for ``a2 = 0``, 600 on a URL fail.
+
+    prime-a2345-a91b2.md "Theme upload", the ``4212`` fields bullet. WiFi up
+    at 0 s puts the next ``0312`` at 60 s; the ``4212`` at 30 s moves it.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    command(device, client, 0x20A, [(0xA2, b"\x04us"), (0xA3, b"\x04" + ACCOUNT)])
+    command(device, client, 0x20F, [(0xA2, b"\x01\x01")])
+    device.set_wifi(True)
+    advance(device, client, clock, 30)
+
+    command(device, client, 0x212, fields)
+    advance(device, client, clock, next_at - 30 - 0.5)
+    early = [m for m, _ in published(device) if m == 0x312]
+    advance(device, client, clock, 1)
+
+    assert early == []
+    assert [m for m, _ in published(device) if m == 0x312] == [0x312]
 
 
 @pytest.mark.parametrize(
@@ -5004,6 +5572,31 @@ def test_a2345_holiday_theme_shows_inside_its_window_on_the_local_rtc() -> None:
         (HOLIDAY_URL, True),
         (recorded, False),
     ]
+
+
+@pytest.mark.parametrize("dropped", [0xA5, 0xA6], ids=["no start", "no end"])
+def test_a2345_a_holiday_record_with_an_unknown_window_never_shows(
+    dropped: int,
+) -> None:
+    """A ``4212`` window bound left out is read from unknown bytes: never inside.
+
+    prime-a2345-a91b2.md "Theme upload", the ``4212`` fields bullet: the fetch
+    still runs (``a7``, the URL, is last); the record carries no such bound.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    into_screensaver(device, client, clock)
+    command(device, client, 0x20A, [(0xA2, b"\x04us"), (0xA3, b"\x04" + ACCOUNT)])
+    device.set_wifi(True)
+    window = holiday_schedule(RHYTHMIC_HUE, module.rtc - 60, module.rtc + 600)
+
+    command(device, client, 0x212, [f for f in window if f[0] != dropped])
+    advance(device, client, clock, 10)
+
+    assert module.values["_holiday_id"] == RHYTHMIC_HUE
+    assert "a5" not in screensaver(device)
 
 
 def test_a2345_holiday_theme_reply_carries_a5_after_a4() -> None:
@@ -5331,10 +5924,12 @@ def test_a2345_an_app_wake_ends_the_transition_screen_early() -> None:
     assert (woken, module.values[DISPLAY]) == (0, 1)
 
 
-def test_a2345_a_bound_unit_leaves_the_transition_screen_on_the_next_tick() -> None:
-    """Bound, the screen-request snapshot reads 5, so state 3 ends a tick on.
+def test_a2345_a_bound_unit_stays_in_the_transition_screen_after_a_click() -> None:
+    """The click writes request 1, and nothing writes 5 again until a bind.
 
-    prime-a2345-a91b2.md "Display state" state 3: the bind handler keeps 5.
+    prime-a2345-a91b2.md "Display state", the screen-request bullets: the
+    module sends op ``0x06`` only on a bind result or unbind, so a bound unit
+    stays in 3 until a ``420a``, a new bind or the ~180 s timeout.
     """
     clock = ManualClock()
     device = A2345(clock=clock)
@@ -5343,10 +5938,9 @@ def test_a2345_a_bound_unit_leaves_the_transition_screen_on_the_next_tick() -> N
     exchange(module, client, 0x023, [(0xA2, ACCOUNT)])
 
     device.unit_event("knob_click")
-    shown = module.values[DISPLAY]
-    advance(device, client, clock, 0.15)
+    advance(device, client, clock, 10)
 
-    assert (shown, module.values[DISPLAY]) == (3, 0)
+    assert module.values[DISPLAY] == 3
 
 
 def test_a2345_a_420a_while_unbound_ends_the_transition_screen() -> None:
@@ -5381,17 +5975,55 @@ def test_a2345_a_bind_ends_the_transition_screen_on_the_next_tick() -> None:
     assert (waiting, module.values[DISPLAY]) == (3, 0)
 
 
-def test_a2345_a_420a_while_bound_leaves_the_screen_request() -> None:
-    """``cmd20a`` requests screen 4 only while unbound; a bound unit keeps 5."""
+@pytest.mark.parametrize(
+    ("click", "requested"),
+    [
+        pytest.param("knob_click", 4, id="selector click: its own record 1, so 4"),
+        pytest.param("knob_click_icon", 5, id="icon click: the bind's record 5, so 5"),
+    ],
+)
+def test_a2345_both_clicks_request_1_and_a_420a_reads_the_last_screen_request(
+    click: str, requested: int
+) -> None:
+    """Both clicks write request 1 and stay in 3; a ``420a`` then ends it.
+
+    prime-a2345-a91b2.md "Display state", the screen-request bullets: the 0xb
+    click goes through ``screen_request`` (also ``bd49``), the icon through
+    ``pair_mode_request`` (not ``bd49``); ``cmd20a`` writes 5 when ``bd49``
+    is 5, else 4. Bound, so ``bd49`` starts at the bind's 5.
+    """
     clock = ManualClock()
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
     module = device.negotiated_module
     exchange(module, client, 0x023, [(0xA2, ACCOUNT)])
 
+    device.unit_event(click)
+    advance(device, client, clock, 0.15)
+    clicked = (module.values[DISPLAY], module.values[SCREEN_REQUEST])
     command(device, client, 0x20A, [(0xA2, b"\x02US"), (0xA3, b"\x04" + ACCOUNT)])
+    advance(device, client, clock, 0.15)
 
-    assert SCREEN_REQUEST not in module.values
+    assert clicked == (3, 1)
+    assert (module.values[DISPLAY], module.values[SCREEN_REQUEST]) == (0, requested)
+
+
+def test_a2345_a_knob_press_and_release_within_one_tick_end_at_0() -> None:
+    """``tick_root`` runs the click before ``knob_activity_wake?`` in a tick.
+
+    prime-a2345-a91b2.md "Clicks": a press and release in one tick end at 0.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    into_screensaver(device, client, clock)
+
+    device.unit_event("knob_activity")
+    device.unit_event("knob_click")
+    advance(device, client, clock, 0.15)
+
+    assert module.values[DISPLAY] == 0
 
 
 @pytest.mark.parametrize(
@@ -5792,6 +6424,102 @@ def test_a2345_black_waits_outside_the_window_and_moves_at_its_start() -> None:
     advance(device, client, clock, 1.5)
 
     assert (waiting, module.values[DISPLAY]) == (2, 1)
+
+
+def test_a2345_a_late_first_window_evaluation_is_a_start_edge() -> None:
+    """The first evaluation's 0 -> 2 is an edge: black moves to 1 past the inhibit.
+
+    prime-a2345-a91b2.md "Display state" row 2: the last phase boots 0. The
+    handshake's clock is below the floor, so the unit blanks at 30 s with no
+    evaluation; a clock set at 31 s brings the first one 10 passes later.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    module = device.negotiated_module
+    client = AppClient(encrypted_outer=True)
+    module.connect()
+    unset = [(0xA1, ui(4).build(0x1000)), (0xA3, UTC_OFFSET), (0xA5, TZ)]
+    for msgtype, fields in negotiation_steps(client, TOKEN):
+        replies = exchange(
+            module, client, msgtype, unset if msgtype == 0x022 else fields
+        )
+        if msgtype == 0x021:
+            client.install(replies[0].fields[0xA1])
+    device.press_button()
+    device.set_values(screen_timeout=1)
+    device.unit_event("knob_hold")
+    advance(device, client, clock, 31)
+    black = (module.values[DISPLAY], WINDOW_PHASE in module.values)
+
+    exchange(module, client, 0x022, [(0xA1, TIMESTAMP), (0xA3, UTC_OFFSET), (0xA5, TZ)])
+    advance(device, client, clock, 1.7)
+
+    assert black == (2, False)
+    assert (module.values[WINDOW_PHASE], module.values[DISPLAY]) == (2, 1)
+
+
+def test_a2345_the_window_start_edge_moves_black_past_the_inhibit() -> None:
+    """The window-start edge moves 2 -> 1 with no clock-switch, RTC or inhibit check.
+
+    prime-a2345-a91b2.md "Display state" state 2 (``theme_state_change_watch``):
+    black from a knob hold, 23:27 starts the window at 105 s.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(screen_timeout=1)
+    command(device, client, 0x213, screensaver_window((23, 27), (23, 40), 0x7F))
+    device.unit_event("knob_hold")
+
+    advance(device, client, clock, 104)
+    waiting = module.values[DISPLAY]
+    advance(device, client, clock, 1.5)
+
+    assert (waiting, module.values[DISPLAY]) == (2, 1)
+
+
+def test_a2345_a_clock_off_unit_drops_back_to_black_after_the_start_edge() -> None:
+    """The edge moves a clock-off unit to 1 too; the next tick drops it back to 2.
+
+    prime-a2345-a91b2.md "Display state" state 2. The move to 1 evaluates the
+    holiday flag, so it reads 2 (evaluated, not shown) after it.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    device.set_values(screen_timeout=1, screen_saver_switch=False)
+    command(device, client, 0x213, screensaver_window((23, 27), (23, 40), 0x7F))
+
+    advance(device, client, clock, 104)
+    unevaluated = HOLIDAY_FLAG not in module.values
+    advance(device, client, clock, 1.5)
+
+    assert unevaluated
+    assert (module.values[DISPLAY], module.values[HOLIDAY_FLAG]) == (2, 2)
+
+
+def test_a2345_the_window_end_moves_the_screensaver_to_black() -> None:
+    """Window end (phase -> 1) moves 1 -> 2 with the clock switch still on.
+
+    prime-a2345-a91b2.md "Display state" state 1: a weekly 23:25-23:27, the
+    screensaver from 30.2 s, the end at 105 s.
+    """
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+    command(device, client, 0x213, screensaver_window((23, 25), (23, 27), 0x7F))
+    into_screensaver(device, client, clock)
+
+    advance(device, client, clock, 73)
+    shown = module.values[DISPLAY]
+    advance(device, client, clock, 2)
+
+    assert shown == 1
+    assert (module.values[WINDOW_PHASE], module.values[DISPLAY]) == (1, 2)
+    assert device.mcu.state(module.values)["screen_saver_switch"]
 
 
 def test_a2345_the_holiday_window_pushes_030b_at_its_edges_in_the_screensaver() -> None:

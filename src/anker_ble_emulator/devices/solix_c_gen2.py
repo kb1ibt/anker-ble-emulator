@@ -22,6 +22,7 @@ produce a wire-visible ``04``.
 
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 from enum import IntEnum
 from functools import partial
@@ -53,6 +54,7 @@ from construct import (
 
 from anker_ble_emulator.c_g2_490 import MSGTYPE_490
 from anker_ble_emulator.layouts import (
+    CLOCK,
     EPOCH,
     RTC,
     STATUS_ACCEPTED,
@@ -854,6 +856,35 @@ def ac_output_off(
     return dict(values)
 
 
+#: The ``4101`` / ``4103`` tags only an off-grid build reads, and their fields.
+OFFGRID_TAGS = {
+    0x101: {"ab": "ac_input_disable_switch"},
+    0x103: {"b0": "outage_alert_switch"},
+}
+
+
+def _offgrid_tags_kept(
+    msgtype: int, request: ParameterDict, state: Mapping[str, Value]
+) -> dict[str, Value]:
+    """Return the stored value of each tag an older build's handler doesn't read."""
+    if _offgrid_build(state):
+        return {}
+    return {
+        name: state[name]
+        for tag, name in OFFGRID_TAGS[msgtype].items()
+        if tag in request
+    }
+
+
+def _ac_group_effects(
+    request: ParameterDict, state: Mapping[str, Value]
+) -> dict[str, Value]:
+    """Return ``4101``'s side effects: AC out at 0 W when switched off, ``ab`` kept."""
+    return ac_output_switched(request, state) | _offgrid_tags_kept(
+        0x101, request, state
+    )
+
+
 def _set_car_charger_params(request: ParameterDict) -> dict[str, Value] | None:
     """Return the DC/car group's changed fields; any subset may be present."""
     return decode_request(request, DC_GROUP)
@@ -983,8 +1014,12 @@ PACK_SOC = "pack_soc"
 #: ``pack_soc`` steps per whole percent, and its full scale (100.0 %).
 SOC_STEPS_PER_PERCENT = 10
 SOC_FULL = 1000
-#: The MainMcu build (v1.2.1.6) from which Battery-Only Power blocks TOU.
-AC_INPUT_DISABLE_GATE_VERSION = 1216
+#: The MainMcu build (v1.2.1.6) that brings the AC-input disable mode (``4101
+#: ab``, its auto-off, Battery-Only Power blocking TOU) and the off-grid alert
+#: (``4103 b0``, the 0x59): v1.2.1.1 has none of them, its handlers acking and
+#: ignoring ``ab`` / ``b0`` (firmware/mainmcu.md "build diff"; a1783-control.md
+#: ``4101 ab``, ``4103 b0`` rows). The older v1.1.2.6 is assumed the same.
+OFFGRID_BUILD_VERSION = 1216
 #: ``a7[3]`` ``ac_input_status``: no mains at the inlet; 1 mains, 2 mains with
 #: Battery-Only Power on (a1783-telemetry.md "Presence is not current").
 AC_INPUT_NONE = 0
@@ -1011,7 +1046,7 @@ class DcInputSource(IntEnum):
 
 #: The most the C2000 chassis's DC input takes, whatever feeds it: the XT-60i
 #: (11-60 V, 17 A, 800 W) that solar, the car cable and the alternator share
-#: (a1783-telemetry.md "C2000 Gen 2 input ratings").
+#: (a1783-telemetry.md "Ratings").
 C2000_DC_INPUT_LIMIT = 800
 #: The car-charging cable into the XT-60i holds ~8.1-8.2 A (100 W at 12 V
 #: nominal), so its watts follow the socket's voltage (a1783-telemetry.md "Car
@@ -1025,8 +1060,9 @@ CAR_CABLE_CURRENT_MAX = 820
 #: ``.23.6``, the DC input's voltage (0.01 V), and the XT-60i's top (60 V).
 DC_INPUT_VOLTAGE = "dc_input_voltage"
 DC_INPUT_VOLTAGE_TOP = 6000
-#: ``.23.6`` with the car cable in at 0 W: the socket at rest, ~16.9 V (16.38 V
-#: just after a charge ended).
+#: ``.23.6`` with the car cable in at 0 W: the socket at rest, ~16.9 V (the
+#: 2026-10-31 c490 posts: 16.38 V as the charge ended at 17:16 EDT, 16.89-16.96 V
+#: from 18:01 on).
 CAR_SOCKET_REST_VOLTAGE = 1690
 CAR_VOLTAGE_EVENT = "car_socket_voltage"
 #: What ``.23.6`` follows on the car cable.
@@ -1034,15 +1070,16 @@ CAR_VOLTAGE_INPUTS = frozenset(
     {"pv1_input_power", "pv1_charge_status", DC_INPUT_SOURCE, CAR_CABLE_CURRENT}
 )
 #: Hidden: charge source 2 can charge (``chg_src2_can_charge``, ``0x200001e8``
-#: bit 1, set by ``alt_charge_enable_set?``); clear unless set. No field
+#: bit 1, set by ``alt_charge_enable_set``); clear unless set. No field
 #: carries it. While clear, the AC charge request has a floor.
 CHARGE_SOURCE_2 = "charge_source_2_can_charge"
-#: The floor (``ac_charge_power_floor?`` 0x08009ac4): the main pack's voltage
-#: (``.15.3``, 0.1 V) rounded to volts + 10 W; 50 W while it reads 0.
+#: The floor (``ac_charge_power_floor`` 0x08009ac4): the pack voltage (pack
+#: field 0xf, the on-bus pack's ``.15.3``, 0.1 V; the same field the headroom
+#: reads) rounded to volts + 10 W; 50 W while it reads 0.
 CHARGE_FLOOR_OVER_VOLTS = 10
 CHARGE_FLOOR_NO_VOLTAGE = 50
 #: ``maxInputPower`` on the decoded MainMcu build (``max_input_power_get``,
-#: a1783-telemetry.md ``a2`` byte 30), keyed on the factory variant and
+#: a1783-telemetry.md ``a3`` [4:6] row), keyed on the factory variant and
 #: country, not the model: 2300 W on variant 1, 1500 W with country JP, else
 #: 1800 W. One build serves all four models (firmware/mainmcu.md).
 MAX_INPUT_POWERS = frozenset({1500, 1800, 2300})
@@ -1067,13 +1104,17 @@ C2000_SHARED_PORTS = ((("pd3", "usb1"), 20),)
 #: The C1000 Gen 2's ratings (Anker, US spec sheet; a1783-telemetry.md): AC
 #: charging 1200 W, UltraFast 1600 W, bypass 1800 W; solar 600 W (11-28 V
 #: 8.2 A, 29-60 V 14.5 A); AC out 2000 W rated, 3000 W peak; the car socket
-#: 120 W, USB-C2 140 W, USB-A 12 W, and USB-A and USB-C1 share 20 W.
+#: 120 W, USB-C2 140 W, USB-A 12 W, and USB-A and USB-C1 share 20 W. The spec
+#: lists no USB-C3, so the ``0421`` slot the layout shares reads 0 W, as both
+#: recordings do.
 C1000_CHARGE_POWER = 1200
 C1000_ULTRAFAST_POWER = 1600
 C1000_BYPASS_POWER = 1800
 C1000_DC_INPUT_LIMIT = 600
 C1000_AC_OUTPUT_PEAK = 3000
-C1000_PORT_LIMITS = MappingProxyType({"car_charge1": 120, "pd2": 140, "usb1": 12})
+C1000_PORT_LIMITS = MappingProxyType(
+    {"car_charge1": 120, "pd2": 140, "pd3": 0, "usb1": 12}
+)
 C1000_SHARED_PORTS = ((("pd1", "usb1"), 20),)
 #: Hidden, read-only: a model's AC bypass rating and its fastest AC charge
 #: (UltraFast), which bound the build's charge request. The C2000 lists
@@ -1091,7 +1132,7 @@ PACK_POWER_LIMIT = 245760
 TOU_CHARGE_LIMIT = 400
 #: 0.1 A to the pack current's 10 mA (the request's 0.01 A): x 10.
 PACK_CURRENT_STEPS = 10
-#: Hidden: MainBMS's TOU bit (u8 ``0x20000a48`` bit 7), MainMcu's op-0x006
+#: Hidden: MainBMS's TOU bit (u8 ``0x20000a18`` bit 7), MainMcu's op-0x006
 #: bit 0x80: a TOU period active (``tou_active_period_get``) and no backup
 #: window (firmware/mainbms-control-fsms.md "The op-0x006 byte"). MainMcu
 #: sends it every 500 ms; the emulator refreshes it every 10 s, and 0.5 s
@@ -1142,21 +1183,22 @@ def _check_switch(name: str, value: Value) -> None:
 
 
 def _check_timing(given: Mapping[str, Value]) -> None:
-    """Check the hidden alert tick phase and loss report are 0-1 s, the return 0 s on.
+    """Check the hidden tick phases and loss report are 0-1 s, the reports 0 s on.
 
     Raises:
         TypeError: If any is set outside its range, or not a number.
 
     """
-    for name in (ALERT_PHASE, LOSS_REPORT):
+    for name in (ALERT_PHASE, INVERTER_PHASE, LOSS_REPORT):
         value = given.get(name)
         if value is not None and (isinstance(value, bytes) or not 0 <= value <= 1):
             msg = f"{name} is 0 to 1 s"
             raise TypeError(msg)
-    report = given.get(RETURN_REPORT)
-    if report is not None and (isinstance(report, bytes) or report < 0):
-        msg = f"{RETURN_REPORT} is 0 s or more"
-        raise TypeError(msg)
+    for name in (RETURN_REPORT, READY_REPORT):
+        report = given.get(name)
+        if report is not None and (isinstance(report, bytes) or report < 0):
+            msg = f"{name} is 0 s or more"
+            raise TypeError(msg)
 
 
 def _check_car_cable_current(given: Mapping[str, Value]) -> None:
@@ -1216,22 +1258,23 @@ def _check_car_cable(resolved: Mapping[str, Value], after: Mapping[str, Value]) 
 
 
 def _car_voltage_follows(
-    _values: Mapping[str, Value], state: Mapping[str, Value]
+    values: Mapping[str, Value], state: Mapping[str, Value]
 ) -> Step:
-    """Set ``.23.6`` to what the car cable makes."""
+    """Set ``.23.6`` to what the car cable makes; off it, back to the recording."""
     voltage = _car_socket_voltage(state)
-    return Step(values={} if voltage is None else {DC_INPUT_VOLTAGE: voltage})
+    if voltage is not None:
+        return Step(values={DC_INPUT_VOLTAGE: voltage})
+    return Step(unset=(DC_INPUT_VOLTAGE,) if DC_INPUT_VOLTAGE in values else ())
 
 
 def _car_voltage_events(
-    after: Mapping[str, Value], own: frozenset[str], given: frozenset[str]
+    own: frozenset[str], given: frozenset[str]
 ) -> tuple[Timed, ...]:
     """Return the ``.23.6`` follow a change of the car cable's inputs starts.
 
     One the change set by name holds until the next change of those inputs.
     """
-    voltage = _car_socket_voltage(after)
-    if voltage is None or DC_INPUT_VOLTAGE in given or not own & CAR_VOLTAGE_INPUTS:
+    if DC_INPUT_VOLTAGE in given or not own & CAR_VOLTAGE_INPUTS:
         return ()
     return (Timed(0.0, CAR_VOLTAGE_EVENT, _car_voltage_follows),)
 
@@ -1268,10 +1311,13 @@ def _ac_input_disabled(state: Mapping[str, Value]) -> bool:
 
     Assumed: both ``a4[31]`` input states, 1 (``4101 ab``) and 2 (auto-off).
     """
+    return _offgrid_build(state) and bool(state[DISABLE])
+
+
+def _offgrid_build(state: Mapping[str, Value]) -> bool:
+    """Whether the MainMcu build has the AC-input disable mode and off-grid alert."""
     version = VersionNumber.parse(_bytes_value(state, "mcu_version"))
-    if version < AC_INPUT_DISABLE_GATE_VERSION:
-        return False
-    return bool(state[DISABLE])
+    return bool(version >= OFFGRID_BUILD_VERSION)
 
 
 def _active_period(params: ParameterDict, values: Mapping[str, Value]) -> int:
@@ -1416,25 +1462,36 @@ POWER_STAGE_LOSS_REPORT = 0.0
 POWER_STAGE_RETURN_REPORT = 2.9
 LOSS_REPORT = "power_stage_loss_report"
 RETURN_REPORT = "power_stage_return_report"
-#: The off-grid alert (``offgrid_alert_poll_tick``, a1783-control.md "Alert"):
-#: it commits a flag change on the 5th consecutive tick that differs from the
-#: committed value (hidden ``ac_input_flag_committed``); a tick reading the
-#: committed value resets the count. The 1 s timer runs free from boot, so the
-#: first counted tick lands 0-1 s after the change: hidden, settable per run;
-#: unset, 0 (at the change, the commit 4 s on). A flag change due at the 5th
-#: tick's own instant counts first.
+#: The off-grid alert (``offgrid_alert_poll_tick``, a1783-control.md "``a4[31]``
+#: witnesses", its Alert bullet): it commits a flag change on the 5th
+#: consecutive tick that differs from the committed value (hidden
+#: ``ac_input_flag_committed``); a tick reading the committed value resets the
+#: count. The 1 s timer runs free from boot, so the first counted tick lands
+#: 0-1 s after the run's first flag change: hidden, settable per run; unset, 0
+#: (at the change, the commit 4 s on). That fixes the grid (hidden, its offset
+#: on the device clock) every later change counts on. A flag change due at the
+#: 5th tick's own instant counts first.
 AC_FLAG_COMMITTED = "ac_input_flag_committed"
 ALERT_COMMIT = "grid_loss_alert"
 ALERT_COMMIT_READ = "grid_loss_alert_read"
 ALERT_TICKS = 5
 ALERT_TICK = 1.0
 ALERT_PHASE = "alert_tick_phase"
-#: The AC charge enable (``ac_inverter_ctrl``, 1 s tick): on the tick after its
-#: 7 s one-shot expires, the firmware's upper bound. The one-shot counts from the
-#: branch's first tick, taken at the accept (the tick's phase isn't modeled); the
-#: power stage's ready bit, which can enable it sooner, isn't modeled.
+ALERT_GRID = "alert_tick_grid"
+#: The AC charge enable (``ac_inverter_ctrl``, 1 s tick): its 7 s one-shot
+#: counts from the branch's first tick, 0-1 s after the accept on the timer's
+#: free-running phase (a1783-control.md "``a4[31]`` witnesses"; 2026-10-31
+#: 14:55's 7.2-8.2 s). Hidden, settable per run; unset 0, the enable 7 s on,
+#: the emulator's choice (no run settles 7 against 8). The run's first accept
+#: places the grid every later one counts on. The power stage's ready bit
+#: enables it on the first tick at or after it when that comes sooner
+#: (2026-10-26: 4.04-6.97 s): hidden, the seconds after the accept it sets,
+#: per run; unset, none before the one-shot.
 CHARGE_ENABLE_TIMEOUT = 7.0
+INVERTER_PHASE = "inverter_tick_phase"
+INVERTER_GRID = "inverter_tick_grid"
 INVERTER_TICK = 1.0
+READY_REPORT = "power_stage_ready_report"
 #: The power stage's charge ramp after the enable, from the bench runs, not
 #: firmware: the first step recorded at 38-155 W (118, 118, 155, 129, 38), the
 #: full charge ~5 s on (a1783-control.md "``a4[31]`` witnesses"). 118 W, the
@@ -1460,11 +1517,13 @@ AC_OUT = "ac_output_power"
 ULTRAFAST = "super_fast_charge_status"
 #: The recorded full-charge band, which a full AC charge holds to whenever its
 #: request reaches it (a1783-telemetry.md "AC charge request", the text and
-#: the recorded table: 1 553-1 673 W across the plan windows, 1 595-1 610 W at
+#: the recorded table: 1 553-1 673 W across the plan windows, 1 572-1 602 W at
 #: an 1800 W limit). A recorded band, not a firmware value. Hidden, settable
-#: per run: unset, the plan windows' mode.
+#: per run: unset, the plan windows' mode with the limit skipped, and the 1800 W
+#: run's median and mode (1 583 W, 15:15-15:39) on the limit's path.
 FULL_CHARGE_BAND = "full_charge_band_power"
 FULL_CHARGE_CAP = 1643
+LIMIT_CHARGE_CAP = 1583
 #: What the charge request reads: a change of one moves a full charge. The
 #: backup window's type (``tou_setting_system_status``) is set by the window
 #: pass, the TOU bit by its own; the DC input and the pack voltages move the
@@ -1490,15 +1549,15 @@ def _ac_charge_power(state: Mapping[str, Value]) -> int:
     a1783-telemetry.md "AC charge request" (``chg_src1_ac_limit_calc``): the
     ceiling less the AC-out draw, capped at the limit + 10 W, the limit skipped
     with Ultrafast on or a backup window running; either way the charge holds to
-    the recorded band, ``FULL_CHARGE_CAP``. The draw counts while the inverter runs
-    (``0x200001e4`` bits 5:4), the only time AC out reads any. The request
+    the recorded band (``FULL_CHARGE_BAND``). The draw counts while the inverter
+    runs (``0x200001e4`` bits 5:4), the only time AC out reads any. The request
     never goes negative: with charge source 2 able to charge it is 0 once AC
     out reaches the ceiling, otherwise it holds to the floor (MainMcu
-    0x08009ae4). AC in carries the AC out too (survey: limit + out + 24 at
-    54-59 W out), up to the AC-in ceiling (``_ac_in_top``); the on-bus pack
-    feeds the outlets' rest. The limit skipped, the charge holds to the model's
-    UltraFast rating too, where it lists one. Its current holds to the pack's
-    headroom (``ac_charge_current_headroom?``, ``_charge_headroom``).
+    0x08009ae4). AC in carries the AC out too, up to the AC-in ceiling
+    (``_ac_in_top``); the on-bus pack feeds the outlets' rest. The limit
+    skipped, the charge holds to the model's UltraFast rating too, where it
+    lists one. Its current holds to the pack's headroom
+    (``ac_charge_current_headroom``, ``_charge_headroom``).
     """
     out = int(state[AC_OUT])
     inlet = int(state[MAX_INPUT])
@@ -1510,9 +1569,13 @@ def _ac_charge_power(state: Mapping[str, Value]) -> int:
         band = int(state.get(FULL_CHARGE_BAND, FULL_CHARGE_CAP))
         fastest = int(state.get(ULTRAFAST_POWER, band))
         charge = min(request, band, fastest)
+    elif limited := min(request, int(state[AC_LIMIT])):
+        charge = min(
+            limited + CHARGE_OVER_LIMIT,
+            int(state.get(FULL_CHARGE_BAND, LIMIT_CHARGE_CAP)),
+        )
     else:
-        limited = min(request, int(state[AC_LIMIT])) + CHARGE_OVER_LIMIT
-        charge = min(limited, int(state.get(FULL_CHARGE_BAND, FULL_CHARGE_CAP)))
+        charge = 0
     headroom = _charge_headroom(state)
     if headroom is not None:
         charge = max(0, min(charge, headroom))
@@ -1524,7 +1587,8 @@ def _pack_charge_limit(state: Mapping[str, Value]) -> int | None:
 
     The lowest of 58.0 A, 245 760 / the pack voltage (0.1 V) and, with the TOU
     bit set, 40.0 A, on a decoded build of the C2000 chassis. The division
-    truncates, and a pack reading 0 V has no power cap (MainBMS_0901).
+    truncates, and a pack reading 0 V drops only the power cap
+    (firmware/pack-telemetry.md ``+0xe0``).
     """
     base = state.get(PACK_CHARGE_LIMIT)
     if base is None or not _decoded_build(state):
@@ -1546,8 +1610,8 @@ def _on_bus_volts(state: Mapping[str, Value]) -> int:
 def _charge_headroom(state: Mapping[str, Value]) -> int | None:
     """Return the most W the AC charge takes under the pack's charge-current cap.
 
-    ``ac_charge_current_headroom?``: the limit x 10 (0.01 A) less the current
-    the other sources hold (``chg_source_current_sum?``), taken as the DC
+    ``ac_charge_current_headroom``: the limit x 10 (0.01 A) less the current
+    the other sources hold (``chg_source_current_sum``), taken as the DC
     input's; in W at the on-bus pack's voltage. None while uncapped or at 0 V.
     """
     limit, volts = _pack_charge_limit(state), _on_bus_volts(state)
@@ -1582,8 +1646,11 @@ def _ac_in_top(state: Mapping[str, Value]) -> int:
 
 
 def _charge_floor(state: Mapping[str, Value]) -> int:
-    """Return the AC charge request's floor: the pack's volts + 10 W, 50 W at 0 V."""
-    tenths = int(state.get("battery_voltage", 0))
+    """Return the AC charge request's floor: the on-bus pack's volts + 10 W.
+
+    50 W while that voltage reads 0.
+    """
+    tenths = _on_bus_volts(state)
     if not tenths:
         return CHARGE_FLOOR_NO_VOLTAGE
     return (tenths + 5) // 10 + CHARGE_FLOOR_OVER_VOLTS
@@ -1722,18 +1789,45 @@ def _ac_flag_settles(
     changes: dict[str, Value] = {AC_FLAG: flag}
     then: list[Timed] = []
     dropped = not flag and state[DISABLE] != BATTERY_ONLY_AUTO_OFF
-    if dropped and DISABLE not in own:
+    if dropped and DISABLE not in own and _offgrid_build(state):
         changes[DISABLE] = BATTERY_ONLY_AUTO_OFF
         then.append(Timed(0.0, SCREEN_WAKE, partial(_screen_wake, own)))
     elif flag and state[DISABLE] == BATTERY_ONLY_AUTO_OFF:
         changes[DISABLE] = BATTERY_ONLY_OFF
     if flag and "ac_input_power" not in own:
-        enable = CHARGE_ENABLE_TIMEOUT + INVERTER_TICK
+        inverter = (INVERTER_GRID, INVERTER_PHASE, INVERTER_TICK)
+        first = _next_tick(state, *inverter, changes)
+        enable = first + CHARGE_ENABLE_TIMEOUT
+        ready = state.get(READY_REPORT)
+        if ready is not None:
+            ticks = max(0, math.ceil(round((float(ready) - first) / INVERTER_TICK, 6)))
+            enable = min(enable, first + ticks * INVERTER_TICK)
         then.append(Timed(enable, "ac_charge", partial(_ac_charge, own)))
-    phase = float(state.get(ALERT_PHASE, 0.0))
-    delay = phase + (ALERT_TICKS - 1) * ALERT_TICK
+    first = _next_tick(state, ALERT_GRID, ALERT_PHASE, ALERT_TICK, changes)
+    delay = first + (ALERT_TICKS - 1) * ALERT_TICK
     then.append(Timed(delay, ALERT_COMMIT, partial(_alert_tick, reports)))
     return Step(values=changes, then=tuple(then))
+
+
+def _next_tick(
+    state: Mapping[str, Value],
+    grid: str,
+    phase: str,
+    tick: float,
+    changes: dict[str, Value],
+) -> float:
+    """Return the seconds to a free-running timer's next tick, ``tick`` apart.
+
+    The run's first use places the grid at its hidden phase and records it in
+    ``changes``; every later one counts on that grid.
+    """
+    now = float(state[CLOCK])
+    placed = state.get(grid)
+    if placed is not None:
+        return (float(placed) - now) % tick
+    first = float(state.get(phase, 0.0))
+    changes[grid] = (now + first) % tick
+    return first
 
 
 def _alert_tick(
@@ -1758,7 +1852,8 @@ def _alert_commit(
     flag = int(state[AC_FLAG])
     changes: dict[str, Value] = {AC_FLAG_COMMITTED: flag}
     dropped = not flag and int(state.get(AC_FLAG_COMMITTED, 1))
-    if not (dropped and reports and state["outage_alert_switch"]):
+    alerting = reports and state["outage_alert_switch"] and _offgrid_build(state)
+    if not (dropped and alerting):
         return Step(values=changes)
     changes |= {"event_code": EVENT_GRID_LOSS, EVENT_SOC: state["battery_level"]}
     return Step(values=changes, pushes=(MSGTYPE_425,))
@@ -1769,24 +1864,25 @@ def _ac_charge(
 ) -> Step:
     """Start AC charging into the pack below its cap (a1783-telemetry.md "Flow state").
 
-    The main below its cap charges; at it, an attached expansion below its own
-    takes the charge and the bus (``c0[24]`` 2, 06:03:00); with every pack at
-    its cap no AC input comes. The port flow shows on the bus holder. The power
-    stage's ramp follows: 118 W, the full charge 5 s on.
+    The charge goes to the bus holder (``c0[24]`` 2 on the expansion,
+    06:03:00); a main holding the bus at its cap charges until the charge-cap
+    latch moves it to an attached expansion below its own cap (main ->
+    ``0x12``). With every pack at its cap no AC input comes. The power stage's
+    ramp follows: 118 W, the full charge 5 s on.
     """
     if state["ac_input_status"] == AC_INPUT_NONE or state[DISABLE] == BATTERY_ONLY_ON:
         return Step()
-    cap = int(state["charging_limit_value"])
+    cap = _cap_percent(state)
     changes: dict[str, Value] = {"ac_input_power": CHARGE_FIRST_STEP}
+    then = [Timed(CHARGE_RAMP, CHARGE_RAMP_EVENT, _ac_charge_ramp)]
     if int(state["battery_level"]) >= cap:
         if not state.get("sub_package_connection_status") or (
             int(state["sub_package_battery_level"]) >= cap
         ):
             return Step()
         if _bus_pack(state) == BUS_MAIN:
-            changes |= _bus_to(BUS_EXPANSION, state, flowing=True)
-    ramp = Timed(CHARGE_RAMP, CHARGE_RAMP_EVENT, _ac_charge_ramp)
-    return _flow_step(_without(changes, own), state, (ramp,), own=own)
+            then.append(Timed(0.0, CAP_COUNT_START, partial(_cap_count_starts, own)))
+    return _flow_step(_without(changes, own), state, tuple(then), own=own)
 
 
 def _ac_charge_ramp(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
@@ -1853,6 +1949,19 @@ def _battery_only_switched(
         charge = partial(_ac_charge, own)
         events.append(Timed(BATTERY_ONLY_CHARGE_DELAY, "ac_charge", charge))
     return events
+
+
+def _battery_only_auto_off(after: Mapping[str, Value]) -> list[Timed]:
+    """Return the auto-off a Battery-Only on draws with the flag already down.
+
+    ``ac_input_autooff_eval`` reads state 2 while the flag reads 0, whatever
+    Battery-Only Power's state, clearing it (a1783-control.md "``a4[31]``
+    witnesses"); a flag still up, or never settled, settles to it on its own.
+    """
+    if int(after.get(AC_FLAG, 1)) or not _offgrid_build(after):
+        return []
+    off = partial(_step, {DISABLE: BATTERY_ONLY_AUTO_OFF})
+    return [Timed(0.0, "battery_only_auto_off", off)]
 
 
 def _step(
@@ -2039,48 +2148,60 @@ OFF_BUS = (3, 3)
 #: Pack selection (MainBMS ``pack_select_eval``, firmware/mainbms-control-fsms.md
 #: "Pack selection", 10 ms steps), re-checked on every change:
 #: Rows are named by the switch table's codes, latches by "Latches".
-#: - the charge-cap latch (``0x20000b64``; the counters under "Charge-cap
+#: - the charge-cap latch (``0x20000b34``; the counters under "Charge-cap
 #:   latch counters"): sets with the on-bus pack charging at or above its cap
 #:   and a source in (``flag_00c7``, or ALT byte +9 at 2: hidden
 #:   ``alternator_byte_9``, the ALT record's +9, meaning unread), whatever the
-#:   expansion's state: after 100 steps the first time, at once after that, the
-#:   count never reset (hidden ``charge_cap_latch_primed``). It clears in
-#:   discharge, and with ``flag_00c7`` gone at once, or after 1 500 steps with
-#:   +9 at 2. That count is only reset by ``flag_00c7``, so once run out +9
-#:   alone sets nothing (hidden ``charge_cap_latch_spent``). Setting it clears
-#:   the discharge latch, whose arming clears it. Its idle and no-SoC
-#:   counts (both reset on vext / vbat, which no value carries) and the fault
-#:   path aren't modeled;
+#:   expansion's state: on the 101st qualifying step since boot, then on any,
+#:   the count held through 300 steps after a switch. It clears in discharge,
+#:   and with ``flag_00c7`` gone at once, or after 1 500 steps with +9 at 2.
+#:   That count is carried across a clear and only reset by ``flag_00c7``, so
+#:   once run out +9 alone re-sets it for one step at a time (hidden
+#:   ``charge_cap_latch_spent`` / ``_pulsing``), seen by the counter-free rows.
+#:   Setting it clears the discharge latch; the two can be set together. Its idle
+#:   and no-SoC counts (both reset on vext / vbat, which no value carries) and
+#:   the fault path aren't modeled;
 #: - main -> expansion charge (main -> ``0x12``): the charge-cap latch set, the
-#:   expansion below its cap, switched on, its path hold clear;
-#: - main -> expansion discharge (main -> ``0x22``): the discharge latch (path (a): the
-#:   main's own SoC above ``min_soc`` + 0.9 % and a >= 1.0 % drop in it since it
-#:   last charged); the expansion's discharge allowance non-zero (the stand-in
-#:   below; the path doesn't re-check the expansion's SoC), its path hold clear;
-#:   more than 200 steps since the last switch;
-#: - expansion -> main discharge (expansion -> ``0x21``): 300 steps on the
-#:   expansion, the charge-cap latch clear, its SoC under ``min_soc`` + 0.9 %,
-#:   checked every step; the main's charge allowance that row reads is taken as
-#:   non-zero (which record holds it, and its value at the cap, are open).
-#: The emulator's allowance stand-ins: a pack may charge below its cap; the
-#: expansion's discharge allowance reads 0 under ``min_soc`` + 0.9 %, unconfirmed
-#: (on 2026-09-03 03:29-08:00 the allowance or the path hold held main ->
-#: ``0x22`` off over the band, which one unread). The ineligible expansion ->
-#: ``0x11`` / ``0x21`` row (that allowance at 0 for 300 steps) would move the bus
-#: only once expansion -> ``0x21`` has. The path hold is the expansion BMS's own
-#: ``raw+0x95`` (CAN ``0x045a``, a contactor / active-path hold): hidden, clear
-#: unless set by name. Not modeled: the once-per-boot ``0x22``, the
-#: pack-switch-code rows, the allowance-only rows, the expansion's share of the
-#: discharge latch and the latches' other paths.
+#:   main not discharging and its 0xc set, or its charge allowance 0 for 300
+#:   steps, each step clearing the discharge latch; the expansion below its
+#:   cap, switched on, its path hold clear;
+#: - main -> ``0x11``: the charge-cap latch set, the main able to charge and
+#:   below its cap; the bus stays, the discharge latch clears;
+#: - main -> expansion discharge (main -> ``0x22``): the discharge latch (path
+#:   (a): the packs not charging, the main's own SoC above ``min_soc`` + 0.9 %
+#:   and a >= 1.0 % drop in it since it last charged); the expansion's
+#:   discharge allowance non-zero (the path doesn't re-check the expansion's
+#:   SoC), its path hold clear; more than 200 steps since the last switch; it
+#:   clears the charge-cap latch;
+#: - expansion -> main charge (expansion -> ``0x11``): the charge-cap latch set,
+#:   the main's charge allowance non-zero, more than 200 steps since the switch;
+#:   it clears the discharge latch;
+#: - expansion -> main discharge (expansion -> ``0x21``): the charge-cap latch
+#:   clear, the expansion's SoC under ``min_soc`` + 0.9 % and the main's charge
+#:   allowance non-zero, at once (its dwell passes on the first step);
+#: - the ineligible row's discharge half (expansion -> ``0x21``): the expansion
+#:   not charging, its discharge allowance 0, the cap latch clear, the main's
+#:   600; 300 steps on its counter, each step clearing the discharge latch.
+#: Each pack's allowances are its own node's gated limits (record 1 the host's
+#: copy of record 0, record 2 the BP2000's ``0x0454``) against the cap the BMS
+#: is sent (``max_soc``, 100 in a backup window): charge 0 while the main's 0xc
+#: is set or at 100.0 %, discharge 600, and the BP2000's discharge 0 while its
+#: own 0xd is set. Its charge allowance is a stand-in: it may charge below its
+#: cap. The path hold is the expansion
+#: BMS's own ``raw+0x95`` (CAN ``0x045a``, a contactor / active-path hold):
+#: hidden, clear unless set by name. Not modeled: the once-per-boot ``0x22``,
+#: the pack-switch-code rows, main -> ``0x22`` on the main's discharge
+#: allowance, the ineligible row's ``0x11`` half, the main's charge-full flag,
+#: the expansion's share of the discharge latch and the latches' other paths.
 #: Hidden, tracked with an expansion attached: the pack on the bus (1 main, 2
 #: expansion; unset, the expansion when one is attached, as on the A1783
 #: recording, else the main), when it took it (UTC s), the charge-cap latch,
-#: and the discharge latch (``0x20000b65``) and the main's 0.1 % SoC it counts
+#: and the discharge latch (``0x20000b35``) and the main's 0.1 % SoC it counts
 #: its drop from: re-taken only while the latch is clear, as the main charges
 #: (its SoC when charging stops; the 1 s settle isn't modeled) and when the
 #: latch arms or the charge-cap latch changes, never on a switch or a rise
-#: without charging (firmware/mainbms-control-fsms.md, the list after
-#: "Latches"); first seen, the main's SoC before the change.
+#: without charging (firmware/mainbms-control-fsms.md "Discharge-latch drop
+#: baselines"); first seen, the main's SoC before the change.
 BUS_PACK = "pack_on_bus"
 BUS_MAIN = 1
 BUS_EXPANSION = 2
@@ -2091,9 +2212,26 @@ CAP_LATCH = "charge_cap_latch"
 CAP_LATCH_EVENT = "charge_cap_latch_count"
 CAP_LATCH_REFERENCE = "charge_cap_latch_clear"
 CAP_LATCH_SPENT = "charge_cap_latch_spent"
-CAP_LATCH_PRIMED = "charge_cap_latch_primed"
+#: Spent, the latch re-set by +9 alone and cleared again each other step.
+CAP_LATCH_PULSING = "charge_cap_latch_pulsing"
+CAP_LATCH_PULSE_EVENT = "charge_cap_latch_pulse"
+#: The 1 s charging count (``0x20000b48``): the qualifying seconds it holds
+#: since boot, capped at its 101 steps, and the device clock its running
+#: stretch began at (or will, after a switch's 300 steps).
+CAP_COUNT = "charge_cap_latch_charge_count"
+CAP_COUNT_SINCE = "charge_cap_latch_charge_since"
+CAP_COUNT_START = "charge_cap_latch_charge_start"
+#: The device clock the bus last switched at: ``0x20000b3a`` holds ``0xaa`` for
+#: 300 steps after it.
+BUS_SWITCHED_AT = "bus_switched_at"
+SWITCH_HOLD = 3.0
 CAP_LATCH_HOLDOVER = 15.0
 CAP_LATCH_HOLDOVER_EVENT = "charge_cap_latch_holdover"
+#: The 15 s clear count (``0x20000b54``): the seconds it holds, and the device
+#: clock its running stretch began at.
+CAP_CLEAR_COUNT = "charge_cap_latch_clear_count"
+CAP_CLEAR_SINCE = "charge_cap_latch_clear_since"
+CAP_CLEAR_START = "charge_cap_latch_clear_start"
 ALT_BYTE_9 = "alternator_byte_9"
 ALT_BYTE_9_SOURCE = 2
 EXPANSION_PACK_SOC = "sub_package_pack_soc"
@@ -2121,9 +2259,22 @@ def _shown_levels(values: Mapping[str, Value]) -> dict[str, Value]:
 
 
 PATH_HOLD = "sub_package_path_hold"
-BUS_DWELL = 3.01
+#: The BP2000's own low-SoC status, table-A id 0xd (``severity_classify_lowside``;
+#: set = clear = ``min_soc`` x 10 + 9; fsms "Pack selection", the floor-band
+#: paragraphs): hidden, unset 0 as at boot; its evaluation count isn't modeled.
+#: It shows as bit 13 of the expansion's ``.15#1.8`` / ``.9`` (2026-09-03).
+EXPANSION_LOW_SOC = "sub_package_low_soc_status"
+LOW_SOC_SET = 3
+LOW_SOC_BIT = 0x2000
+EXPANSION_STATUS_BITS = ("sub_package_bms_warning_bits", "sub_package_bms_fault_bits")
+#: The ineligible row's shared counter (``0x20000bf2``) fires past 300 steps.
+INELIGIBLE_COUNT = 3.01
+INELIGIBLE_EVENT = "expansion_ineligible"
+INELIGIBLE_CLEAR = "expansion_ineligible_clear"
+MAIN_INELIGIBLE_EVENT = "main_charge_ineligible"
+CHARGE_BACK_EVENT = "charge_back_to_main"
 SWITCH_GAP = 2.01
-CHARGE_CAP_LATCH = 1.0
+CHARGE_CAP_LATCH = 1.01
 DISCHARGE_LATCH_DROP = 10
 PACK_HANDOVER = "pack_handover"
 LATCH_REFERENCE = "discharge_latch_reference"
@@ -2152,6 +2303,9 @@ WATTS_TO_CURRENT = 1000
 #: The BMS's charge and discharge test, +-0.3 A in 10 mA (a1783-telemetry.md
 #: "Flow state", ``a3[0]``).
 CURRENT_THRESHOLD = 30
+#: The discharge latch's charge test on the packs' summed current, 0.1 A in
+#: 10 mA (fsms "Latches" (a), "Discharge-latch drop baselines").
+LATCH_CHARGE_CURRENT = 10
 CURRENT_NAMES = frozenset(current for current, _ in PACK_CURRENTS.values())
 
 
@@ -2173,9 +2327,20 @@ def _expansion_soc(state: Mapping[str, Value]) -> int:
     return int(state[EXPANSION_PACK_SOC])
 
 
+def _cap_percent(state: Mapping[str, Value]) -> int:
+    """Return the cap the BMS works to, whole percent: ``max_soc``, 100 in a window.
+
+    MainMcu sends 100 in MAIN op ``0x015`` while a backup window runs (fsms
+    "Current-limit sources"); the stored ``max_soc`` shows as set.
+    """
+    if int(state.get(WINDOW_TYPE, WINDOW_NONE)):
+        return SOC_FULL // SOC_STEPS_PER_PERCENT
+    return int(state["charging_limit_value"])
+
+
 def _cap(state: Mapping[str, Value]) -> int:
-    """Return ``max_soc`` in 0.1 %."""
-    return int(state["charging_limit_value"]) * SOC_STEPS_PER_PERCENT
+    """Return the cap the BMS works to in 0.1 %."""
+    return _cap_percent(state) * SOC_STEPS_PER_PERCENT
 
 
 def _floor(state: Mapping[str, Value]) -> int:
@@ -2197,12 +2362,46 @@ def _held_for(state: Mapping[str, Value], at_least: float) -> float:
 def _bus_to(
     holder: int, state: Mapping[str, Value], *, flowing: bool
 ) -> dict[str, Value]:
-    """Return the values of ``holder`` taking the bus: its slots and hidden marks."""
+    """Return the values of ``holder`` taking the bus: its slots and hidden marks.
+
+    A running 1 s count keeps what it has; it runs again 300 steps on.
+    """
     soc = _main_soc(state) if holder == BUS_MAIN else _expansion_soc(state)
     held = ON_BUS if flowing or soc < _cap(state) else QUIET_AT_CAP
     main, expansion = (held, OFF_BUS) if holder == BUS_MAIN else (OFF_BUS, held)
     slots = zip((*MAIN_SLOTS, *EXPANSION_SLOTS), (*main, *expansion), strict=True)
-    return {**dict(slots), BUS_PACK: holder, BUS_TAKEN: int(state[EPOCH])}
+    now = float(state[CLOCK])
+    count: dict[str, Value] = {}
+    if CAP_COUNT_SINCE in state:
+        count = {CAP_COUNT: _cap_count_held(state), CAP_COUNT_SINCE: now + SWITCH_HOLD}
+    return {
+        **dict(slots),
+        BUS_PACK: holder,
+        BUS_TAKEN: int(state[EPOCH]),
+        BUS_SWITCHED_AT: now,
+        **count,
+    }
+
+
+def _cap_count_held(state: Mapping[str, Value]) -> float:
+    """Return the 1 s count with its running stretch added, capped at 101 steps."""
+    now = float(state[CLOCK])
+    since = float(state.get(CAP_COUNT_SINCE, now))
+    counted = float(state.get(CAP_COUNT, 0.0)) + max(0.0, now - since)
+    return min(CHARGE_CAP_LATCH, counted)
+
+
+def _switch_hold_left(state: Mapping[str, Value]) -> float:
+    """Return the seconds left of ``0x20000b3a``'s 300 steps after a pack switch."""
+    switched = state.get(BUS_SWITCHED_AT)
+    if switched is None:
+        return 0.0
+    return max(0.0, float(switched) + SWITCH_HOLD - float(state[CLOCK]))
+
+
+def _cap_count_left(state: Mapping[str, Value]) -> float:
+    """Return the qualifying seconds the 1 s charging count still needs."""
+    return max(0.0, CHARGE_CAP_LATCH - float(state.get(CAP_COUNT, 0.0)))
 
 
 def _pack_flow(state: Mapping[str, Value], pack: int) -> int:
@@ -2258,34 +2457,109 @@ def _cap_latch_holds_over(state: Mapping[str, Value]) -> bool:
 
 
 def _cap_latched(state: Mapping[str, Value]) -> bool:
-    """Return whether the charge-cap latch (``0x20000b64``) is set."""
+    """Return whether the charge-cap latch (``0x20000b34``) is set."""
     return bool(state.get(CAP_LATCH)) and not _cap_latch_clears(state)
 
 
-def _charge_handover_due(state: Mapping[str, Value]) -> bool:
-    """Return whether :165 holds: the main on the bus and the cap latch set.
+def _cap_latch_pulse_ready(state: Mapping[str, Value]) -> bool:
+    """Return whether +9 alone re-sets the spent latch, cleared again a step on.
 
-    The expansion below its cap, switched on and its path hold clear.
+    The clear count run out, ``flag_00c7`` gone, and the on-bus pack charging
+    at or above its cap; it runs once 300 steps after a switch pass.
     """
+    flow, soc = _on_bus(state)
     return (
-        _bus_pack(state) == BUS_MAIN
-        and _cap_latched(state)
-        and _expansion_soc(state) < _cap(state)
+        not state.get(CAP_LATCH)
+        and bool(state.get(CAP_LATCH_SPENT))
+        and not _charge_source(state)
+        and _alt_byte_9_source(state)
+        and flow == FLOW_CHARGE
+        and soc >= _cap(state)
+    )
+
+
+def _cap_latch_seen(state: Mapping[str, Value]) -> bool:
+    """Return whether ``pack_select_eval``'s counter-free rows see the cap latch.
+
+    Set, or re-set each other step by +9 alone (fsms "Charge-cap latch counters").
+    """
+    pulsing = bool(state.get(CAP_LATCH_PULSING)) and _cap_latch_pulse_ready(state)
+    return _cap_latched(state) or pulsing
+
+
+def _expansion_takes_charge(state: Mapping[str, Value]) -> bool:
+    """Return whether the expansion may take a charge: below its cap, on, no hold."""
+    return (
+        _expansion_soc(state) < _cap(state)
         and _expansion_on(state)
         and not state.get(PATH_HOLD)
     )
 
 
-def _expansion_may_discharge(state: Mapping[str, Value]) -> bool:
-    """Return the stand-in for the expansion's discharge allowance being non-zero.
+def _charge_handover_due(state: Mapping[str, Value]) -> bool:
+    """Return whether main -> ``0x12`` holds: the main on the bus, the cap latch set.
 
-    Zero under ``min_soc`` + 0.9 % (unconfirmed: the allowance or the path hold).
+    ``pack0_alarm5_or_a1c``: the main not discharging and its 0xc set (its
+    charge-full flag isn't modeled); the expansion able to take the charge.
     """
-    return _expansion_soc(state) >= _expansion_floor_line(state)
+    return (
+        _bus_pack(state) == BUS_MAIN
+        and _cap_latch_seen(state)
+        and _pack_flow(state, BUS_MAIN) != FLOW_OUT
+        and int(state.get(HIGH_SOC_STATUS, 0)) == HIGH_SOC_SET
+        and _expansion_takes_charge(state)
+    )
+
+
+def _charge_ineligible_due(state: Mapping[str, Value]) -> bool:
+    """Return whether the main's charge-ineligible row holds (main -> ``0x12``).
+
+    The cap latch set, the main's charge allowance 0, the expansion able to
+    take the charge; it fires after 300 steps of its counter.
+    """
+    return (
+        _bus_pack(state) == BUS_MAIN
+        and _cap_latched(state)
+        and not _main_may_charge(state)
+        and _expansion_takes_charge(state)
+    )
+
+
+def _charge_back_due(state: Mapping[str, Value]) -> bool:
+    """Return whether expansion -> ``0x11`` holds: the cap latch set, the main able."""
+    return (
+        _bus_pack(state) == BUS_EXPANSION
+        and _cap_latch_seen(state)
+        and _main_may_charge(state)
+    )
+
+
+def _expansion_low_soc_status(state: Mapping[str, Value]) -> int:
+    """Return the BP2000's 0xd: set under ``min_soc`` + 0.9 %, clear above it.
+
+    At the line itself it holds.
+    """
+    soc, line = _expansion_soc(state), _expansion_floor_line(state)
+    if soc < line:
+        return LOW_SOC_SET
+    if soc > line:
+        return 0
+    return int(state.get(EXPANSION_LOW_SOC, 0))
+
+
+def _expansion_may_discharge(state: Mapping[str, Value]) -> bool:
+    """Return whether the BP2000's discharge allowance (+0xe2) is non-zero.
+
+    Its own ``pack_current_limits_gate`` zeroes it while its 0xd is set.
+    """
+    return int(state.get(EXPANSION_LOW_SOC, 0)) != LOW_SOC_SET
 
 
 def _expansion_takes_discharge(state: Mapping[str, Value]) -> bool:
-    """Return whether :164's expansion gates pass: allowance, switch, path hold."""
+    """Return whether main -> ``0x22``'s expansion gates pass.
+
+    Its discharge allowance, its switch, and its path hold clear.
+    """
     return (
         _expansion_may_discharge(state)
         and _expansion_on(state)
@@ -2293,11 +2567,53 @@ def _expansion_takes_discharge(state: Mapping[str, Value]) -> bool:
     )
 
 
-def _main_due(state: Mapping[str, Value]) -> bool:
-    """Return whether :170 holds: the cap latch clear, the expansion under its line."""
-    return not _cap_latched(state) and _expansion_soc(state) < _expansion_floor_line(
-        state
+def _floor_row_due(state: Mapping[str, Value]) -> bool:
+    """Return whether expansion -> ``0x21`` holds.
+
+    The cap latch clear, the expansion under its line, the main able to charge.
+    """
+    return (
+        not _cap_latched(state)
+        and _expansion_soc(state) < _expansion_floor_line(state)
+        and _main_may_charge(state)
     )
+
+
+def _expansion_ineligible(state: Mapping[str, Value]) -> bool:
+    """Return whether the ineligible row's discharge branch holds.
+
+    The expansion not charging and its discharge allowance at 0, the cap latch
+    clear; the main's allowance, 600 unless a fault zeroes it, is non-zero.
+    """
+    return (
+        _pack_flow(state, BUS_EXPANSION) != FLOW_CHARGE
+        and not _expansion_may_discharge(state)
+        and not _cap_latched(state)
+    )
+
+
+def _expansion_handbacks(
+    before: Mapping[str, Value], after: Mapping[str, Value]
+) -> list[Timed]:
+    """Return the moves to the main a change draws on the expansion's bus.
+
+    The floor row fires at once, its dwell passed since boot; the ineligible
+    row after 300 steps of its counter, whose counting clears the discharge
+    latch; expansion -> ``0x11`` more than 200 steps after the switch.
+    """
+    taken = _bus_pack(before) != BUS_EXPANSION
+    events = []
+    if _charge_back_due(after) and (taken or not _charge_back_due(before)):
+        gap = max(0.0, SWITCH_GAP - _held_for(after, SWITCH_GAP))
+        events.append(Timed(gap, CHARGE_BACK_EVENT, _charge_back_to_main))
+    if _floor_row_due(after) and (taken or not _floor_row_due(before)):
+        events.append(Timed(0.0, PACK_HANDOVER, _floor_to_main))
+    if _expansion_ineligible(after) and (taken or not _expansion_ineligible(before)):
+        if after.get(LATCH_SET):
+            cleared = partial(_cap_latch_marks, {LATCH_SET: 0})
+            events.append(Timed(0.0, INELIGIBLE_CLEAR, cleared))
+        events.append(Timed(INELIGIBLE_COUNT, INELIGIBLE_EVENT, _ineligible_to_main))
+    return events
 
 
 def _handovers(
@@ -2309,11 +2625,7 @@ def _handovers(
     events = _cap_latch_events(before, after, own)
     if _bus_pack(after) == BUS_MAIN:
         return events + _main_handovers(before, after, own)
-    taken = _bus_pack(before) != BUS_EXPANSION
-    if _main_due(after) and (taken or not _main_due(before)):
-        dwell = max(0.0, BUS_DWELL - _held_for(after, BUS_DWELL))
-        events.append(Timed(dwell, PACK_HANDOVER, _bus_to_main))
-    return events
+    return events + _expansion_handbacks(before, after)
 
 
 def _cap_latch_events(
@@ -2321,84 +2633,150 @@ def _cap_latch_events(
 ) -> list[Timed]:
     """Return the charge-cap latch's clearing, or the count, a change draws.
 
-    Each latch setting clears the other, so a clearing re-takes the baseline;
-    ``flag_00c7`` back resets the run-out clear count.
+    A clearing re-takes the discharge latch's baseline; ``flag_00c7`` back
+    resets the clear count, and only that resets it.
     """
     marks: dict[str, Value] = {}
-    if after.get(CAP_LATCH_SPENT) and _charge_source(after):
-        marks[CAP_LATCH_SPENT] = 0
+    counted = after.get(CAP_LATCH_SPENT) or after.get(CAP_CLEAR_COUNT)
+    if _charge_source(after) and (counted or CAP_CLEAR_SINCE in after):
+        marks |= {CAP_LATCH_SPENT: 0, CAP_CLEAR_COUNT: 0}
     latched = bool(after.get(CAP_LATCH))
     if latched and _cap_latch_clears(after):
         marks |= {CAP_LATCH: 0, LATCH_FROM: _main_soc(after)}
     events = []
+    ready = _cap_latch_pulse_ready(after)
+    if ready and not _cap_latch_pulse_ready(before):
+        pulse = partial(_cap_latch_pulse_starts, own)
+        events.append(Timed(_switch_hold_left(after), CAP_LATCH_PULSE_EVENT, pulse))
+    elif not ready and after.get(CAP_LATCH_PULSING):
+        marks |= {CAP_LATCH_PULSING: 0, LATCH_FROM: _main_soc(after)}
     if marks:
-        events.append(Timed(0.0, CAP_LATCH_REFERENCE, partial(_latch_marks, marks)))
+        marked = partial(_cap_latch_marks, marks)
+        events.append(Timed(0.0, CAP_LATCH_REFERENCE, marked))
     if latched:
         if _cap_latch_holds_over(after) and not _cap_latch_holds_over(before):
-            events.append(CAP_LATCH_EXPIRY)
+            events.append(Timed(0.0, CAP_CLEAR_START, _clear_count_starts))
     elif _cap_latch_counts(after) and not _cap_latch_counts(before):
-        delay = 0.0 if after.get(CAP_LATCH_PRIMED) else CHARGE_CAP_LATCH
-        latch = partial(_cap_latch_set, own)
-        events.append(Timed(delay, CAP_LATCH_EVENT, latch))
+        events.append(Timed(0.0, CAP_COUNT_START, partial(_cap_count_starts, own)))
+    elif _cap_latch_counts(before) and not _cap_latch_counts(after):
+        events.append(Timed(0.0, CAP_COUNT_START, _cap_count_pauses))
     return events
+
+
+def _cap_latch_pulse_starts(
+    own: frozenset[str], _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Start +9's one-step re-sets: each clears the discharge latch and its baseline.
+
+    The counter-free rows the latch gates then run (main -> ``0x12``,
+    expansion -> ``0x11``).
+    """
+    if not _cap_latch_pulse_ready(state):
+        return Step()
+    changes = {CAP_LATCH_PULSING: 1, LATCH_SET: 0, LATCH_FROM: _main_soc(state)}
+    after = {**state, **changes}
+    return Step(values=changes, then=tuple(_handovers(state, after, own)))
+
+
+def _cap_count_starts(
+    own: frozenset[str], _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Start a qualifying stretch of the 1 s charging count; the latch sets at its end.
+
+    The stretch starts once ``0x20000b3a``'s 300 steps after a pack switch pass.
+    """
+    hold = _switch_hold_left(state)
+    since = {CAP_COUNT_SINCE: float(state[CLOCK]) + hold}
+    latch = Timed(
+        hold + _cap_count_left(state), CAP_LATCH_EVENT, partial(_cap_latch_set, own)
+    )
+    return Step(values=since, then=(latch,))
+
+
+def _cap_count_pauses(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Keep what the 1 s charging count's stretch added; the count is never reset."""
+    return Step(values={CAP_COUNT: _cap_count_held(state)}, unset=(CAP_COUNT_SINCE,))
 
 
 def _main_handovers(
     before: Mapping[str, Value], after: Mapping[str, Value], own: frozenset[str]
 ) -> list[Timed]:
-    """Return the switch to the expansion, or the latch's new start, the main draws."""
+    """Return the switch to the expansion, or the latches' new state, the main draws.
+
+    Main -> ``0x11`` and each counting step of the charge-ineligible row clear
+    the discharge latch, unless main -> ``0x22`` takes the bus on it at once.
+    """
     stored = after.get(LATCH_FROM)
     base = _main_soc(before) if stored is None else int(stored)
     latched = bool(after.get(LATCH_SET))
-    if not latched and _pack_flow(after, BUS_MAIN) == FLOW_CHARGE:
+    if not latched and _packs_charging(after):
         base = _main_soc(after)
     elif not latched and _latch_arms(after, base):
         latched, base = True, _main_soc(after)
+    gap = max(0.0, SWITCH_GAP - _held_for(after, SWITCH_GAP))
+    handing = latched and _expansion_takes_discharge(after)
+    clearing = _main_charge_row(after) or _charge_ineligible_due(after)
+    if latched and clearing and not (handing and not gap):
+        latched = handing = False
     marks: dict[str, Value] = {}
     if stored is None or base != int(stored):
         marks[LATCH_FROM] = base
-    if latched and not after.get(LATCH_SET):
-        marks |= {LATCH_SET: 1, CAP_LATCH: 0}
+    if latched != bool(after.get(LATCH_SET)):
+        marks[LATCH_SET] = int(latched)
     events = []
     if marks:
-        events.append(Timed(0.0, LATCH_REFERENCE, partial(_latch_marks, marks)))
-    if latched and _expansion_takes_discharge(after) and not _latch_hands_over(before):
-        gap = max(0.0, SWITCH_GAP - _held_for(after, SWITCH_GAP))
+        events.append(Timed(0.0, LATCH_REFERENCE, partial(_cap_latch_marks, marks)))
+    if handing and not _latch_hands_over(before):
         events.append(Timed(gap, PACK_HANDOVER, _discharge_to_expansion))
-    elif (
-        not latched and _charge_handover_due(after) and not _charge_handover_due(before)
-    ):
+    elif _charge_handover_due(after) and not _charge_handover_due(before):
         charge = partial(_charge_to_expansion, own)
         events.append(Timed(0.0, PACK_HANDOVER, charge))
+    elif _charge_ineligible_due(after) and not _charge_ineligible_due(before):
+        moved = partial(_charge_ineligible_to_expansion, own)
+        events.append(Timed(INELIGIBLE_COUNT, MAIN_INELIGIBLE_EVENT, moved))
     return events
+
+
+def _main_charge_row(state: Mapping[str, Value]) -> bool:
+    """Return whether main -> ``0x11`` holds: the cap latch seen, the main able.
+
+    The main on the bus below its cap; ``status_2bit_a(0,3)`` isn't modeled (0).
+    """
+    return (
+        _bus_pack(state) == BUS_MAIN
+        and _cap_latch_seen(state)
+        and _main_may_charge(state)
+        and _main_soc(state) < _cap(state)
+    )
 
 
 def _latch_arms(state: Mapping[str, Value], base: int) -> bool:
     """Return whether the main's >= 1.0 % drop from ``base`` arms the latch (path (a)).
 
-    The main must not be charging (current >= -0.1 A) and its own SoC must be
-    above ``min_soc`` + 0.9 %.
+    The packs must not be charging and the main's own SoC must be above
+    ``min_soc`` + 0.9 %.
     """
     soc = _main_soc(state)
     return (
-        _pack_flow(state, BUS_MAIN) != FLOW_CHARGE
+        not _packs_charging(state)
         and soc > _expansion_floor_line(state)
         and soc <= base - DISCHARGE_LATCH_DROP
     )
 
 
+def _packs_charging(state: Mapping[str, Value]) -> bool:
+    """Return whether the discharge latch reads the packs as charging.
+
+    Their summed current over +0.1 A, positive charging (the firmware's: below
+    -0.1 A, positive discharging; fsms "Latches" (a)).
+    """
+    summed = sum(int(state.get(current, 0)) for current in CURRENT_NAMES)
+    return summed > LATCH_CHARGE_CURRENT
+
+
 def _latch_hands_over(state: Mapping[str, Value]) -> bool:
-    """Return whether :164 holds: the latch set, the expansion able to discharge."""
+    """Return whether main -> ``0x22`` holds: the latch set, the expansion able."""
     return bool(state.get(LATCH_SET)) and _expansion_takes_discharge(state)
-
-
-def _latch_marks(
-    marks: Mapping[str, Value],
-    _values: Mapping[str, Value],
-    _state: Mapping[str, Value],
-) -> Step:
-    """Store a latch's new state, or the discharge latch's new baseline."""
-    return Step(values=dict(marks))
 
 
 def _cap_latch_set(
@@ -2413,20 +2791,61 @@ def _cap_latch_set(
         return Step()
     changes: dict[str, Value] = {
         CAP_LATCH: 1,
-        CAP_LATCH_PRIMED: 1,
+        CAP_COUNT: CHARGE_CAP_LATCH,
         LATCH_SET: 0,
         LATCH_FROM: _main_soc(state),
     }
     if _charge_handover_due({**state, **changes}):
         changes |= _without(_charge_handover(state), own)
-    expiry = (CAP_LATCH_EXPIRY,) if _cap_latch_holds_over(state) else ()
-    return Step(values=changes, then=expiry)
+    if not _cap_latch_holds_over(state):
+        return Step(values=changes)
+    changes[CAP_CLEAR_SINCE] = float(state[CLOCK])
+    return Step(values=changes, then=(_cap_latch_expiry(state),))
+
+
+def _clear_count(state: Mapping[str, Value]) -> float:
+    """Return the seconds the 15 s clear count holds, its running stretch included."""
+    counted = float(state.get(CAP_CLEAR_COUNT, 0))
+    since = state.get(CAP_CLEAR_SINCE)
+    return counted if since is None else counted + float(state[CLOCK]) - float(since)
+
+
+def _cap_latch_expiry(state: Mapping[str, Value]) -> Timed:
+    """Return the latch's clear, due once the count reaches 15 s."""
+    left = max(0.0, CAP_LATCH_HOLDOVER - float(state.get(CAP_CLEAR_COUNT, 0)))
+    return Timed(left, CAP_LATCH_HOLDOVER_EVENT, _cap_latch_expires)
+
+
+def _clear_count_starts(
+    _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Run the clear count on from what it holds: the latch set, ``flag_00c7`` gone."""
+    since = {CAP_CLEAR_SINCE: float(state[CLOCK])}
+    return Step(values=since, then=(_cap_latch_expiry(state),))
+
+
+def _cap_latch_marks(
+    marks: Mapping[str, Value],
+    _values: Mapping[str, Value],
+    state: Mapping[str, Value],
+) -> Step:
+    """Store the cap latch's new state; a clear or reset ends the count's stretch.
+
+    A clear keeps what it counted; ``flag_00c7`` back zeroes it.
+    """
+    values = dict(marks)
+    ends = marks.get(CAP_LATCH) == 0 or CAP_CLEAR_COUNT in marks
+    if CAP_CLEAR_SINCE not in state or not ends:
+        return Step(values=values)
+    if CAP_CLEAR_COUNT not in values:
+        values[CAP_CLEAR_COUNT] = _clear_count(state)
+    return Step(values=values, unset=(CAP_CLEAR_SINCE,))
 
 
 def _cap_latch_expires(
     _values: Mapping[str, Value], state: Mapping[str, Value]
 ) -> Step:
-    """Clear the charge-cap latch 1 500 steps after ``flag_00c7`` went, +9 at 2.
+    """Clear the charge-cap latch once the count passes 1 500 steps, +9 at 2.
 
     The clear count stays run out until ``flag_00c7`` is back, so +9 alone sets
     nothing meanwhile. An expansion on the bus under its line hands it back
@@ -2434,17 +2853,18 @@ def _cap_latch_expires(
     """
     if not (_cap_latched(state) and _cap_latch_holds_over(state)):
         return Step()
-    changes = {CAP_LATCH: 0, LATCH_FROM: _main_soc(state), CAP_LATCH_SPENT: 1}
+    changes = {
+        CAP_LATCH: 0,
+        LATCH_FROM: _main_soc(state),
+        CAP_LATCH_SPENT: 1,
+        CAP_CLEAR_COUNT: CAP_LATCH_HOLDOVER,
+    }
     after = {**state, **changes}
-    if _bus_pack(after) == BUS_EXPANSION and _main_due(after):
-        dwell = max(0.0, BUS_DWELL - _held_for(after, BUS_DWELL))
-        return Step(values=changes, then=(Timed(dwell, PACK_HANDOVER, _bus_to_main),))
-    return Step(values=changes)
-
-
-CAP_LATCH_EXPIRY = Timed(
-    CAP_LATCH_HOLDOVER, CAP_LATCH_HOLDOVER_EVENT, _cap_latch_expires
-)
+    unset = (CAP_CLEAR_SINCE,)
+    if _bus_pack(after) == BUS_EXPANSION:
+        handbacks = tuple(_expansion_handbacks(state, after))
+        return Step(values=changes, unset=unset, then=handbacks)
+    return Step(values=changes, unset=unset)
 
 
 def _charge_handover(state: Mapping[str, Value]) -> dict[str, Value]:
@@ -2464,10 +2884,32 @@ def _charge_to_expansion(
     return Step(values=_without(_charge_handover(state), own))
 
 
+def _charge_ineligible_to_expansion(
+    own: frozenset[str], _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Hand the charge to the expansion, the main's allowance 0 for 300 steps."""
+    if not _charge_ineligible_due(state):
+        return Step()
+    return Step(values=_without(_charge_handover(state), own))
+
+
+def _charge_back_to_main(
+    _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Move the charge and the bus back to the main: expansion -> ``0x11`` (21:00:04).
+
+    ``a5[1]`` shows the port flow (2) at once and ``a3[0]`` follows.
+    """
+    if not _charge_back_due(state):
+        return Step()
+    changes = {**_bus_to(BUS_MAIN, state, flowing=True), LATCH_SET: 0}
+    return _flow_step(changes, state)
+
+
 def _discharge_to_expansion(
     _values: Mapping[str, Value], state: Mapping[str, Value]
 ) -> Step:
-    """Hand discharge to the expansion, the discharge latch set.
+    """Hand discharge to the expansion, the discharge latch set; the cap latch clears.
 
     ``a3[0]`` and ``a5[1]`` read 0 at once and ``c0[24]`` the port flow.
     """
@@ -2477,13 +2919,26 @@ def _discharge_to_expansion(
     changes = {
         "work_status": FLOW_IDLE,
         **_bus_to(BUS_EXPANSION, state, flowing=output),
+        CAP_LATCH: 0,
     }
     return _flow_step(changes, state)
 
 
-def _bus_to_main(values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
-    """Hand discharge to the main, the expansion under its line (03:29:25)."""
-    if not _main_due(state):
+def _ineligible_to_main(
+    values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Hand discharge to the main, the expansion's allowance 0 for 300 steps."""
+    if _bus_pack(state) != BUS_EXPANSION or not _expansion_ineligible(state):
+        return Step()
+    return _switched_off(values, state)
+
+
+def _floor_to_main(values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Hand discharge to the main, the expansion under its line (03:29:25).
+
+    The row is read again when it runs: a live draw due then lands first.
+    """
+    if _bus_pack(state) != BUS_EXPANSION or not _floor_row_due(state):
         return Step()
     return _switched_off(values, state)
 
@@ -2516,6 +2971,91 @@ def _top_off_band(cap: int) -> tuple[int, int]:
     return cap * SOC_STEPS_PER_PERCENT + TOP_OFF_MARGIN, cap * SOC_STEPS_PER_PERCENT
 
 
+#: The main's high-SoC status 0xc (``soc_status_eval``, a1783-telemetry.md
+#: "Top-off hysteresis"): 3 once its 0.1 % SoC is above the set threshold, 0 once
+#: below the clear one, held between. Hidden; unset 0, as at boot.
+HIGH_SOC_STATUS = "high_soc_status"
+HIGH_SOC_SET = 3
+#: ``pack_current_limits_gate`` zeroes the allowed charge current (+0xe0) at a
+#: displayed SoC of 100.0 % or more: the last 0.1 % it allows.
+CHARGE_GATE_SOC = 999
+
+
+def _high_soc_status(state: Mapping[str, Value]) -> int:
+    """Return the main's 0xc for its SoC and cap, the stored one between thresholds."""
+    top, clear = _top_off_band(_cap_percent(state))
+    soc = _main_soc(state)
+    if soc > top:
+        return HIGH_SOC_SET
+    if soc < clear:
+        return 0
+    return int(state.get(HIGH_SOC_STATUS, 0))
+
+
+def _main_may_charge(state: Mapping[str, Value]) -> bool:
+    """Return whether the main's allowed charge current (+0xe0) is non-zero.
+
+    ``pack_current_limits_gate`` zeroes it while 0xc is set or at 100.0 %.
+    """
+    return (
+        int(state.get(HIGH_SOC_STATUS, 0)) != HIGH_SOC_SET
+        and _main_soc(state) <= CHARGE_GATE_SOC
+    )
+
+
+#: ``soc_status_eval`` (a1783-operation.md, its row's debounce cell): each node
+#: evaluates its own pack every 200 ms and sets or clears a status on the 3rd
+#: consecutive evaluation past its threshold; 0xc and 0xd move together. The
+#: first evaluation is taken at the crossing (the grid's phase isn't modeled),
+#: so a status settles 0.4 s on; the warm-up and the run gates aren't modeled.
+SOC_STATUS_PERIOD = 0.2
+SOC_STATUS_EVALS = 3
+SOC_STATUS_SETTLE = SOC_STATUS_PERIOD * (SOC_STATUS_EVALS - 1)
+SOC_STATUS_INPUTS = frozenset(
+    {PACK_SOC, "charging_limit_value", EXPANSION_PACK_SOC, "discharge_limit_value"}
+)
+
+
+def _soc_status_events(
+    before: Mapping[str, Value], after: Mapping[str, Value]
+) -> list[Timed]:
+    """Return the evaluations a change of SoC or limits starts, one per status.
+
+    A crossing back within the count restarts it, so nothing settles.
+    """
+    events = []
+    for name, target in SOC_STATUSES.items():
+        stored = int(after.get(name, 0))
+        if stored != target(after) or stored != target(before):
+            settles = partial(_soc_status_settles, name)
+            events.append(Timed(SOC_STATUS_SETTLE, name, settles))
+    return events
+
+
+def _soc_status_settles(
+    name: str, _values: Mapping[str, Value], state: Mapping[str, Value]
+) -> Step:
+    """Store a status on its 3rd evaluation past the threshold; selection re-runs.
+
+    The BP2000's 0xd also shows as bit 13 of its ``.15#1.8`` / ``.9``.
+    """
+    status = SOC_STATUSES[name](state)
+    if status == int(state.get(name, 0)):
+        return Step()
+    marks: dict[str, Value] = {name: status}
+    if name == EXPANSION_LOW_SOC:
+        for bits_name in EXPANSION_STATUS_BITS:
+            bits = int(state[bits_name])
+            marks[bits_name] = bits | LOW_SOC_BIT if status else bits & ~LOW_SOC_BIT
+    after = {**state, **marks}
+    return Step(values=marks, then=tuple(_handovers(state, after, frozenset())))
+
+
+SOC_STATUSES = MappingProxyType(
+    {HIGH_SOC_STATUS: _high_soc_status, EXPANSION_LOW_SOC: _expansion_low_soc_status}
+)
+
+
 def _top_offs(
     before: Mapping[str, Value], after: Mapping[str, Value], own: frozenset[str]
 ) -> list[Timed]:
@@ -2523,7 +3063,7 @@ def _top_offs(
 
     Only AC into the main on the bus: mains in, Battery-Only Power off.
     """
-    _, clear = _top_off_band(int(after["charging_limit_value"]))
+    _, clear = _top_off_band(_cap_percent(after))
     if not int(before[PACK_SOC]) >= clear > int(after[PACK_SOC]):
         return []
     if after["ac_input_status"] != AC_INPUT_MAINS or after[DISABLE] == BATTERY_ONLY_ON:
@@ -2543,15 +3083,19 @@ def _top_off(
 
 
 def _top_off_end(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
-    """End the burst at the set threshold: AC in 0 W, ``a5[1]`` the port flow.
+    """End the burst past the set threshold: AC in 0 W, ``a5[1]`` the port flow.
 
     The burst refills a dip just under the clear threshold; from deeper the
-    charge runs on to the set threshold, which no value models.
+    charge runs on to the set threshold, which no value models. It ends on the
+    first 0.1 % that closes the charge gate: past the set threshold, or 100.0 %.
     """
-    top, clear = _top_off_band(int(state["charging_limit_value"]))
+    top, clear = _top_off_band(_cap_percent(state))
     if int(state[PACK_SOC]) < clear - 1:
         return Step()
-    return _flow_step({"ac_input_power": 0, PACK_SOC: top}, state)
+    end = min(top + 1, SOC_FULL)
+    status = _high_soc_status({**state, PACK_SOC: end})
+    changes = {"ac_input_power": 0, PACK_SOC: end, HIGH_SOC_STATUS: status}
+    return _flow_step(changes, state)
 
 
 #: The OTA precheck (``ota_precheck_update``, a1783-control.md ``4089``): 0 2
@@ -2866,9 +3410,10 @@ SCREEN_OFF_TIME = "screen_off_time"
 SCREEN_WAKE = "screen_wake"
 #: What wakes the screen (a1783-control.md "Screen wake"): a ``4103 a3``
 #: (brightness, 0 turns it off instead) or ``a9`` (language) write, a toggle of
-#: the ``4102 a2`` car socket or the ``4101 a2`` AC output, and DC-input presence
-#: (``a8[0]`` 0 -> 1). A ``4103 a4`` write re-arms the timeout only while on.
-#: Every toggle wakes: the kind's state-table screen row isn't modelled.
+#: the ``4102 a2`` car socket or the ``4101 a2`` AC output turned on (the
+#: state table's on rows; its off rows, 0xa, only re-arm a lit screen), and
+#: DC-input presence (``a8[0]`` 0 -> 1). A ``4103 a4`` write re-arms the
+#: timeout only while on. The refused turn-on's wake (fault rows) isn't modeled.
 BRIGHTNESS = "lcd_backlight_brightness"
 SCREEN_WRITES = frozenset({BRIGHTNESS, "device_language"})
 SCREEN_TOGGLES = frozenset({CAR_SOCKET, AC_OUTPUT_SWITCH})
@@ -2887,10 +3432,12 @@ def _screen_wakes(
     written = own | given if after.get(COMMAND) in SCREEN_WRITERS else frozenset()
     if BRIGHTNESS in written and not after[BRIGHTNESS]:
         return [Timed(0.0, "screen_off", _screen_off)]
-    rearm = SCREEN_OFF_TIME in written and after[SCREEN]
+    toggled = own & SCREEN_TOGGLES
+    switched_on = any(after[name] for name in toggled)
+    rearm = (SCREEN_OFF_TIME in written or toggled) and after[SCREEN]
     present = not before[DC_PRESENT] and after[DC_PRESENT]
     turned_on = SCREEN in own and after[SCREEN]
-    if written & SCREEN_WRITES or own & SCREEN_TOGGLES or rearm or present or turned_on:
+    if written & SCREEN_WRITES or switched_on or rearm or present or turned_on:
         return [Timed(0.0, SCREEN_WAKE, partial(_screen_wake, own))]
     return []
 
@@ -3274,7 +3821,6 @@ def _backup_window(
     pushes: tuple[int, ...] = ()
     if running == WINDOW_NONE and target:
         changes |= _window_event(WINDOW_EVENTS[target][0], start, end)
-        changes |= _charge_to_main(state)
         pushes = (MSGTYPE_425,)
     elif running and target == WINDOW_NONE:
         changes |= _window_event(WINDOW_EVENTS[running][1], 0, 0)
@@ -3284,12 +3830,12 @@ def _backup_window(
     edges = [
         t for t in (*manual, *(t for e in _auto_plans(state) for t in e)) if t > now
     ]
-    then: tuple[Timed, ...] = ()
+    then: tuple[Timed, ...] = tuple(_soc_status_events(state, {**state, **changes}))
     if edges and min(edges) < NEVER:
         # The epoch is whole seconds: within one of the edge, pass every 100 ms.
         delay = max(min(edges) - now - 1, 0) or BACKUP_PASS
         later = partial(_backup_window, reports)
-        then = (Timed(delay, BACKUP_WINDOW_EVENT, later),)
+        then = (*then, Timed(delay, BACKUP_WINDOW_EVENT, later))
     step = _flow_step(changes, state, then)
     return Step(values=step.values, pushes=pushes if reports else (), then=step.then)
 
@@ -3301,18 +3847,6 @@ def _window_event(code: int, start: int, end: int) -> dict[str, Value]:
         "event_start_timestamp": start,
         "event_end_timestamp": end,
     }
-
-
-def _charge_to_main(state: Mapping[str, Value]) -> dict[str, Value]:
-    """Move an expansion's charge and the bus to a main pack below 100 % (21:00:04).
-
-    ``a5[1]`` shows the port flow (2) at once and ``a3[0]`` follows.
-    """
-    if state.get("sub_package_status") != FLOW_CHARGE:
-        return {}
-    if int(state["battery_level"]) >= SOC_FULL // SOC_STEPS_PER_PERCENT:
-        return {}
-    return _bus_to(BUS_MAIN, state, flowing=True)
 
 
 #: ``4091`` tag -> (the ``da`` leaf it writes, its width): a1783-control.md
@@ -3422,7 +3956,7 @@ def _switch_events(
 
 
 #: ``4051``'s restored settings (a1783-control.md "``4051`` factory defaults"):
-#: the default block (v1.2.1.1 0x08035324) at each ``a4``/``d9`` field it
+#: the default block at each ``a4``/``d9`` field it
 #: feeds, and Ultrafast off. The region-recomputed recharge power, frequency,
 #: temperature unit and language keep the unit's own values.
 FACTORY_SETTINGS: dict[str, Value] = {
@@ -3807,7 +4341,8 @@ class CGen2Layout(TableLayout):
         {
             0x05E: _backup_plan,
             0x090: _tou_periods,
-            0x101: ac_output_switched,
+            0x101: _ac_group_effects,
+            0x103: partial(_offgrid_tags_kept, 0x103),
             0x104: _expansion_switch,
         }
     )
@@ -3872,7 +4407,8 @@ class CGen2Layout(TableLayout):
         if "pv1_input_power" in names:
             names |= {DC_INPUT_SOURCE, CAR_CABLE_CURRENT}
         if "ac_input_power" in names:
-            names |= {CHARGE_SOURCE_2, FULL_CHARGE_BAND, ALERT_PHASE}
+            names |= {CHARGE_SOURCE_2, FULL_CHARGE_BAND, ALERT_PHASE, INVERTER_PHASE}
+            names.add(READY_REPORT)
             names |= {LOSS_REPORT, RETURN_REPORT}
         if msgtype == MSGTYPE_425:
             names.add(EVENT_SOC)
@@ -4018,13 +4554,15 @@ class CGen2Layout(TableLayout):
             events += _mains_edge(own, after, back=back, reports=self.EVENT_REPORTS)
         if DISABLE in own and mains != AC_INPUT_NONE:
             events += _battery_only_switched(before, after, own)
+        elif DISABLE in own and after[DISABLE] == BATTERY_ONLY_ON:
+            events += _battery_only_auto_off(after)
         events += _request_changed(before, own)
         if CAR_SOCKET in own:
             events += _socket_edge(after, own)
         events += _timers_started(own, after)
         events += _soc_floors_crossed(before, after)
         events += _screen_wakes(before, after, own, given)
-        events += _car_voltage_events(after, own, given)
+        events += _car_voltage_events(own, given)
         moved = _statuses(before) != _statuses(after)
         if moved or given & STATUS_NAMES:
             held = partial(_statuses_held, given & STATUS_NAMES, moved=moved)
@@ -4036,6 +4574,8 @@ class CGen2Layout(TableLayout):
         if PACK_SOC in own:
             events += _top_offs(before, after, own)
             events += _floor_exits(before, after)
+        if own & SOC_STATUS_INPUTS:
+            events += _soc_status_events(before, after)
         events += _ota_prechecks(before, after, own)
         events += _backup_passes(own, self.EVENT_REPORTS)
         events += _tou_bit_sends(own)

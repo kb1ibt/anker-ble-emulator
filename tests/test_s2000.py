@@ -237,7 +237,6 @@ def test_as220_named_values_reach_both_telemetry_frames() -> None:
         ac_input_power=1129,
         ac_output_power=7,
         pd1_output_power=12,
-        timestamp=0x01020304,
         charge_discharge_status=2,
         ac_input_status=0,
         charging_limit_value=90,
@@ -262,12 +261,49 @@ def test_as220_named_values_reach_both_telemetry_frames() -> None:
         assert decode_field(fields, "a4", Settings).charging_limit_value == 90
         assert decode_field(fields, "d9", Tou).charging_limit_value == 90
         assert (usb.output_status, usb.output_power) == (0, 12)
-        assert fields["fe"]["type"] == 0x03
-        assert decode_field(fields, "fe", ui(4)) == 0x01020304
         # The reserved bytes keep the recording's values.
         assert power["_reserved"] == decode_field(recorded, "a6", Power)["_reserved"]
         assert ac["_reserved"] == decode_field(recorded, "a7", AcOutput)["_reserved"]
     assert [frame.cmd.msgtype for frame in frames] == [0x900, 0x421]
+
+
+def test_as220_replays_its_frames_on_its_own_clock() -> None:
+    """``0900`` and ``0421`` carry the unit's clock, ticking with it.
+
+    s2000-as220.md "Telemetry": the ``c421`` is the A1783 ``0421`` layout, its
+    ``fe`` the A1783's ``msg_timestamp`` (#322's are masked, not the device's).
+    """
+    clock = ManualClock()
+    device = AS220(clock=clock)
+    client = prime_client(device, TOKEN)
+    module = device.negotiated_module
+
+    status = command(device, client, 0x100, SUBSCRIBE)
+    first = module.epoch
+    clock.advance(9)
+    again = command(device, client, 0x100, SUBSCRIBE)
+
+    stamps = [
+        (cmd, decode_field(Parameters.parse(bytes.fromhex(body)), "fe", ui(4)))
+        for cmd, body in [*status, *again]
+    ]
+    assert first != 0
+    assert stamps == [
+        ("4900", first),
+        ("4421", first),
+        ("4900", first + 9),
+        ("4421", first + 9),
+    ]
+
+
+@pytest.mark.parametrize("limit", [50, 1300])
+def test_as220_takes_an_ac_limit_with_no_documented_range(limit: int) -> None:
+    """PiField gives the AC charge limit no accepted range, so none is refused."""
+    device = AS220()
+
+    device.set_values(ac_recharge_power=limit)
+
+    assert device.negotiated_module.values["ac_recharge_power"] == limit
 
 
 @pytest.mark.parametrize("values", AT_RATING)
@@ -323,7 +359,11 @@ def test_as220_holds_the_charge_to_1600_w_whatever_the_flag_and_limit() -> None:
 
 
 def test_as220_a_lone_input_total_takes_ac_first_then_solar() -> None:
-    """AC in takes the charge the 1200 W limit requests (+10 W) plus the 55 W out."""
+    """AC in takes the charge the 1200 W limit requests plus the 55 W out.
+
+    The charge settles at the limit, not over it (s2000-as220.md "Charge past
+    the limit after a switch": 600 W in at a 600 W limit, AC out 0, 12:24:27).
+    """
     device = AS220()
     module = device.negotiated_module
 
@@ -334,8 +374,8 @@ def test_as220_a_lone_input_total_takes_ac_first_then_solar() -> None:
     )
     device.set_values(total_input_power=1500)
     assert (module.values["ac_input_power"], module.values["pv1_input_power"]) == (
-        1210 + 55,
-        235,
+        1200 + 55,
+        245,
     )
 
 
@@ -410,7 +450,11 @@ def test_as220_each_setter_param_shows_in_the_0421_after_its_ack(
 
 
 def test_as220_4103_a2_shows_in_the_0421_after_its_reply_s() -> None:
-    """The reply's ``0421`` still shows the old switch; its own ``0421`` follows."""
+    """The reply's ``0421`` still shows the old switch; the next ``0421`` the new.
+
+    s2000-as220.md "Setters": "``4103 a2``'s in the second" ``0421``, the next
+    of the unit's stream. The emulator streams none, so it sends that one.
+    """
     clock = ManualClock()
     device = AS220(clock=clock)
     client = prime_client(device, TOKEN)
@@ -482,7 +526,8 @@ def test_as220_ultrafast_shows_in_f0_3_a_frame_late() -> None:
     """``f0[3]`` is 3 with UltraFast on (``a4[20]`` 1), a ``0421`` behind it.
 
     #322 12:24:17 and 12:24:21: the ``4101 a7`` reply's ``0421`` shows the new
-    flag with the old ``f0[3]``; a second ``0421`` that second shows it.
+    flag with the old ``f0[3]``; the stream's next ``0421`` shows it. The
+    emulator streams none, so it sends that one.
     """
     clock = ManualClock()
     device = AS220(clock=clock)
@@ -562,7 +607,7 @@ def test_as220_refuses_ac_out_with_the_ac_output_off() -> None:
 
 
 def test_as220_a4_carries_the_smart_ac_output_timeout_beside_the_country_code() -> None:
-    """``a4[26:28]`` is the app's ``countryCode``; ``a4[28:30]`` the timeout (min)."""
+    """``a4[26:28]`` reads "US" as recorded; ``a4[28:30]`` is the timeout (min)."""
     recorded = Parameters.parse(bytes.fromhex(data_resource("as220.json")["421"]))
     settings = decode_field(recorded, "a4", AS220Settings)
     short = AS220Settings.parse(bytes(26))

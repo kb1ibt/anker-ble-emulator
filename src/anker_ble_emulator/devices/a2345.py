@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
 from types import MappingProxyType
@@ -96,6 +96,7 @@ from .prime import (
     drop_queued,
     every,
     grid_delay,
+    hidden_set,
     latch_name,
     mqtt_routed,
     next_minute,
@@ -104,6 +105,7 @@ from .prime import (
     once_date_name,
     reaches_ble,
     report_delay,
+    restarted,
     rtc_date,
     schedule_slot,
     slot_disabled_push,
@@ -294,8 +296,6 @@ PORT_BY_SELECT = {0: "pd1", 1: "pd2", 2: "pd3", 3: "pd4", 4: "usb"}
 PORT_SELECT = OptionsValidator(ui(1), *PORT_BY_SELECT)
 #: The switch watcher: each port's ``0302`` a debounce after its own last change.
 SWITCH_WATCH = SwitchWatch(tuple(PORT_BY_SELECT.items()))
-#: The ports whose countdown disarm (or expiry) zeroes the remaining time: all.
-DISARM_CLEARS = frozenset(PORT_BY_SELECT.values())
 CHARGING_MODE = OptionsValidator(ui(1), 0, 1, 2, 3, 4, 5)
 #: Mode 5's profile (doc ``4206``): ``a3`` 7 B (``b8``), ``a4`` 12 B port records.
 PROFILE_SIZES = {"a3": 7, "a4": 12}
@@ -335,7 +335,7 @@ MIN_URL = 16
 PREPARE_TAGS = ("a2", "a3", "a4", "a5", "a6", "a7", "a8")
 #: ``4311 a3``: the image stored and shown, or wanted from the app (WiFi down);
 #: with WiFi up the device fetches it itself (2, then 3 at its first chunk);
-#: 0 answers a ``4205`` while a fetch is busy (doc "``4311`` image state").
+#: 0 answers a ``4205`` while a fetch is busy (doc "``4311`` theme image state").
 IMAGE_BUSY = 0
 IMAGE_SHOWN = 1
 IMAGE_FETCHING = 2
@@ -346,10 +346,12 @@ IMAGE_WANTED = 4
 FETCH_STARTED = 0.38
 FETCH_FIRST_CHUNK = 1.73
 FETCH_DONE = 8.6
-#: The theme being fetched, carried in no frame: its kind, id and CRC.
+#: The theme being fetched, carried in no frame: its kind, id and CRC, and the
+#: module's ack of it, which sets the busy flag.
 FETCH_THEME = "_fetch_theme"
 FETCH_ID = "_fetch_id"
 FETCH_CRC = "_fetch_crc"
+FETCH_ACKED = "_fetch_acked"
 #: The upload's state, carried in no frame: the theme a ``4205`` staged, the
 #: ``4220`` it opened, the next index and running CRC32, and the answer the last
 #: ``4221`` drew (a ``4a21`` status, or none).
@@ -493,6 +495,10 @@ def _stored(theme_id: int) -> str:
     return f"_theme_crc_{theme_id}"
 
 
+#: An erased slot's CRC: no ``4205`` matches it, since a zero CRC is dropped.
+ERASED_CRC = 0
+
+
 def _slot(theme_id: int, part: str) -> str:
     """Return the hidden name of ``theme_id``'s slot ``part``: size, kind, image."""
     return f"_theme_{part}_{theme_id}"
@@ -514,17 +520,31 @@ def _theme_staging(
     """Show a stored network or custom theme; fetch or stage any other.
 
     With WiFi up the device fetches the image itself; with it down the app
-    uploads it. Nothing changes while a fetch is busy.
+    uploads it. While a fetch is busy only a stored slot for the id with
+    another CRC changes: it is erased.
     """
     taken = _theme_request(request)
-    if taken is None or state.get(FETCH_ID):
+    if taken is None:
         return {}
     theme, theme_id, crc = taken
+    if _fetch_busy(state):
+        if state.get(_stored(theme_id)) not in {None, crc}:
+            return {_stored(theme_id): ERASED_CRC}
+        return {}
     if state.get(_stored(theme_id)) == crc:
         return _shown(theme, theme_id) | _draw_asked(state)
     if state.get(WIFI_UP):
         return {FETCH_THEME: theme, FETCH_ID: theme_id, FETCH_CRC: crc}
     return {STAGED_THEME_ID: theme_id}
+
+
+def _fetch_busy(state: Mapping[str, Value]) -> bool:
+    """Whether a theme or holiday self-fetch holds the busy flag (``0x2000113c``).
+
+    It sets at the module's op ``0x3d`` ack, ``0311`` 2's time; before it a new
+    request re-stages the fetch (doc "Theme upload", the Busy bullet).
+    """
+    return bool(state.get(FETCH_ACKED)) or bool(state.get(HOLIDAY_ACKED))
 
 
 def _theme_state(theme_id: int, image_state: int, theme: int) -> ParameterDict:
@@ -552,7 +572,7 @@ def _theme_selected(
     if taken is None:
         return None
     theme, theme_id, crc = taken
-    if before.get(FETCH_ID):
+    if _fetch_busy(before):
         return _theme_state(theme_id, IMAGE_BUSY, theme)
     if after.get(_stored(theme_id)) == crc:
         return _theme_state(theme_id, IMAGE_SHOWN, theme)
@@ -580,9 +600,13 @@ def _fetch_started(
     values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
     state: Mapping[str, Value],
 ) -> Step:
-    """``0311`` 2: the device fetches the URL itself."""
+    """``0311`` 2, the module's ack: the device fetches the URL itself, now busy."""
     then = Timed(FETCH_FIRST_CHUNK - FETCH_STARTED, "theme_fetch", _fetch_chunked)
-    return Step(frames=(_fetch_report(state, IMAGE_FETCHING),), then=(then,))
+    return Step(
+        values={FETCH_ACKED: 1},
+        frames=(_fetch_report(state, IMAGE_FETCHING),),
+        then=(then,),
+    )
 
 
 def _fetch_chunked(
@@ -600,13 +624,17 @@ def _fetched(
 ) -> Step:
     """``0311`` 1: the last chunk stored the image, and the theme shows.
 
-    The emulator fetches no bytes, so the image always passes its CRC.
+    As ``esp_op3e_theme_chunk`` ends: the target set, ``030b``'s source 1 (its
+    mark dropped by it) and the screensaver preview armed. The emulator
+    fetches no bytes, so the image always passes its CRC.
     """
     theme, theme_id = int(state[FETCH_THEME]), int(state[FETCH_ID])
+    shown = {_stored(theme_id): state[FETCH_CRC], _source_name(0x30B): SOURCE_APP}
     return Step(
-        values={_stored(theme_id): state[FETCH_CRC]} | _shown(theme, theme_id),
-        unset=(FETCH_THEME, FETCH_ID, FETCH_CRC),
+        values=shown | _shown(theme, theme_id),
+        unset=(FETCH_THEME, FETCH_ID, FETCH_CRC, FETCH_ACKED),
         frames=(_fetch_report(state, IMAGE_SHOWN),),
+        then=(*_report_marked(0x30B, state, None), *_preview(state)),
     )
 
 
@@ -733,6 +761,7 @@ def _upload_step(
         | slot
         | _shown(THEME_BY_KIND[kind], theme_id)
         | _draw_asked(state)
+        | _preview_asked(state)
         | _source_write(0x30B, request, state)
         | {UPLOAD_STATUS: UPLOAD_DONE, UPLOAD_ANSWER_INDEX: count}
     )
@@ -779,16 +808,26 @@ JPEG_COMPONENTS = 3
 JPEG_PRECISION = 8
 MAX_QUANT_ID = 2
 MAX_HUFFMAN_ID = 1
-QUANT_TABLE = 64
+QUANT_TABLE = 1 + 64
 HUFFMAN_COUNTS = 16
-SCAN_SPECTRAL = b"\x00\x3f\x00"
+SCAN_SPECTRAL = (0x00, 0x3F, 0x00)
+#: SOF0 and SOS are read at fixed offsets from their marker, never by their
+#: length; the walk resumes past SOF0 at +0x13 (doc "segment lengths" row).
+SOF0_PRECISION, SOF0_COMPONENTS, SOF0_LUMA, SOF0_SPAN = 4, 9, 0xB, 0x13
+SOS_COMPONENTS, SOS_SPECTRAL = 4, 0xB
 
 
-def _jpeg_decodes(data: bytes) -> bool:  # one return per rule
+def _jpeg_byte(data: bytes, at: int) -> int:
+    """Return the byte at ``at``; past the image, erased flash reads ``ff``."""
+    return data[at] if at < len(data) else ERASED
+
+
+def _jpeg_decodes(data: bytes) -> bool:
     """Whether the hardware decoder takes ``data``'s header (``jpeg_header_parse``).
 
     From byte 0: SOI; APPn, COM and DRI skipped by length; DQT, DHT, SOF0 and
     SOS checked; any other marker before SOS fails, fill bytes and RSTn too.
+    Bounds are checked only between markers.
     """
     if data[:2] != bytes((MARKER, SOI)):
         return False
@@ -797,55 +836,73 @@ def _jpeg_decodes(data: bytes) -> bool:  # one return per rule
         if data[pos] != MARKER:
             return False
         marker = data[pos + 1]
-        length = int.from_bytes(data[pos + 2 : pos + 4], "big")
-        if pos + 2 + length > len(data):
-            return False
-        body = data[pos + 4 : pos + 2 + length]
         if marker == SOS:
-            return _scan_decodes(body)
-        if marker not in SKIPPED_MARKERS and not _segment_decodes(marker, body):
+            return _scan_decodes(data, pos)
+        if marker == SOF0:
+            if not _frame_decodes(data, pos):
+                return False
+            pos += SOF0_SPAN
+            continue
+        length = int.from_bytes(data[pos + 2 : pos + 4], "big")
+        if marker not in SKIPPED_MARKERS and not _tables_decode(marker, data, pos):
             return False
         pos += 2 + length
     return False
 
 
-def _segment_decodes(marker: int, body: bytes) -> bool:
-    """Whether a DQT, DHT or SOF0 segment passes; any other marker fails."""
-    if marker == DQT:
-        return all(
-            body[at] >> 4 == 0 and body[at] & 0x0F <= MAX_QUANT_ID
-            for at in range(0, len(body), 1 + QUANT_TABLE)
-        )
-    if marker == DHT:
-        at = 0
-        while at < len(body):
-            if body[at] & 0x0F > MAX_HUFFMAN_ID:
+def _tables_decode(marker: int, data: bytes, pos: int) -> bool:
+    """Whether a DQT or DHT segment's tables pass; any other marker fails.
+
+    Its length is walked down table by table; one that isn't a whole number
+    of tables runs past the segment, reading tables until an id check fails.
+    """
+    if marker not in {DQT, DHT}:
+        return False
+    left = int.from_bytes(data[pos + 2 : pos + 4], "big") - 2
+    at = pos + 4
+    while left:
+        table = _jpeg_byte(data, at)
+        if marker == DQT:
+            if table >> 4 or table & 0x0F > MAX_QUANT_ID:
                 return False
-            at += 1 + HUFFMAN_COUNTS + sum(body[at + 1 : at + 1 + HUFFMAN_COUNTS])
-        return True
-    if marker == SOF0:
-        return (
-            body[0] == JPEG_PRECISION
-            and body[5] == JPEG_COMPONENTS
-            and body[7] in LUMA_SAMPLING
-        )
-    return False
+            span = QUANT_TABLE
+        else:
+            if table & 0x0F > MAX_HUFFMAN_ID:
+                return False
+            counts = (_jpeg_byte(data, at + 1 + i) for i in range(HUFFMAN_COUNTS))
+            span = 1 + HUFFMAN_COUNTS + sum(counts)
+        at += span
+        left -= span
+    return True
 
 
-def _scan_decodes(body: bytes) -> bool:
+def _frame_decodes(data: bytes, pos: int) -> bool:
+    """Whether SOF0 is 8-bit, 3 components and a luma sampling the decoder takes."""
+    return (
+        _jpeg_byte(data, pos + SOF0_PRECISION) == JPEG_PRECISION
+        and _jpeg_byte(data, pos + SOF0_COMPONENTS) == JPEG_COMPONENTS
+        and _jpeg_byte(data, pos + SOF0_LUMA) in LUMA_SAMPLING
+    )
+
+
+def _scan_decodes(data: bytes, pos: int) -> bool:
     """Whether SOS is one scan of 3 components with Ss/Se/Ah-Al ``00 3f 00``."""
-    count = body[0]
-    return count == JPEG_COMPONENTS and body[1 + 2 * count : 4 + 2 * count] == (
-        SCAN_SPECTRAL
+    spectral = tuple(_jpeg_byte(data, pos + SOS_SPECTRAL + i) for i in range(3))
+    return (
+        _jpeg_byte(data, pos + SOS_COMPONENTS) == JPEG_COMPONENTS
+        and spectral == SCAN_SPECTRAL
     )
 
 
 def _draw_events(
     before: Mapping[str, Value], after: Mapping[str, Value]
 ) -> tuple[Timed, ...]:
-    """Return the screen's draw, when a change asked for one."""
+    """Return the screen's draw on the next display tick, when a change asked for one.
+
+    ``display_mode_tick`` draws only in display state 1.
+    """
     if after.get(DRAWS) != before.get(DRAWS):
-        return (Timed(0, "screen_draw", _draw),)
+        return (Timed(DISPLAY_TICK, "screen_draw", _draw),)
     return ()
 
 
@@ -853,11 +910,19 @@ def _draw(
     values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
     state: Mapping[str, Value],
 ) -> Step:
-    """Draw the theme shown: a stored image that fails is erased, screen 1.
+    """Draw the theme shown in the screensaver; a stored image that fails is erased.
 
-    An image whose bytes the emulator doesn't hold (fetched, or recorded)
-    draws as shown.
+    Only in display state 1, and not while the holiday theme shows (screen 4).
+    A failure falls back to screen 1 with the clock switch on
+    (``screen_target_set(1, 1)``), writing no source byte, which marks
+    ``030b``. An image whose bytes the emulator doesn't hold (fetched, or
+    recorded) draws as shown.
     """
+    if (
+        _display(state) != DISPLAY_SCREENSAVER
+        or state.get(HOLIDAY_FLAG) == HOLIDAY_SHOWN
+    ):
+        return Step()
     theme_id = int(state["screen_saver_theme_id"])
     image = state.get(_slot(theme_id, "image"))
     if state["screen_saver_theme"] not in IMAGE_THEMES or not isinstance(image, bytes):
@@ -869,8 +934,46 @@ def _draw(
     if _drawn(kind, size, int(state[_stored(theme_id)]), image):
         return Step()
     return Step(
-        values={"screen_saver_theme": FALLBACK_THEME}, unset=_slot_names(theme_id)
+        values={"screen_saver_theme": FALLBACK_THEME, CLOCK_SWITCH: True},
+        unset=_slot_names(theme_id),
+        then=_report_marked(0x30B, state, None),
     )
+
+
+#: ``screensaver_preview_arm``'s requests, counted in no frame: each sets the
+#: ``b0`` blank count to its timeout less 3 ticks.
+PREVIEWS = "_screensaver_previews"
+PREVIEW_TICKS = 3
+
+
+def _preview_asked(state: Mapping[str, Value]) -> dict[str, Value]:
+    """Return the values that arm the screensaver preview."""
+    return {PREVIEWS: int(state.get(PREVIEWS, 0)) + 1}
+
+
+def _preview(state: Mapping[str, Value]) -> tuple[Timed, ...]:
+    """``screensaver_preview_arm``: black 3 ticks on, so the screensaver draws.
+
+    Only in display state 0 with the ``4213`` window inside and ``b0`` 1-4;
+    otherwise the theme waits for the next screensaver draw.
+    """
+    if _display(state) != DISPLAY_ON or state.get(WINDOW_PHASE) != WINDOW_INSIDE:
+        return ()
+    if int(state.get("screen_timeout", 0)) not in BLANK_AFTER:
+        return ()
+    return (Timed(PREVIEW_TICKS * DISPLAY_TICK, "display_blank", _display_blank),)
+
+
+def _preview_events(
+    before: Mapping[str, Value], after: Mapping[str, Value]
+) -> tuple[Timed, ...]:
+    """Return the preview a change armed, if it did."""
+    return _preview(after) if after.get(PREVIEWS) != before.get(PREVIEWS) else ()
+
+
+def _drawn_at_move(moved: Step) -> Step:
+    """Return a move to the screensaver with its draw after it (the 2 -> 1 move)."""
+    return replace(moved, then=(*moved.then, Timed(0, "screen_draw", _draw)))
 
 
 def _upload_answer(
@@ -940,11 +1043,41 @@ HolidayTime = Struct(
     *(name / Int8ul for name in ("year", "month", "day", "hour", "minute", "second")),
     Padding(1),
 )
-#: The fetch in flight, carried in no frame: its ``4212`` request, and a count
-#: that starts each one.
+#: The fetch in flight, carried in no frame: its ``4212`` request, a count
+#: that starts each one, and the module's ack, which sets the busy flag.
 HOLIDAY_FETCH = "_holiday_fetch"
 HOLIDAY_FETCHES = "_holiday_fetches"
+HOLIDAY_ACKED = "_holiday_fetch_acked"
 YEAR_BASE = 2000
+#: ``cmd212``: the fetch runs when the last of ``a2``-``a7`` found is longer
+#: than 15 bytes (doc "Theme upload", the ``4212`` fields bullet).
+HOLIDAY_TAGS = ("a2", "a3", "a4", "a5", "a6", "a7")
+MIN_HOLIDAY_URL = 16
+#: ``tick_0312_countdown_set``: the next ``0312`` 36 000 ticks on for ``a2 = 0``
+#: or no change, 600 on a URL fail; hidden, the reload and a count of them.
+COUNTRY_IDLE = 3600.0
+COUNTRY_RELOAD = "_country_0312_reload"
+COUNTRY_RELOADS = "_country_0312_reloads"
+
+
+def _country_reload(state: Mapping[str, Value], seconds: float) -> dict[str, Value]:
+    """Return a reload of the ``0312`` countdown to ``seconds``."""
+    return {
+        COUNTRY_RELOAD: seconds,
+        COUNTRY_RELOADS: int(state.get(COUNTRY_RELOADS, 0)) + 1,
+    }
+
+
+def _country_reloaded(
+    before: Mapping[str, Value], after: Mapping[str, Value]
+) -> tuple[Timed, ...]:
+    """Return the ``0312`` timer restarted by a reload, while WiFi runs it."""
+    if before.get(COUNTRY_RELOADS) == after.get(COUNTRY_RELOADS):
+        return ()
+    if not after.get(WIFI_UP):
+        return ()
+    delay = float(after[COUNTRY_RELOAD])
+    return (restarted(delay, COUNTRY_PERIOD, "country_0312", _country_utc),)
 
 
 def _holiday_schedule_taken(
@@ -962,14 +1095,23 @@ def _holiday_schedule(
 ) -> dict[str, Value]:
     """``4212``: ``a2 = 0`` erases the holiday slot; any other id fetches its image.
 
-    The image is fetched over WiFi at once; with WiFi down the request is
-    dropped, nothing stored. A request missing a field changes nothing.
+    The fetch runs when the last field found is longer than 15 bytes, the id
+    or country differ from the stored record's, WiFi is up and no fetch is
+    busy; before the module's ack a new id replaces it. ``a2 = 0`` and no
+    change reload the ``0312`` countdown to 1 h, a URL fail to 60 s.
     """
     if "a2" not in request:
         return {}
-    if not decode_field(request, "a2", ui(4)):
-        return dict(HOLIDAY_ERASED)
-    if any(tag not in request for tag in HOLIDAY_FIELDS) or not state.get(WIFI_UP):
+    theme_id = decode_field(request, "a2", ui(4))
+    if not theme_id:
+        return dict(HOLIDAY_ERASED) | _country_reload(state, COUNTRY_IDLE)
+    last = [tag for tag in HOLIDAY_TAGS if tag in request][-1]
+    if (_tlv_length(request, last) or 0) < MIN_HOLIDAY_URL:
+        return _country_reload(state, COUNTRY_PERIOD)
+    same = state.get(HOLIDAY_COUNTRY, b"") == state.get(STORED_COUNTRY, b"")
+    if theme_id == state.get(HOLIDAY_ID) and same:
+        return _country_reload(state, COUNTRY_IDLE)
+    if not state.get(WIFI_UP) or _fetch_busy(state):
         return {}
     return {
         HOLIDAY_FETCH: Parameters.build(request),
@@ -980,10 +1122,21 @@ def _holiday_schedule(
 def _holiday_fetch(
     before: Mapping[str, Value], after: Mapping[str, Value]
 ) -> tuple[Timed, ...]:
-    """Return the holiday image landing, if a ``4212`` started its fetch."""
-    if after.get(HOLIDAY_FETCHES) != before.get(HOLIDAY_FETCHES):
-        return (Timed(FETCH_DONE, "holiday_fetch", _holiday_landed),)
-    return ()
+    """Return the holiday fetch's ack (busy from it) and its image landing."""
+    if after.get(HOLIDAY_FETCHES) == before.get(HOLIDAY_FETCHES):
+        return ()
+    return (
+        Timed(FETCH_STARTED, "holiday_fetch_ack", _holiday_acked),
+        Timed(FETCH_DONE, "holiday_fetch", _holiday_landed),
+    )
+
+
+def _holiday_acked(
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Set busy at the module's ack of the holiday fetch (no ``0311``, kind 1)."""
+    return Step(values={HOLIDAY_ACKED: 1}) if HOLIDAY_FETCH in state else Step()
 
 
 def _holiday_landed(
@@ -994,14 +1147,18 @@ def _holiday_landed(
 
     No message marks the landing, so the recorded network self-fetch's 8.6 s
     stands in; the emulator fetches no bytes, so the CRC always matches. No
-    ``0311`` (kind 1 pushes none, doc "Theme upload").
+    ``0311`` (kind 1 pushes none, doc "Theme upload"). A field the request
+    left out is read from unknown bytes, so the record doesn't carry it.
     """
-    fetch = stored_bytes(state, HOLIDAY_FETCH)
-    record = decode_request(Parameters.parse(fetch), HOLIDAY_FIELDS)
+    fetch = Parameters.parse(stored_bytes(state, HOLIDAY_FETCH))
+    record = decode_request(fetch, HOLIDAY_FIELDS)
+    unknown = tuple(
+        name for tag, (name, _) in HOLIDAY_FIELDS.items() if tag not in fetch
+    )
     country = state.get(STORED_COUNTRY, b"")
     return Step(
         values={**record, HOLIDAY_COUNTRY: country},
-        unset=(HOLIDAY_FETCH,),
+        unset=(HOLIDAY_FETCH, HOLIDAY_ACKED, *unknown),
         then=(_holiday_check(),),
     )
 
@@ -1038,6 +1195,8 @@ def _holiday_showing(switch: bool, values: Mapping[str, Value]) -> bool:  # noqa
     if not switch or not values.get(HOLIDAY_ID):
         return False
     if values.get(HOLIDAY_COUNTRY) != values.get(STORED_COUNTRY):
+        return False
+    if not values.get(HOLIDAY_START) or not values.get(HOLIDAY_END):
         return False
     now = datetime.fromtimestamp(int(values[RTC]), tz=UTC)
     clock = (
@@ -1085,15 +1244,15 @@ def _owner_change(
 def _region_owner_set(
     request: ParameterDict, state: Mapping[str, Value]
 ) -> dict[str, Value]:
-    """``cmd20a_set_region_owner``: the owner's resets, and screen 4 while unbound.
+    """``cmd20a_set_region_owner``: the owner's resets, and the screen request.
 
-    ``screen_request?(4)``, which ends the transition screen (doc "Display
-    state" state 3); a bound unit keeps 5.
+    ``screen_request`` 5 when its record is 5, else 4; either ends the
+    transition screen (doc "Display state", the screen-request bullets).
     """
-    changes = _owner_change(request, state)
-    if not state[BOUND]:
-        changes[SCREEN_REQUEST] = SCREEN_REGION
-    return changes
+    bound = state.get(LAST_REQUEST) == SCREEN_BOUND
+    return _owner_change(request, state) | _requested(
+        SCREEN_BOUND if bound else SCREEN_REGION
+    )
 
 
 def _leave_custom_mode(state: Mapping[str, Value]) -> dict[str, Value]:
@@ -1167,7 +1326,7 @@ def _set_dc_relay_switch(request: ParameterDict) -> dict[str, Value] | None:
 #: ``4209``: the Prime countdown validator; ``cmd209`` takes an ``a2`` of TLV
 #: length 2 and an ``a3`` of 6 (en + u32 seconds). Its ``0307`` comes from the
 #: next 150 ms pass.
-COUNTDOWN = ac_port_countdown_task(PORT_BY_SELECT, disarm_clears=DISARM_CLEARS)
+COUNTDOWN = ac_port_countdown_task(PORT_BY_SELECT)
 COUNTDOWN_A3_LENGTH = 6
 
 
@@ -1218,12 +1377,26 @@ def _timed_task_push(
 
 
 def _set_port_priority(request: ParameterDict) -> dict[str, Value] | None:
-    """Enter Port Priority mode; each pd port's priority byte from the mask."""
+    """Enter Port Priority mode with the mask's ports designated, the first two.
+
+    ``cmd20c`` clears all four, then designates each set bit in port order;
+    ``port_priority_set`` refuses one with 2 already designated.
+    """
     mask = decode_field(request, "a2", PRIORITY_MASK)
+    designated = _designations(mask)
     changes: dict[str, Value] = {"charging_mode": PORT_PRIORITY_MODE}
     for i in range(4):
-        changes[f"pd{i + 1}_port_priority"] = DESIGNATED if mask & (1 << i) else NORMAL
+        changes[f"pd{i + 1}_port_priority"] = DESIGNATED if i in designated else NORMAL
     return changes
+
+
+#: ``port_priority_set``: at most two USB-C ports designated.
+MAX_DESIGNATED = 2
+
+
+def _designations(mask: int) -> list[int]:
+    """Return the USB-C ports a ``420c`` mask designates: its first two set bits."""
+    return [i for i in range(4) if mask >> i & 1][:MAX_DESIGNATED]
 
 
 def _leave_port_priority(
@@ -1267,19 +1440,21 @@ def _mode_report(
     values: Mapping[str, Value],  # noqa: ARG001  # built from the whole state
     state: Mapping[str, Value],
 ) -> Step:
-    """``030d``: the mode, ``b8`` and the designated ports, once the mode settles."""
+    """``030d``: the mode, ``b8`` and the designated ports, once the mode settles.
+
+    ``charging_mode_apply_push_030d`` also ends a Secret Feature overlay.
+    """
     profile = {"custom_charge_profile": state["custom_charge_profile"]}
     fields = {
         "a2": container("a2", TYPE_UI, ui(1).build(state["charging_mode"])),
         "a3": container("a3", TYPE_BIN, CustomChargeProfile.build(profile)),
         "a4": container("a4", TYPE_UI, ui(1).build(_designated_ports(state))),
     }
-    return Step(frames=(timed_push(0x30D, fields, state),))
+    return Step(frames=(timed_push(0x30D, fields, state),), then=(_overlay_stop(),))
 
 
 #: The on-unit screen reports and the setting each carries in ``a2`` (doc "Screen
-#: reports"). They carry no ``a3``: a reading of the doc's bracketed ``a3``,
-#: since none is recorded.
+#: reports"): 14 B, no ``a3``; only ``030b`` adds one.
 SCREEN_REPORTS = {
     0x30A: "screen_brightness",
     0x309: "screen_timeout",
@@ -1294,31 +1469,30 @@ THEME_FIELDS = (
     "screen_saver_theme",
     "screen_saver_theme_id",
 )
-#: The reports with a source byte (``report_src_*_set``): the app's handler
-#: writes it 1 (doc "Source-byte order"), and 1 drops the report at send time.
-REPORT_SOURCES = (0x309, 0x30A, 0x310, 0x30B)
+#: What marks ``030b``: the screen target, index | clock << 7 (``DAT_200001a5``).
+SCREEN_TARGET = ("screen_saver_switch", "screen_saver_theme")
 
 
 def _source_name(report: int) -> str:
-    """Return the hidden count of the app's writes of ``report``'s source byte."""
+    """Return the hidden name of ``report``'s source byte: 0, 1 the app, 2 the unit."""
     return f"_report_source_{report:03x}"
 
 
 def _source_write(
     report: int,
     request: ParameterDict,  # noqa: ARG001  # every accepted request writes it
-    state: Mapping[str, Value],
+    state: Mapping[str, Value],  # noqa: ARG001
 ) -> dict[str, Value]:
-    """Return the app's write of ``report``'s source byte: its count, one up."""
-    name = _source_name(report)
-    return {name: int(state.get(name, 0)) + 1}
+    """Return the app's write of ``report``'s source byte: 1."""
+    return {_source_name(report): SOURCE_APP}
 
 
 def _theme_set(request: ParameterDict, state: Mapping[str, Value]) -> dict[str, Value]:
     """``4205``: stage or show the theme; the source byte where it applies a change.
 
     ``cmd205_set_theme`` writes it for a preset, clock off, or an already-stored
-    network or custom theme, not for one it stages, fetches or drops. A
+    network or custom theme, not for one it stages, fetches or drops; a
+    clock-on preset or stored theme also arms the screensaver preview. A
     clock-on ``a2`` while the screen-off inhibit is 1 wakes the display.
     """
     staging = _theme_staging(request, state)
@@ -1326,7 +1500,10 @@ def _theme_set(request: ParameterDict, state: Mapping[str, Value]) -> dict[str, 
     if packed.screen_saver_switch and state.get(SCREENSAVER_INHIBIT):
         staging |= _woken(None)(request, state)
     preset = packed.screen_saver_theme not in IMAGE_THEMES
-    if not packed.screen_saver_switch or preset or "screen_saver_theme" in staging:
+    applied = preset or "screen_saver_theme" in staging
+    if packed.screen_saver_switch and applied:
+        staging |= _preview_asked(state)
+    if not packed.screen_saver_switch or applied:
         return staging | _source_write(0x30B, request, state)
     return staging
 
@@ -1648,30 +1825,49 @@ def _pass(
 def _screen_reports(
     before: Mapping[str, Value], after: Mapping[str, Value]
 ) -> tuple[Timed, ...]:
-    """Return a report of each screen setting changed on the unit.
+    """Mark each screen report whose setting a change moved (doc "Screen reports").
 
-    A change from an app command reports nothing (doc "Screen reports": "sent
-    when a setting changes on the unit"): its setter's source byte drops the
-    report pending at send time, an on-unit one inside the debounce included.
-    Each goes on the 5th ``tick_100ms_group`` tick after its mark ("Report
-    timing").
+    Each goes on the 5th ``tick_100ms_group`` tick after its last mark ("Report
+    timing"), its source byte deciding then: the app's handlers write 1
+    ("Source-byte order"), which drops it, and an on-unit change writes 2.
     """
-    delay = report_delay(after)
-    if COMMAND in after:
-        return tuple(
-            Timed(delay, _report_key(report), drop_queued)
-            for report in REPORT_SOURCES
-            if before.get(_source_name(report)) != after.get(_source_name(report))
-        )
-    marked = REPORTED_WHEN_SET & name_set(after, GIVEN)
-    events = [
-        Timed(delay, _report_key(msgtype), partial(_setting_report, msgtype, name))
+    unit = COMMAND not in after
+    marked = REPORTED_WHEN_SET & name_set(after, GIVEN) if unit else frozenset()
+    moved = [
+        msgtype
         for msgtype, name in SCREEN_REPORTS.items()
         if before[name] != after[name] or name in marked
     ]
-    if any(before[name] != after[name] for name in THEME_FIELDS):
-        events.append(Timed(delay, _report_key(0x30B), _theme_report))
-    return tuple(events)
+    if any(before[name] != after[name] for name in SCREEN_TARGET):
+        moved.append(0x30B)
+    source = SOURCE_UNIT if unit else None
+    return tuple(event for m in moved for event in _report_marked(m, after, source))
+
+
+def _report_marked(
+    msgtype: int, state: Mapping[str, Value], source: int | None
+) -> tuple[Timed, ...]:
+    """Return report ``msgtype`` marked: its send timed, after any source write."""
+    send = Timed(
+        report_delay(state), _report_key(msgtype), partial(_report_send, msgtype)
+    )
+    if source is None:
+        return (send,)
+    write = partial(hidden_set, _source_name(msgtype), source, lambda _: ())
+    return (Timed(0, _source_name(msgtype), write), send)
+
+
+def _report_send(
+    msgtype: int,
+    values: Mapping[str, Value],
+    state: Mapping[str, Value],
+) -> Step:
+    """Send a due report, unless its source byte reads 1: then drop it, byte 0."""
+    if state.get(_source_name(msgtype)) == SOURCE_APP:
+        return Step(values={_source_name(msgtype): 0})
+    if msgtype == 0x30B:  # noqa: PLR2004  # the theme report
+        return _theme_report(values, state)
+    return _setting_report(msgtype, SCREEN_REPORTS[msgtype], values, state)
 
 
 def _setting_report(
@@ -1798,7 +1994,7 @@ def _screensaver_move(_values: Mapping[str, Value], state: Mapping[str, Value]) 
     )
     if _display(state) != DISPLAY_BLACK or not allowed:
         return Step()
-    return _holiday_evaluated(state, {DISPLAY: DISPLAY_SCREENSAVER})
+    return _drawn_at_move(_holiday_evaluated(state, {DISPLAY: DISPLAY_SCREENSAVER}))
 
 
 def _screensaver_left(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
@@ -1954,9 +2150,8 @@ def _once_tick(state: Mapping[str, Value]) -> tuple[dict[str, Value], list[Timed
             changes[WINDOW_PHASE] = WINDOW_OUTSIDE
         if not state[CLOCK_SWITCH]:
             return changes, []
-        report = Timed(report_delay(state), _report_key(0x30B), _theme_report)
         black = Timed(DISPLAY_TICK, "display_black", _screensaver_left)
-        return changes, [report, black]
+        return changes, [*_report_marked(0x30B, state, SOURCE_UNIT), black]
     return {}, []
 
 
@@ -1991,9 +2186,36 @@ def _window_evaluated(state: Mapping[str, Value], changes: Mapping[str, Value]) 
     else:
         once, then = _once_tick(after)
         values = {**changes, **once}
+    moved = values.get(WINDOW_PHASE)
+    if moved != state.get(WINDOW_PHASE) and moved == WINDOW_INSIDE:
+        then.append(Timed(DISPLAY_TICK, "display_window_edge", _window_started))
+    elif moved != state.get(WINDOW_PHASE) and moved == WINDOW_OUTSIDE:
+        then.append(Timed(DISPLAY_TICK, "display_window_edge", _window_ended))
     if _display({**after, **values}) == DISPLAY_BLACK:
         then.append(_screensaver_check())
     return Step(values=values, then=tuple(then))
+
+
+def _window_started(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Move black to the screensaver at the window-start edge, no gate checked.
+
+    ``theme_state_change_watch``; a clock-off unit drops back to black a tick on.
+    """
+    if _display(state) != DISPLAY_BLACK:
+        return Step()
+    moved = _drawn_at_move(_holiday_evaluated(state, {DISPLAY: DISPLAY_SCREENSAVER}))
+    black = Timed(DISPLAY_TICK, "display_black", _screensaver_left)
+    return replace(moved, then=(*moved.then, black))
+
+
+def _window_ended(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """Move the screensaver to black at the window-end edge.
+
+    ``theme_state_change_watch``: the clock switch stays as it is.
+    """
+    if _display(state) != DISPLAY_SCREENSAVER:
+        return Step()
+    return Step(values={DISPLAY: DISPLAY_BLACK})
 
 
 def _window_eval(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
@@ -2060,7 +2282,8 @@ def _holiday_evaluated(
     after[HOLIDAY_FLAG] = flag
     frames = _theme_report({}, after).frames if prior and prior != flag else ()
     then: tuple[Timed, ...] = ()
-    if switch and after.get(HOLIDAY_ID):
+    bounded = after.get(HOLIDAY_START) and after.get(HOLIDAY_END)
+    if switch and after.get(HOLIDAY_ID) and bounded:
         start = _holiday_bound(_holiday_time(after, HOLIDAY_START))
         end = _holiday_bound(_holiday_time(after, HOLIDAY_END)) + 1
         ahead = [bound for bound in (start, end) if bound > int(after[RTC])]
@@ -2086,9 +2309,13 @@ def _holiday_eval(_values: Mapping[str, Value], state: Mapping[str, Value]) -> S
 #: state" state 3).
 DISPLAY_TRANSITION = 3
 TRANSITION_TIMEOUT = (0x707 + 1) * DISPLAY_TICK
-#: ``screen_request?``'s value (``DAT_2000bd4a``), hidden: a click requests 1
-#: and ``cmd20a`` 4 while unbound; the bind status keeps 5 bound, 6 unbound.
+#: The screen request (``DAT_2000bd4a``, boots 0) and ``screen_request``'s own
+#: record of it (``bd49``), hidden: the bind status writes 5 bound / 6
+#: unbound, ``cmd20a`` 5 when the record is 5 else 4, the 0xb click 1; the
+#: icon click writes 1 through ``pair_mode_request``, leaving the record.
 SCREEN_REQUEST = "_screen_request"
+LAST_REQUEST = "_screen_request_last"
+SCREEN_BOOT = 0
 SCREEN_CLICKED = 1
 SCREEN_REGION = 4
 SCREEN_BOUND = 5
@@ -2097,20 +2324,45 @@ TRANSITION_EXITS = frozenset({SCREEN_REGION, SCREEN_BOUND})
 
 
 def _screen_request(state: Mapping[str, Value]) -> int:
-    """Return the screen-request snapshot: 5 while bound, else the last request."""
-    if state[BOUND]:
-        return SCREEN_BOUND
-    return int(state.get(SCREEN_REQUEST, SCREEN_UNBOUND))
+    """Return the screen-request snapshot state 3 reads."""
+    return int(state.get(SCREEN_REQUEST, SCREEN_BOOT))
+
+
+def _requested(request: int) -> dict[str, Value]:
+    """Return ``screen_request``'s writes: the request and its own record."""
+    return {SCREEN_REQUEST: request, LAST_REQUEST: request}
+
+
+def _bind_requested(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+    """``esp_op06_bind_status``: request 5 bound, 6 unbound; state 3 reads it."""
+    request = SCREEN_BOUND if state[BOUND] else SCREEN_UNBOUND
+    return Step(values=_requested(request), then=(_transition_check(),))
 
 
 def _knob_clicked(_values: Mapping[str, Value], _state: Mapping[str, Value]) -> Step:
-    """Events 1 / 0xb (``lcd_click_wake_evt1?`` / ``evtb?``): the transition screen.
+    """Event 0xb, ``lcd_click_wake_evtb?`` (page 0xa's 3rd item): 3, requesting 1."""
+    return _transition_shown(_requested(SCREEN_CLICKED))
 
-    From any state; the click requests screen 1, and the ``b0`` count stops.
-    State 3 checks the request on the next tick; the timeout brings 0 back.
+
+def _knob_icon_clicked(
+    _values: Mapping[str, Value], _state: Mapping[str, Value]
+) -> Step:
+    """Event 1, ``lcd_click_wake_evt1?`` (page 3's 5th icon): 3, ``pair_mode_request``.
+
+    It writes request 1 but not ``screen_request``'s record; its fid ``0x10``
+    op ``0x05`` to the module isn't modeled.
+    """
+    return _transition_shown({SCREEN_REQUEST: SCREEN_CLICKED})
+
+
+def _transition_shown(request: Mapping[str, Value]) -> Step:
+    """Go to the transition screen from any state; the ``b0`` count stops.
+
+    State 3 checks the screen request on the next tick; the timeout brings 0
+    back.
     """
     return Step(
-        values={DISPLAY: DISPLAY_TRANSITION, SCREEN_REQUEST: SCREEN_CLICKED},
+        values={DISPLAY: DISPLAY_TRANSITION, **request},
         then=(
             Timed(0, "display_blank", drop_queued),
             _transition_check(),
@@ -2199,6 +2451,7 @@ UNIT_DISPLAY_EVENTS: dict[
     bytes, Callable[[Mapping[str, Value], Mapping[str, Value]], Step]
 ] = {
     b"knob_click": _knob_clicked,
+    b"knob_click_icon": _knob_icon_clicked,
     b"knob_hold": _knob_held,
     b"knob_activity": _knob_activity,
 }
@@ -2221,8 +2474,10 @@ def _display_events(
     if unit_event is not None:
         events.append(Timed(0, "display_unit_event", unit_event))
     shown = _display(after)
+    if before[BOUND] != after[BOUND]:
+        events.append(Timed(0, "screen_request_bind", _bind_requested))
     requested = before.get(SCREEN_REQUEST) != after.get(SCREEN_REQUEST)
-    if shown == DISPLAY_TRANSITION and (requested or before[BOUND] != after[BOUND]):
+    if shown == DISPLAY_TRANSITION and requested:
         events.append(_transition_check())
     woken = before.get(DISPLAY_WAKES) != after.get(DISPLAY_WAKES)
     written = "screen_timeout" in name_set(after, GIVEN)
@@ -2395,11 +2650,16 @@ SERVICE_ORDER = (
 #: class (``usbc_hv_class_update`` 0x000110f8, ``DAT_2000af10``) is 0 until
 #: pass 70, the pass that sees the active-port count change being pass 1, and
 #: while fewer than 2 are active; from then on each 300 ms pass classes a port
-#: it samples above 18 000 mV, until the next reset. Hidden: the classed
-#: ports, bit 0 C1.
+#: whose peak since pass 20 is above 18 000 mV, until the next reset. Hidden:
+#: the classed ports and those peaks, bit 0 C1.
 POWER_PORTS, HIGH_VOLTAGE, HV_SETTLE = 3, 18000, 69 * SCAN_PERIOD
+HV_RECORD_FROM = 19 * SCAN_PERIOD
 HV_SETTLED, POWER_COUNT = "_usbc_hv_settled", "_power_expert_ports"
-HV_CLASSED = "_usbc_hv_classed"
+HV_CLASSED, HV_PEAKS, HV_RECORDING = (
+    "_usbc_hv_classed",
+    "_usbc_hv_peaks",
+    "_usbc_hv_recording",
+)
 PORT_READS = ("status", "voltage")
 #: ``secret_features_tick`` counts Power Expert and runs Feature 2's edge loop
 #: before its service check, so a flag they raise on a service point goes out
@@ -2682,14 +2942,28 @@ def _high_ports(state: Mapping[str, Value]) -> int:
     )
 
 
-def _classed(state: Mapping[str, Value]) -> dict[str, Value]:
-    """Return a settled pass's classes: each port it samples above 18 000 mV joins.
+def _peaked(state: Mapping[str, Value]) -> dict[str, Value]:
+    """Return the peaks a pass records: each port it samples above 18 000 mV joins."""
+    return {HV_PEAKS: int(state.get(HV_PEAKS, 0)) | _high_ports(state)}
 
-    A class only rises until the next reset, as its peak since pass 20 does;
-    which of 1 or 2 isn't kept, since nothing modeled reads it. The PD codes
-    that also raise it (record +0x18) aren't modeled.
+
+def _classed(state: Mapping[str, Value]) -> dict[str, Value]:
+    """Return a settled pass's classes: each port whose peak is above 18 000 mV.
+
+    A class only rises until the next reset, as its peak does; which of 1 or
+    2 isn't kept, since nothing modeled reads it. The PD codes that also raise
+    it (record +0x18) aren't modeled.
     """
-    return {HV_CLASSED: int(state.get(HV_CLASSED, 0)) | _high_ports(state)}
+    peaks = _peaked(state)
+    return peaks | {HV_CLASSED: int(state.get(HV_CLASSED, 0)) | int(peaks[HV_PEAKS])}
+
+
+def _peaks_started(
+    values: Mapping[str, Value],  # noqa: ARG001  # reads the whole state
+    state: Mapping[str, Value],
+) -> Step:
+    """Pass 20 after a USB-C count change: the peaks start being recorded."""
+    return Step(values={HV_RECORDING: True, **_peaked(state)})
 
 
 def _power_count(
@@ -2719,23 +2993,15 @@ def _power_settled(
     )
 
 
-def _counted_designations(
-    before: Mapping[str, Value], after: Mapping[str, Value]
-) -> int:
+def _counted_designations(after: Mapping[str, Value]) -> int:
     """Return the designations a ``420c`` counts toward Feature Expert.
 
-    One per set bit, in port order, but none made with 2 or more ports already
-    designated (``port_priority_set``, doc "Secret Features"). The on-device
-    mode menu and the re-apply on entering Port Priority aren't modeled.
+    It clears all four first, so each port it designates counts, a port
+    designated again included (``port_priority_set``, doc Feature Expert
+    row). The on-device mode menu and the re-apply on entering Port Priority
+    aren't modeled.
     """
-    already = sum(before[f"{p}_port_priority"] == DESIGNATED for p in USBC_PORTS)
-    counted = 0
-    for port in USBC_PORTS:
-        if after[f"{port}_port_priority"] == DESIGNATED:
-            if already < 2:  # noqa: PLR2004  # the doc's "2 or more already"
-                counted += 1
-            already += 1
-    return counted
+    return sum(after[f"{p}_port_priority"] == DESIGNATED for p in USBC_PORTS)
 
 
 def _secret_features(
@@ -2753,7 +3019,7 @@ def _secret_features(
     if after.get(UNIT_EVENT) == b"switch_screen":
         events.append(Timed(0, "screen_switch", _screen_switched))
     if after.get(COMMAND) == 0x20C:  # noqa: PLR2004  # 420c, the designations
-        counted = _counted_designations(before, after)
+        counted = _counted_designations(after)
         if counted:
             events.append(Timed(0, "designations", partial(_designated, counted)))
     woken = before.get(DISPLAY_WAKES) != after.get(DISPLAY_WAKES)
@@ -2799,7 +3065,8 @@ def _port_scan_events(
     prior = _port_bitmap(before)
     voltages = [f"{port}_output_voltage" for port in USBC_PORTS]
     voltage_changed = any(before[name] != after[name] for name in voltages)
-    if prior == _port_bitmap(after) and not (voltage_changed and after.get(HV_SETTLED)):
+    sampling = after.get(HV_SETTLED) or after.get(HV_RECORDING)
+    if prior == _port_bitmap(after) and not (voltage_changed and sampling):
         return ()
     return (Timed(0, "port_scan_mark", partial(_port_scan_marked, prior)),)
 
@@ -2827,8 +3094,9 @@ def _port_scan(
     display (``display_wake_refresh_mark?``, from 1-3 also an overlay stop)
     and raises Device Expert on a change into or out of all six active
     (``device_expert_check``). ``usbc_hv_class_update`` zeroes the classes on
-    a USB-C count change, settling 69 passes on with 2 or more active, else
-    classes the ports it samples once settled; Power Expert counts a tick on.
+    a USB-C count change, recording peaks 19 passes on and settling 69 on
+    with 2 or more active, else records peaks and, once settled, classes from
+    them; Power Expert counts a tick on.
     """
     seen, bitmap = int(state[SCAN_SEEN]), _port_bitmap(state)
     changes: dict[str, Value] = {}
@@ -2845,16 +3113,20 @@ def _port_scan(
     active = (bitmap & USBC_BITS).bit_count()
     count = Timed(_in_tick(state), "power_count", _power_count)
     if (seen & USBC_BITS).bit_count() != active:
-        changes |= {HV_SETTLED: False, HV_CLASSED: 0}
-        settle = (
-            Timed(HV_SETTLE, "usbc_hv_settle", _power_settled)
-            if active >= 2  # noqa: PLR2004  # the class needs 2 active
-            else Timed(0, "usbc_hv_settle", drop_queued)
-        )
-        then += (settle, count)
+        reset = {HV_SETTLED: False, HV_CLASSED: 0, HV_PEAKS: 0, HV_RECORDING: False}
+        changes |= reset
+        if active >= 2:  # noqa: PLR2004  # the class needs 2 active
+            record = Timed(HV_RECORD_FROM, "usbc_hv_record", _peaks_started)
+            settle = Timed(HV_SETTLE, "usbc_hv_settle", _power_settled)
+        else:
+            record = Timed(0, "usbc_hv_record", drop_queued)
+            settle = Timed(0, "usbc_hv_settle", drop_queued)
+        then += (record, settle, count)
     elif state.get(HV_SETTLED):
         changes |= _classed(state)
         then += (count,)
+    elif state.get(HV_RECORDING):
+        changes |= _peaked(state)
     return Step(values=changes, then=then)
 
 
@@ -3450,9 +3722,11 @@ class A2345Layout(TableLayout):
             *_port_watchers(before, after),
             *_theme_fetch(before, after),
             *_holiday_fetch(before, after),
+            *_country_reloaded(before, after),
             *_draw_events(before, after),
             *wifi_events(before, after, PERIODICS),
             *_display_events(before, after),
+            *_preview_events(before, after),
             *_set_in_window_events(after),
         )
         if before["charging_mode"] == after["charging_mode"]:

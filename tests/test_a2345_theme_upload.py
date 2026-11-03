@@ -37,6 +37,10 @@ PHOTO_4311 = "a10131a20504a68adf5a"
 #: #87's window and chunk size (``UPLOAD_WINDOW``, ``UPLOAD_CHUNK_SIZE``).
 WINDOW = 10
 CHUNK = 192
+#: Past the window's first evaluation (1.5 s), which the upload's screensaver
+#: preview needs, and past that preview's draw (0.4 s on).
+WINDOW_FIRST_WAIT = 1.6
+DRAWN_WAIT = 0.5
 #: ``4205`` custom (``0x80`` | 5), as #87 sends it: id, CRC, default text
 #: color, the app's placeholder URL in ``a6``.
 CUSTOM_SELECT = theme_select(CUSTOM_PHOTO, PHOTO_ID, theme=0x85)
@@ -69,6 +73,7 @@ def test_the_87_upload_is_answered_step_by_step(
     clock = ManualClock()
     device = A2345(clock=clock)
     client = prime_client(device, TOKEN)
+    advance(device, client, clock, WINDOW_FIRST_WAIT)
 
     selected = command(device, client, 0x205, CUSTOM_SELECT)
     prepared = command(device, client, 0x220, CUSTOM_PREPARE)
@@ -76,7 +81,7 @@ def test_the_87_upload_is_answered_step_by_step(
         command(device, client, 0x221, upload_chunk(CUSTOM_PHOTO, i, CHUNK, pad=pad))
         for i in range(COUNT)
     ]
-    advance(device, client, clock, 0)
+    advance(device, client, clock, DRAWN_WAIT)
     af = decode_field(snapshot(device), "af", Theme)
     repeat = command(device, client, 0x205, CUSTOM_SELECT)
 

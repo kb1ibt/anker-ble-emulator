@@ -21,7 +21,6 @@ from anker_ble_emulator import (
     A2345,
     A2687,
     AS200,
-    AS220,
     EmulatedBleakBackend,
     ManualClock,
 )
@@ -437,11 +436,41 @@ def test_a_c_gen_2_replays_its_recorded_frames_on_its_own_clock() -> None:
     ]
 
 
-@pytest.mark.parametrize(
-    "model", [AS200, AS220, A17C0], ids=["AS200", "AS220", "A17C0"]
-)
+def test_set_values_judges_its_values_after_what_fell_due() -> None:
+    """An event overdue at ``set_values`` runs first, so the check sees its change.
+
+    AC out over 0 W is refused only while AC output is off; here an overdue
+    event has switched it on.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+
+    def switch_on(_values: Mapping[str, Value], _state: Mapping[str, Value]) -> Step:
+        return Step(values={"ac_output_status": 1})
+
+    device.negotiated_module.schedule(Timed(0.5, "switch_on", switch_on))
+    clock.advance(1)
+    device.set_values(ac_output_power=500)
+
+    assert device.negotiated_module.values["ac_output_power"] == 500
+
+
+def test_before_any_clock_set_a_frame_carries_the_clock_counted_from_boot() -> None:
+    """The stamp is the unit's clock when sent, which counts from 0 until a set."""
+    clock = ManualClock()
+    module = A2345(clock=clock).negotiated_module
+    clock.advance(5)
+
+    pushed = module.mcu.push(
+        0x303, values=module.values, rtc=module.rtc, epoch=module.epoch
+    )
+
+    assert Parameters.parse(pushed.payload)["fe"]["value"] == Int32ul.build(5)
+
+
+@pytest.mark.parametrize("model", [AS200, A17C0], ids=["AS200", "A17C0"])
 def test_a_layout_that_names_fe_replays_it_as_it_names_it(
-    model: type[AS200 | AS220 | A17C0],
+    model: type[AS200 | A17C0],
 ) -> None:
     """The clock stamp leaves a frame whose layout names ``fe`` byte-identical."""
     mcu = model().negotiated_module.mcu

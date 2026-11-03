@@ -45,7 +45,7 @@ from anker_ble_emulator.validators import OptionsValidator
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Mapping
+    from collections.abc import Callable, Mapping
 
     from anker_ble_emulator.layouts import Value
     from anker_ble_emulator.parameters import PushBuilder, SideEffect
@@ -236,6 +236,16 @@ def every(
 ) -> Timed:
     """Return a timer sending ``build``'s push every ``period`` s (none for None)."""
     return Timed(period, key, partial(_tick, period, key, build))
+
+
+def restarted(
+    delay: float,
+    period: float,
+    key: str,
+    build: Callable[[Mapping[str, Value]], tuple[int, bytes] | None],
+) -> Timed:
+    """Return ``every``'s timer restarted: its next push ``delay`` s on."""
+    return Timed(delay, key, partial(_tick, period, key, build))
 
 
 def _tick(
@@ -463,19 +473,21 @@ def slot_written(port_by_select: Mapping[int, str]) -> SideEffect:
     return slot_set
 
 
-def once_compare(state: Mapping[str, Value], port: str, half: str) -> int:
+def once_compare(
+    state: Mapping[str, Value], port: str, half: str, *, seconds: bool = False
+) -> int:
     """Return now against a once slot's date and minute: -1 before, 0 at, 1 past.
 
-    ``date_cmp?``, then ``time_cmp?``, on both MCUs (doc "Schedule timing",
-    A91B2 "Schedule firing").
+    ``date_cmp?``, then ``time_cmp?`` (doc "Schedule timing", A91B2 "Schedule
+    firing"): the A2345's compares minutes only; the A91B2's (``seconds``) also
+    the seconds against hh:mm:00, so from second 1 on it reads as passed.
     """
     rtc = int(state[RTC])
     slot = schedule_slot(state, port, half)
-    now = (rtc_date(rtc), rtc % DAY // MINUTE)
-    bound = (
-        int(state.get(once_date_name(port, half), 0)),
-        int(slot["hour"]) * 60 + int(slot["minute"]),
-    )
+    at = (int(slot["hour"]) * 60 + int(slot["minute"])) * MINUTE
+    now_at = rtc % DAY if seconds else rtc % DAY // MINUTE * MINUTE
+    now = (rtc_date(rtc), now_at)
+    bound = (int(state.get(once_date_name(port, half), 0)), at)
     return (now > bound) - (now < bound)
 
 
@@ -593,13 +605,11 @@ def timed_task_push(port_by_select: Mapping[int, str]) -> PushBuilder:
     return disabled_half
 
 
-def ac_port_countdown_task(
-    port_by_select: Mapping[int, str], *, disarm_clears: Collection[str]
-) -> Validator:
-    """Return the ``4209`` validator for a device's ``a2`` port numbering.
+def ac_port_countdown_task(port_by_select: Mapping[int, str]) -> Validator:
+    """Return the A2345 ``4209`` validator for its ``a2`` port numbering.
 
-    Arming starts the remaining time at the seconds set; disarming keeps the
-    seconds, and the remaining time too except on the ``disarm_clears`` ports.
+    Arming starts the remaining time at the seconds set; disarming forces it
+    to 0 (doc Shared "Common pushes" ``0307``).
     """
     port_select = OptionsValidator(ui(1), *port_by_select)
 
@@ -611,7 +621,7 @@ def ac_port_countdown_task(
         if countdown.switch:
             changes[f"{name}_countdown_task_seconds"] = countdown.seconds
             changes[f"{name}_countdown_task_remaining_seconds"] = countdown.seconds
-        elif name in disarm_clears:
+        else:
             changes[f"{name}_countdown_task_remaining_seconds"] = 0
         return changes
 

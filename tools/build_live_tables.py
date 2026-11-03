@@ -33,7 +33,7 @@ from anker_ble_emulator.products import Product
 
 DATA = Path(__file__).parents[1] / "src" / "anker_ble_emulator" / "devices" / "data"
 #: The match values the emulator gives a frame whose ``a4`` has no byte 31,
-#: from firmware without Battery-Only Power (a1783-telemetry.md:153, :553): a
+#: from firmware without Battery-Only Power (a1783-telemetry.md's ``a4`` row): a
 #: modelling choice that takes that firmware's AC behaviour as the switch off.
 SHORT_A4 = {"ac_input_disable_switch": 0}
 #: Match keys that bind a sample only while its field is drawn above idle: the

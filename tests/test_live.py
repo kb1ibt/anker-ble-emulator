@@ -31,6 +31,7 @@ from tests.fixtures.live import (
     recorded,
     recorded_live,
     stream,
+    watch,
 )
 from tests.fixtures.prime import command, prime_client
 
@@ -473,6 +474,51 @@ def test_a_push_on_demand_draws_first() -> None:
     assert module.live is not None
     assert module.live.due(clock.now()) is None
     assert first["pd1_output_power"] in recorded(PRIME_TABLE, "pd1_output_power")
+
+
+def test_a_push_on_demand_runs_what_fell_due_before_its_draw() -> None:
+    """An event overdue at the push sees the draw of its own time, not the push's."""
+    device, clock = prime_live(20)
+    module = device.negotiated_module
+    module.refresh_live()
+    before = {name: module.values[name] for name in PRIME_LIVE}
+    seen = watch(device, PRIME_LIVE, 0.5)
+
+    clock.advance(1)
+    device.push(MSGTYPE_303)
+
+    assert {name: module.values[name] for name in PRIME_LIVE} != before
+    assert seen == [before]
+
+
+def test_an_mqtt_frame_runs_what_fell_due_before_its_draw() -> None:
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_cloud(True)
+    device.vary_live_values(33)
+    module = device.negotiated_module
+    names = drawn_fields(live_table(device), 0x421)
+    before = {name: module.values[name] for name in names}
+    seen = watch(device, names, 0.5)
+
+    clock.advance(1)
+    device.mqtt_frame(0x421)
+
+    assert {name: module.values[name] for name in names} != before
+    assert seen == [before]
+
+
+def test_turning_it_on_runs_what_fell_due_before_the_first_draw() -> None:
+    clock = ManualClock()
+    device = A2345(clock=clock)
+    names = drawn_fields(live_table(device), MSGTYPE_303)
+    seen = watch(device, names, 0.5)
+
+    clock.advance(1)
+    device.vary_live_values(34)
+
+    assert all(name in device.negotiated_module.values for name in names)
+    assert seen == [{}]
 
 
 def test_a_device_with_no_recorded_live_values_refuses_them() -> None:

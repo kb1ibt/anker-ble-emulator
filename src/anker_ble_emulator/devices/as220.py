@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from construct import Bytes, Container, ExprAdapter, Int16ul, Struct
 
-from anker_ble_emulator.layouts import TYPE_VAR, Value, ui
+from anker_ble_emulator.layouts import Value, ui
 from anker_ble_emulator.mcu import GIVEN, name_set
 from anker_ble_emulator.module import AuthMode
 from anker_ble_emulator.parameters import (
@@ -24,7 +24,6 @@ from anker_ble_emulator.parameters import (
     TableLayout,
     decode_request,
     leaf_zeros,
-    one_field,
     struct_zeros,
 )
 from anker_ble_emulator.products import ModuleBuild, Outer, Path, Product
@@ -36,7 +35,6 @@ from .solix_c_gen2 import (
     AC_OUT,
     AC_OVER_CEILING,
     CAPABILITY_ZEROS,
-    CHARGE_OVER_LIMIT,
     LINE_COMMANDS,
     MSGTYPE_421,
     MSGTYPE_900,
@@ -94,8 +92,8 @@ ULTRAFAST_SHOWN = "ultrafast_charge_state"
 ULTRAFAST_SHOWN_ON = 3
 Charger = Struct(PASSTHROUGH / ui(1), "_reserved" / Bytes(2), ULTRAFAST_SHOWN / ui(1))
 #: ``a4[28:30]``, in the A1783 tail's reserved bytes: the Smart AC Output
-#: timeout in minutes (``4101 aa``); no app name is known. ``a4[26:28]``, the
-#: app's ``countryCode``, stays as recorded.
+#: timeout in minutes (``4101 aa``); no app name is known. ``a4[26:28]``, "US"
+#: in the #322 frames and unnamed in PiField, stays as recorded.
 SMART_AC_TIMEOUT = "smart_ac_output_timeout"
 TIMEOUT_IN_RESERVED = slice(2, 4)
 
@@ -146,7 +144,6 @@ TELEMETRY_FIELDS: dict[str, FieldSpec] = {
     "f0": (Charger, 0x04, struct_zeros(Charger)),
     "f9": (DeviceVersions, 0x04, VERSION_ZEROS),
     "fa": (Capabilities, 0x04, CAPABILITY_ZEROS),
-    "fe": one_field("timestamp", ui(4), TYPE_VAR),
 }
 #: ``aa``: one aggregate USB total, at the tag the A1783 app calls ``pd1``.
 OUTPUT_PORTS = FieldGroup(OutputPort, leaf_zeros(*OUTPUT_FIELDS), {"pd1": "aa"})
@@ -173,8 +170,8 @@ def _split_input(
 ) -> dict[str, Value]:
     """Return the AC in and solar an input total set with at most one of them leaves.
 
-    Alone, AC in takes the charge the limit requests (+10 W; 1600 W with
-    UltraFast) plus the AC out, at most the total and 1833 W, and solar the rest; with
+    Alone, AC in takes the charge the limit requests (1600 W with UltraFast)
+    plus the AC out, at most the total and 1833 W, and solar the rest; with
     one input, the other is the rest. With both, none.
     """
     total = int(values[INPUT_TOTAL])
@@ -185,8 +182,7 @@ def _split_input(
     if AC_IN in values:
         ac = int(values[AC_IN])
     else:
-        limit = int(merged[AC_LIMIT]) + CHARGE_OVER_LIMIT
-        request = CHARGE_RATING if merged[ULTRAFAST] else limit
+        request = CHARGE_RATING if merged[ULTRAFAST] else int(merged[AC_LIMIT])
         ac = min(total, request + int(merged[AC_OUT]), AC_IN_TOP)
     return {AC_IN: ac, PV_IN: total - ac}
 
@@ -231,8 +227,10 @@ AC_PARAMS = {**AC_GROUP, "aa": (SMART_AC_TIMEOUT, ui(2))}
 SCREEN = "screen_switch"
 #: A ``4103 a2`` screen switch waiting to show.
 SCREEN_REQUEST = "screen_switch_request"
-#: ``4103 a2``, and ``f0[3]`` after a ``4101 a7``, show in a second ``0421``
-#: under a second after the reply's.
+#: ``4103 a2``, and ``f0[3]`` after a ``4101 a7``, show in the ``0421`` after
+#: the reply's, the next of the unit's stream (s2000-as220.md "Setters",
+#: "Telemetry"). The emulator streams no ``0421``, so it sends that one itself;
+#: the doc gives no time, so the 0.5 s, past the reply, is the emulator's.
 SECOND_0421_DELAY = 0.5
 PASSTHROUGH_EVENT = "ac_pass_through"
 ULTRAFAST_SHOWN_EVENT = "ultrafast_shown"
@@ -252,7 +250,7 @@ def _set_system_params(request: ParameterDict) -> dict[str, Value] | None:
 
 
 def _screen_shown(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
-    """Show the held screen switch and push the ``0421`` that carries it."""
+    """Show the held screen switch in the ``0421`` that stands in for the stream's."""
     return Step(
         values={SCREEN: state[SCREEN_REQUEST]},
         unset=(SCREEN_REQUEST,),
@@ -285,7 +283,7 @@ def _pass_through_follows(
 
 
 def _ultrafast_shown(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
-    """Set ``f0[3]`` from the UltraFast flag and push the ``0421`` that carries it."""
+    """Set ``f0[3]`` from the UltraFast flag; push the stream's stand-in ``0421``."""
     shown = ULTRAFAST_SHOWN_ON if state[ULTRAFAST] else 0
     return Step(values={ULTRAFAST_SHOWN: shown}, pushes=(MSGTYPE_421,))
 

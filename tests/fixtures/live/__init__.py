@@ -16,6 +16,7 @@ from .live_fixtures import (
     recorded,
     recorded_live,
     stream,
+    watch,
 )
 
 
@@ -34,4 +35,5 @@ __all__ = [
     "recorded",
     "recorded_live",
     "stream",
+    "watch",
 ]

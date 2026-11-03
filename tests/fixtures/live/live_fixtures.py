@@ -10,10 +10,13 @@ from anker_ble_emulator import A91B2, A2345, ManualClock
 from anker_ble_emulator.devices.base import Profile, data_resource
 from anker_ble_emulator.devices.prime import MSGTYPE_303
 from anker_ble_emulator.live import LiveTable, LiveValues
+from anker_ble_emulator.timed import Step, Timed
 from tests.fixtures.prime import advance, command
 
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
+
     from anker_ble_emulator import EmulatedDevice
     from anker_ble_emulator.layouts import Value
     from tests.fixtures.client import AppClient
@@ -336,6 +339,23 @@ def current_303(device: EmulatedDevice) -> dict[str, Value]:
     """Return the named values of the ``0303`` the device would push now, undrawn."""
     module = device.negotiated_module
     return read_303(device, module.mcu.push(MSGTYPE_303, values=module.values).payload)
+
+
+def watch(
+    device: EmulatedDevice, names: Iterable[str], delay: float
+) -> list[dict[str, Value]]:
+    """Queue an event ``delay`` s on; return the list it fills with what it sees.
+
+    The event appends the set values of ``names`` it finds when it runs.
+    """
+    wanted, seen = tuple(names), []
+
+    def look(values: Mapping[str, Value], _state: Mapping[str, Value]) -> Step:
+        seen.append({name: values[name] for name in wanted if name in values})
+        return Step()
+
+    device.negotiated_module.schedule(Timed(delay, "watch", look))
+    return seen
 
 
 def stream(

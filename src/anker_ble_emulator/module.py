@@ -90,6 +90,9 @@ MSGTYPE_CONNECT = 0x001
 MSGTYPE_KEY_EXCHANGE = 0x021
 #: ``0022``: the clock set in ECDH mode, the legacy getAesKey confer in modes 1/2.
 MSGTYPE_CONFER = 0x022
+#: The negotiation ops that change what the MCU's timed events read (the
+#: clock sets ``0022`` / ``002b``, the ``0023`` bind): what fell due runs first.
+STATE_CHANGES = frozenset({MSGTYPE_CONFER, 0x023, 0x02B})
 
 STATUS_OK = 0x00
 STATUS_FAIL = 0x01
@@ -409,7 +412,7 @@ class Module:
 
     @property
     def epoch(self) -> int:
-        """The UTC epoch the device stamps a push's ``fe`` with; 0 until a clock set."""
+        """The UTC epoch a push's ``fe`` carries: counting from 0 until a clock set."""
         return self._epoch_at(self.clock.now())
 
     def _epoch_at(self, now: float) -> int:
@@ -629,7 +632,10 @@ class Module:
             msgtype: The push's 12-bit message type.
 
         """
-        ahead, disconnect = self._run_due() if self.refresh_live() else ([], False)
+        ahead, disconnect = self._run_due()
+        if self.refresh_live():
+            drawn, drew_drop = self._run_due()
+            ahead, disconnect = [*ahead, *drawn], disconnect or drew_drop
         frames = self._route_pushes(
             [self.mcu.push(msgtype, values=self.values, rtc=self.rtc, epoch=self.epoch)]
         )
@@ -791,13 +797,17 @@ class Module:
         except FieldError:
             _LOGGER.warning("Dropped %03x with malformed fields", frame.cmd.msgtype)
             return Output()
+        overdue, dropped = self._run_due() if msgtype in STATE_CHANGES else ([], False)
+        ahead = self._relay(link, overdue).frames
         result = self._dispatch(_Request(link, frame, fields))
         if isinstance(result, Output):
-            return result
+            return Output(
+                [*ahead, *result.frames], disconnect=result.disconnect or dropped
+            )
         payload = cipher.encrypt(result.payload) if cipher else result.payload
         return Output(
-            self._encode(reply_frame(frame, payload)),
-            disconnect=result.disconnect,
+            [*ahead, *self._encode(reply_frame(frame, payload))],
+            disconnect=result.disconnect or dropped,
         )
 
     def _legacy_confer(self, link: _Link, frame: Frame) -> Output:

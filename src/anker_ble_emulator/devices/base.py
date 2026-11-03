@@ -525,11 +525,11 @@ class EmulatedDevice:
                 msg = f"{self.pn} sends no typed field {name!r}"
                 raise LayoutError(msg)
         module = self.negotiated_module
+        self._emit(module.check_pushes())
         if layout is not None:
             values = layout.resolve(values, module.mcu.state(module.values))
         if pin:
             module.pinned.update(values)
-        self._emit(module.check_pushes())
         module.apply_values(values, layout)
         if layout is not None:
             self._emit(module.check_pushes())
@@ -567,6 +567,7 @@ class EmulatedDevice:
             raise LayoutError(msg)
         rng = random.Random(seed)  # noqa: S311  # a replay of recordings, not a secret
         module = self.negotiated_module
+        self._emit(module.check_pushes())
         module.live = LiveValues(table, source.period, rng)
         module.refresh_live()
         self._emit(module.check_pushes())
@@ -719,6 +720,7 @@ class EmulatedDevice:
             msg = f"{self.pn} publishes to MQTT only on the cloud (set_cloud)"
             raise RuntimeError(msg)
         module = self.negotiated_module
+        self._emit(module.check_pushes())
         if module.refresh_live():
             self._emit(module.check_pushes())
         frame = module.mcu.mqtt(

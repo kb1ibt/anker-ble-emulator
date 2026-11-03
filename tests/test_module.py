@@ -30,7 +30,7 @@ from anker_ble_emulator.frame import (
     make_frame,
 )
 from anker_ble_emulator.layouts import EPOCH
-from anker_ble_emulator.mcu import Burst, mcu_frame
+from anker_ble_emulator.mcu import BOUND, Burst, mcu_frame
 from anker_ble_emulator.module import AuthMode, Output
 from anker_ble_emulator.parameters import ParameterDict, TableLayout
 from anker_ble_emulator.timed import Step, Timed
@@ -1036,6 +1036,52 @@ def test_an_overdue_event_sees_the_clock_at_its_due_time() -> None:
     rig.module.check_pushes()
 
     assert seen == [utc + 3]
+
+
+@pytest.mark.parametrize("msgtype", [0x022, 0x02B], ids=["0022", "002b"])
+def test_a_clock_set_runs_what_fell_due_before_it(msgtype: int) -> None:
+    """An event overdue at a clock set reads the clock it fell due under."""
+    rig = build_module()
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+    exchange(rig.module, client, 0x023, [(0xA2, ACCOUNT)])
+    utc = Int32ul.parse(TIMESTAMP)
+    later = Int32ul.build(utc + 1000)
+    fields = {
+        0x022: [(0xA1, later), (0xA3, UTC_OFFSET)],
+        0x02B: [(0xA1, later), (0xA2, ACCOUNT), (0xA3, b"\x00\x00")],
+    }
+    seen: list[Value] = []
+
+    def stamp(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+        seen.append(state[EPOCH])
+        return Step()
+
+    rig.module.schedule(Timed(3.0, "stamp", stamp))
+    rig.clock.advance(10.0)
+    exchange(rig.module, client, msgtype, fields[msgtype])
+    rig.module.check_pushes()
+
+    assert seen == [utc + 3]
+
+
+def test_a_bind_runs_what_fell_due_before_it() -> None:
+    """An event overdue at a ``0023`` bind reads the bind status it fell due under."""
+    rig = build_module()
+    client = AppClient()
+    negotiate(rig.module, client, ENROLLED_TOKEN)
+    seen: list[Value] = []
+
+    def look(_values: Mapping[str, Value], state: Mapping[str, Value]) -> Step:
+        seen.append(state[BOUND])
+        return Step()
+
+    rig.module.schedule(Timed(3.0, "look", look))
+    rig.clock.advance(10.0)
+    exchange(rig.module, client, 0x023, [(0xA2, ACCOUNT)])
+    rig.module.check_pushes()
+
+    assert seen == [0]
 
 
 def test_a_late_tz_tick_keeps_the_clock_continuous() -> None:

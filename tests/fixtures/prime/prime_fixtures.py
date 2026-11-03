@@ -199,6 +199,22 @@ def baseline_jpeg(  # noqa: PLR0913  # one knob per header rule
     return header + bytes(size - len(header) - 2) + b"\xff\xd9"
 
 
+def resized_segment(image: bytes, marker: int, length: int, pad: bytes = b"") -> bytes:
+    """Return ``image`` with ``marker``'s segment length set to ``length``.
+
+    Its body stays as it was, ``pad`` inserted after it.
+    """
+    at = image.index(bytes((0xFF, marker)))
+    end = at + 2 + int.from_bytes(image[at + 2 : at + 4], "big")
+    return (
+        image[: at + 2]
+        + length.to_bytes(2, "big")
+        + image[at + 4 : end]
+        + pad
+        + image[end:]
+    )
+
+
 #: The URL field the app fills every ``4220`` with (doc ``4220`` row).
 APP_URL = b"1234567890123456"
 
