@@ -2166,7 +2166,8 @@ OFF_BUS = (3, 3)
 #:   steps, each step clearing the discharge latch; the expansion below its
 #:   cap, switched on, its path hold clear;
 #: - main -> ``0x11``: the charge-cap latch set, the main able to charge and
-#:   below its cap; the bus stays, the discharge latch clears;
+#:   below its cap; the bus stays, the discharge latch clears; skipped, with
+#:   main -> ``0x12``, while the ``0x22`` row's conditions hold;
 #: - main -> expansion discharge (main -> ``0x22``): the discharge latch (path
 #:   (a): the packs not charging, the main's own SoC above ``min_soc`` + 0.9 %
 #:   and a >= 1.0 % drop in it since it last charged); the expansion's
@@ -2703,8 +2704,9 @@ def _main_handovers(
 ) -> list[Timed]:
     """Return the switch to the expansion, or the latches' new state, the main draws.
 
-    Main -> ``0x11`` and each counting step of the charge-ineligible row clear
-    the discharge latch, unless main -> ``0x22`` takes the bus on it at once.
+    Each counting step of the charge-ineligible row clears the discharge latch;
+    main -> ``0x11`` does too unless the ``0x22`` row's conditions hold, which
+    skip it even before its dwell passes (fsms "Pack selection").
     """
     stored = after.get(LATCH_FROM)
     base = _main_soc(before) if stored is None else int(stored)
@@ -2715,8 +2717,9 @@ def _main_handovers(
         latched, base = True, _main_soc(after)
     gap = max(0.0, SWITCH_GAP - _held_for(after, SWITCH_GAP))
     handing = latched and _expansion_takes_discharge(after)
-    clearing = _main_charge_row(after) or _charge_ineligible_due(after)
-    if latched and clearing and not (handing and not gap):
+    if latched and not handing and _main_charge_row(after):
+        latched = False
+    elif latched and _charge_ineligible_due(after) and not (handing and not gap):
         latched = handing = False
     marks: dict[str, Value] = {}
     if stored is None or base != int(stored):
@@ -2740,10 +2743,12 @@ def _main_handovers(
 def _main_charge_row(state: Mapping[str, Value]) -> bool:
     """Return whether main -> ``0x11`` holds: the cap latch seen, the main able.
 
-    The main on the bus below its cap; ``status_2bit_a(0,3)`` isn't modeled (0).
+    The main on the bus below its cap; an expansion switched off forces main,
+    which runs no row (fsms "Forced main"). ``status_2bit_a(0,3)`` reads 0.
     """
     return (
         _bus_pack(state) == BUS_MAIN
+        and _expansion_on(state)
         and _cap_latch_seen(state)
         and _main_may_charge(state)
         and _main_soc(state) < _cap(state)
@@ -2911,7 +2916,9 @@ def _discharge_to_expansion(
 ) -> Step:
     """Hand discharge to the expansion, the discharge latch set; the cap latch clears.
 
-    ``a3[0]`` and ``a5[1]`` read 0 at once and ``c0[24]`` the port flow.
+    The charge-ineligible count then reads the cap latch clear, so the discharge
+    latch stays (fsms "Pack selection"). ``a3[0]`` and ``a5[1]`` read 0 at once
+    and ``c0[24]`` the port flow.
     """
     if not _latch_hands_over(state):
         return Step()
@@ -3893,7 +3900,9 @@ def _set_bms_params(request: ParameterDict) -> dict[str, Value] | None:
 #: own switch-on state (``flag_0b56``; hidden, unset = on). An on reaches the
 #: expansion; an off only with no external charge source (``flag_00c7``:
 #: ``.14.30`` AC in, ``a7[3]`` 1 or 2, PV in, or the alternator charger in its
-#: Charging Mode), the main then taking the bus.
+#: Charging Mode), the main then taking the bus at once on its switch event. An
+#: off set by name stands in for that path; the pack button's off, with no
+#: switch event (Forced main's ``0x01`` 300 steps on), isn't modeled.
 EXPANSION_SWITCHED_ON = "expansion_switched_on"
 SWITCH_REQUESTS = "expansion_switch_requests"
 SWITCH_REREAD = 2.0

@@ -1986,6 +1986,94 @@ def test_kasa_toggle_replays_bench() -> None:
     ]
 
 
+def test_a_plug_in_with_the_expansion_on_the_bus_replays_2026_11_04() -> None:
+    """a1783-control.md "``a4[31]`` witnesses", 2026-11-04 01:48:40-01:49:17 EST.
+
+    Main 100 % over its 95 % cap, the expansion at 74 % holding the bus,
+    Battery-Only Power on, limit 1000 W: mains off (``a7[3]`` 2 -> 0), the
+    auto-off ``06`` -> ``0a`` with the screen woken a frame later, the 0x59 at
+    SoC 100 %; mains back 22 s on, the accept 3.0 s after, AC in on the
+    one-shot. The expansion takes the charge (``c0[24]`` 2 from the first AC-in
+    frame, ``a5[1]`` 0) while ``a3[0]`` and ``.23.7`` read 0 throughout. The
+    ramp's steps aren't modelled; its end is the limit + 10 W.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(
+        ac_input_disable_switch=1,
+        outage_alert_switch=True,
+        ac_input_status=2,
+        ac_input_power=0,
+        ac_recharge_power=1000,
+        battery_level=100,
+        pack_soc=1000,
+        charging_limit_value=95,
+        sub_package_connection_status=1,
+        sub_package_battery_level=74,
+        sub_package_pack_soc=740,
+        screen_switch=0,
+        pack_on_bus=2,
+    )
+    client = authorized_client(device, TOKEN)
+    outputs: list[Output] = []
+    device.listen(outputs.append)
+    module = device.negotiated_module
+    timeline = []
+
+    def note() -> None:
+        values, fields = next_0421(device)
+        a4 = decode_field(fields, "a4", GreedyBytes)
+        a5 = decode_field(fields, "a5", GreedyBytes)
+        a7 = decode_field(fields, "a7", GreedyBytes)
+        c0 = decode_field(fields, "c0", GreedyBytes)
+        timeline.append(
+            (
+                f"{a4[31]:02x}",
+                a4[21],
+                a7[3],
+                int.from_bytes(a7[4:6], "little") > 0,
+                values["work_status"],
+                next_0490(device)["on_bus_pack_status"],
+                a5[1],
+                c0[24],
+                pushed(client, outputs),
+            )
+        )
+        outputs.clear()
+
+    def step(seconds: float) -> None:
+        clock.advance(seconds)
+        outputs.append(module.check_pushes())
+        note()
+
+    device.set_values(ac_input_status=0)
+    note()
+    for seconds in (0.1, 4.0):
+        step(seconds)
+    clock.advance(17.9)
+    device.set_values(ac_input_status=1)
+    note()
+    for seconds in (2.9, 0.1, 6.9, 0.1, 5.0):
+        step(seconds)
+    values = module.values
+
+    assert timeline == [
+        ("06", 0, 0, False, 0, 0, 0, 0, []),  # 01:48:40
+        ("0a", 1, 0, False, 0, 0, 0, 0, []),  # 01:48:41
+        ("0a", 1, 0, False, 0, 0, 0, 0, [("4425", "a10131a2020159a3020464")]),
+        ("0a", 1, 1, False, 0, 0, 0, 0, []),  # 01:49:02
+        ("0a", 1, 1, False, 0, 0, 0, 0, []),
+        ("02", 1, 1, False, 0, 0, 0, 0, []),  # the accept, 3.0 s on
+        ("02", 1, 1, False, 0, 0, 0, 0, []),
+        ("02", 1, 1, True, 0, 0, 0, 2, []),  # the one-shot's first AC in
+        ("02", 1, 1, True, 0, 0, 0, 2, []),  # the ramp's end
+    ]
+    assert values["ac_input_power"] == 1000 + solix_c_gen2.CHARGE_OVER_LIMIT
+    assert values["pack_on_bus"] == 2
+    assert values["pack_current"] == 0
+    assert int(values["sub_package_pack_current"]) > 0
+
+
 def test_the_charge_enable_waits_out_its_tick_phase_replays_2026_10_31_14_55() -> None:
     """The one-shot counts from the first 1 s tick: 7-8 s after the accept.
 
@@ -5297,6 +5385,101 @@ def test_the_main_s_charge_ineligible_count_clears_the_discharge_latch() -> None
     assert both == (1, 1)
     assert (values["pack_on_bus"], values["discharge_latch"]) == (2, 0)
     assert values["charge_cap_latch"] == 1
+
+
+def test_a_pending_0x22_skips_main_to_0x11() -> None:
+    """The ``0x22`` row's conditions skip main -> ``0x11`` before its dwell passes.
+
+    fsms "Pack selection" (0x08023eb8): back on the main by ``0x11`` with the
+    +9 latch held, the main drops 1 % inside the 200 steps; the discharge latch
+    stays, and main -> ``0x22`` takes the bus once the dwell passes.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**CHARGING_MAIN_EXPANSION_AT_20)
+    device.set_values(alternator_byte_9=2)
+    device.set_values(battery_level=95, pack_soc=958)
+    clock.advance(1.1)
+    device.negotiated_module.check_pushes()
+    device.set_values(
+        ac_input_status=0,
+        ac_input_power=0,
+        sub_package_pack_current=500,
+        battery_level=94,
+        pack_soc=949,
+    )
+    clock.advance(3)
+    device.negotiated_module.check_pushes()
+    back = device.negotiated_module.values["pack_on_bus"]
+
+    device.set_values(pack_current=0, battery_level=93, pack_soc=939)
+    clock.advance(0.1)
+    device.negotiated_module.check_pushes()
+    armed = device.negotiated_module.values["discharge_latch"]
+    clock.advance(2.1)
+    device.negotiated_module.check_pushes()
+    values = device.negotiated_module.values
+
+    assert (back, armed) == (1, 1)
+    assert (values["pack_on_bus"], values["charge_cap_latch"]) == (2, 0)
+
+
+def test_main_to_0x22_at_once_keeps_the_discharge_latch() -> None:
+    """``0x22`` clears ``0x20000b34`` before the ``0x20000bf4`` count reads it.
+
+    fsms "Pack selection" (0x08023ec0, 0x08023fd2): both latches set, the main
+    past its 0xc line, the path hold on; the hold gone, main -> ``0x22`` clears
+    the cap latch, so the charge count doesn't run and the discharge latch stays.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**CHARGING_MAIN_EXPANSION_AT_20)
+    device.set_values(sub_package_path_hold=1)
+    device.set_values(battery_level=96, pack_soc=968)
+    clock.advance(1.1)
+    device.negotiated_module.check_pushes()
+    device.set_values(ac_input_power=0, pack_current=0)
+    clock.advance(1)
+    device.negotiated_module.check_pushes()
+    device.set_values(battery_level=95, pack_soc=958)
+    clock.advance(0.5)
+    device.negotiated_module.check_pushes()
+
+    device.set_values(sub_package_path_hold=0)
+    clock.advance(0.1)
+    device.negotiated_module.check_pushes()
+    values = device.negotiated_module.values
+
+    assert values["pack_on_bus"] == 2
+    assert (values["charge_cap_latch"], values["discharge_latch"]) == (0, 1)
+
+
+def test_a_switched_off_expansion_runs_no_selection_row() -> None:
+    """Forced main on ``pack1_flag_0b56_clear`` skips every row: ``0x11`` included.
+
+    fsms "Forced main": switched off with the source gone (+9 holding the cap
+    latch), the main drops 1 % under its cap; the discharge latch stays set.
+    """
+    clock = ManualClock()
+    device = A1783(clock=clock)
+    device.set_values(**{**CHARGING_MAIN, "discharge_limit_value": 5})
+    device.set_values(alternator_byte_9=2)
+    device.set_values(battery_level=95, pack_soc=950)
+    clock.advance(1.1)
+    device.negotiated_module.check_pushes()
+    device.set_values(ac_input_status=0, ac_input_power=0, pack_current=0)
+    client = authorized_client(device, TOKEN)
+    command(device, client, 0x104, EXPANSION_OFF)
+    clock.advance(1)
+    device.negotiated_module.check_pushes()
+
+    device.set_values(battery_level=94, pack_soc=940)
+    clock.advance(0.5)
+    device.negotiated_module.check_pushes()
+    values = device.negotiated_module.values
+
+    assert values["charge_cap_latch"] == 1
+    assert values["discharge_latch"] == 1
 
 
 def test_alternator_byte_9_is_a_byte() -> None:
